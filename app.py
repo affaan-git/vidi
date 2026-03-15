@@ -617,21 +617,17 @@ def build_summary_text(
     return text
 
 
-def build_control_text(branch: str, range_value: str, year: int, language: str) -> Text:
+def build_graph_title(branch: str, range_value: str, year: int) -> Text:
     range_label = dict(RANGE_PRESETS).get(range_value, range_value)
-    text = Text()
-    text.append("b ", style="bold #e3b341")
-    text.append(branch, style="bold #c9d1d9")
-    text.append("   ", style="#8b949e")
-    text.append("r ", style="bold #e3b341")
-    text.append(range_label, style="bold #c9d1d9")
-    text.append("   ", style="#8b949e")
-    text.append("[ ] ", style="bold #e3b341")
-    text.append(str(year), style="bold #c9d1d9")
-    text.append("   ", style="#8b949e")
-    text.append("n/p ", style="bold #e3b341")
-    text.append(language, style="bold #c9d1d9")
-    return text
+    title = Text()
+    title.append("Contribution Activity", style="bold #8b949e")
+    title.append("  ", style="#8b949e")
+    title.append(branch, style="#c9d1d9")
+    title.append(" · ", style="#8b949e")
+    title.append(range_label, style="#c9d1d9")
+    title.append(" · ", style="#8b949e")
+    title.append(str(year), style="bold #c9d1d9")
+    return title
 
 
 def build_language_summary(
@@ -691,15 +687,6 @@ class GitViewerTUI(App[None]):
         color: #c9d1d9;
     }
 
-    #controls {
-        height: 3;
-        margin: 0 1 0 1;
-        padding: 0 2;
-        border: solid #30363d;
-        background: #161b22;
-        content-align: left middle;
-    }
-
     #summary-bar {
         display: none;
         padding: 0 1;
@@ -710,7 +697,7 @@ class GitViewerTUI(App[None]):
     #body {
         layout: horizontal;
         height: 1fr;
-        margin: 0 1 1 1;
+        margin: 1 1 1 1;
     }
 
     #left-pane {
@@ -763,7 +750,7 @@ class GitViewerTUI(App[None]):
         height: 1fr;
     }
 
-    #control-content, #language-summary {
+    #language-summary {
         color: #c9d1d9;
     }
 
@@ -820,9 +807,6 @@ class GitViewerTUI(App[None]):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        with Static(id="controls"):
-            yield Static(id="control-content")
-
         with Static(id="summary-bar"):
             yield Static(id="summary-content")
 
@@ -889,15 +873,9 @@ class GitViewerTUI(App[None]):
             ]
             self.selected_commit_hash = day_commits[0].commit_hash if day_commits else (commits[0].commit_hash if commits else None)
 
-        self.query_one("#control-content", Static).update(
-            build_control_text(
-                self.selected_branch,
-                self.selected_range,
-                self.selected_year,
-                self.selected_language,
-            )
+        self.query_one("#graph-title", Static).update(
+            build_graph_title(self.selected_branch, self.selected_range, self.selected_year)
         )
-        self.query_one("#graph-title", Static).update(f"Contribution Activity ({self.selected_year})")
         self.query_one("#summary-content", Static).update(
             build_summary_text(
                 self.context.project_name,
