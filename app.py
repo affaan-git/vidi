@@ -209,10 +209,13 @@ def resolve_theme_palette(theme: Theme) -> ThemePalette:
     else:
         surface = background.lighten(0.10) if theme.dark else background.darken(0.03)
 
-    muted = foreground.blend(panel, 0.50 if theme.dark else 0.58)
-    border = panel.blend(foreground, 0.18 if theme.dark else 0.20)
-    selected_bg = primary.blend(surface, 0.42 if theme.dark else 0.80)
+    muted = foreground.blend(panel, 0.50 if theme.dark else 0.35)
+    border = panel.blend(foreground, 0.18 if theme.dark else 0.35)
+    selected_bg = primary.blend(surface, 0.42 if theme.dark else 0.60)
     selected_fg = selected_bg.get_contrast_text()
+    overlay = background.darken(0.35 if theme.dark else 0.75).with_alpha(
+        0.68 if theme.dark else 0.50
+    )
 
     return ThemePalette(
         background=background,
@@ -224,7 +227,7 @@ def resolve_theme_palette(theme: Theme) -> ThemePalette:
         primary=primary,
         selected_bg=selected_bg,
         selected_fg=selected_fg,
-        overlay=background.with_alpha(0.72),
+        overlay=overlay,
     )
 
 
@@ -843,6 +846,7 @@ class BranchPickerScreen(ModalScreen[str | None]):
             yield Static("Enter choose   Esc cancel", id="branch-picker-help")
 
     def on_mount(self) -> None:
+        self.watch(self.app, "theme", self.on_theme_change, init=False)
         self._apply_theme()
         self._refresh_branch_list()
         self.query_one("#branch-picker-filter", Input).focus()
@@ -1139,6 +1143,7 @@ class GitViewerTUI(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
+        self.watch(self, "theme", self.on_theme_change, init=False)
         self.title = f"{self.context.project_name} - TUI"
         print(f"\033]0;{self.context.project_name} - Git Viewer\007", end="", flush=True)
         self.query_one("#commits-table", DataTable).cursor_type = "row"
