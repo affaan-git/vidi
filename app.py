@@ -19,7 +19,7 @@ from rich.console import Group
 from rich.table import Table
 from rich.text import Text
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
 from textual.widgets import DataTable, Footer, Header, Static
 
@@ -572,11 +572,7 @@ def render_contribution_graph(
     for style in HEATMAP_STYLES:
         legend.append("▪", style=style)
     legend.append(" More", style="bold #8b949e")
-    return Group(
-        Text(f"Contribution Graph ({year})", style="bold #c9d1d9"),
-        *lines,
-        legend,
-    )
+    return Group(*lines, legend)
 
 
 def build_stats_text(branch: str, year: int, commits: list[CommitRecord]) -> Text:
@@ -661,11 +657,7 @@ def build_language_summary(
         line.append(f" {item['percentage']:.1f}%", style="#8b949e")
         legend_lines.append(line)
 
-    return Group(
-        Text("Languages", style="bold #c9d1d9"),
-        bar,
-        *legend_lines,
-    )
+    return Group(bar, *legend_lines)
 
 
 def parse_args() -> argparse.Namespace:
@@ -755,6 +747,18 @@ class GitViewerTUI(App[None]):
         height: 12;
     }
 
+    #day-details-scroll {
+        height: 1fr;
+        overflow-y: auto;
+        scrollbar-gutter: stable;
+    }
+
+    #day-scroll-hint {
+        height: 1;
+        color: #8b949e;
+        content-align: right middle;
+    }
+
     #languages-panel {
         height: 1fr;
     }
@@ -763,7 +767,13 @@ class GitViewerTUI(App[None]):
         color: #c9d1d9;
     }
 
-    #day-details, #language-files {
+    #day-details {
+        color: #8b949e;
+        height: auto;
+        min-height: 1;
+    }
+
+    #language-files {
         color: #8b949e;
     }
 
@@ -819,16 +829,17 @@ class GitViewerTUI(App[None]):
         with Horizontal(id="body"):
             with Vertical(id="left-pane"):
                 with Vertical(id="graph-panel", classes="panel"):
-                    yield Static("Contribution Activity", classes="panel-title")
+                    yield Static("Contribution Activity", id="graph-title", classes="panel-title")
                     yield Static(id="graph-content")
                 with Vertical(id="commits-panel", classes="panel"):
                     yield Static("Year Commits", classes="panel-title")
                     yield DataTable(id="commits-table")
             with Vertical(id="right-pane"):
                 with Vertical(id="details-panel", classes="panel"):
-                    yield Static("Selected Day / Commit", classes="panel-title")
-                    yield DataTable(id="days-table")
-                    yield Static(id="day-details")
+                    yield Static("Commit Details", id="details-title", classes="panel-title")
+                    with VerticalScroll(id="day-details-scroll"):
+                        yield Static(id="day-details")
+                    yield Static(id="day-scroll-hint")
                 with Vertical(id="languages-panel", classes="panel"):
                     yield Static("Languages / Files", classes="panel-title")
                     yield Static(id="language-summary")
@@ -839,7 +850,6 @@ class GitViewerTUI(App[None]):
         self.title = f"{self.context.project_name} - TUI"
         print(f"\033]0;{self.context.project_name} - Git Viewer\007", end="", flush=True)
         self.query_one("#commits-table", DataTable).cursor_type = "row"
-        self.query_one("#days-table", DataTable).cursor_type = "row"
 
         commits_table = self.query_one("#commits-table", DataTable)
         commits_table.show_horizontal_scrollbar = False
@@ -848,10 +858,6 @@ class GitViewerTUI(App[None]):
         commits_table.add_column("Author", width=12)
         commits_table.add_column("When", width=7)
         commits_table.add_column("Files", width=5)
-
-        days_table = self.query_one("#days-table", DataTable)
-        days_table.add_column("Date", width=12)
-        days_table.add_column("Commits", width=7)
 
         self._refresh_year_options()
         self.refresh_view()
@@ -891,6 +897,7 @@ class GitViewerTUI(App[None]):
                 self.selected_language,
             )
         )
+        self.query_one("#graph-title", Static).update(f"Contribution Activity ({self.selected_year})")
         self.query_one("#summary-content", Static).update(
             build_summary_text(
                 self.context.project_name,
@@ -901,7 +908,7 @@ class GitViewerTUI(App[None]):
             )
         )
         self._update_commits_table(commits)
-        self._update_days_table(counts)
+        self._day_keys = sorted(counts.keys(), reverse=True)
         self._update_selection_views(commits, counts)
         self.query_one("#language-summary", Static).update(
             build_language_summary(self.context.language_stats, self.selected_language)
@@ -940,51 +947,51 @@ class GitViewerTUI(App[None]):
             except Exception:
                 pass
 
-    def _update_days_table(self, counts: collections.Counter[dt.date]) -> None:
-        table = self.query_one("#days-table", DataTable)
-        table.clear(columns=False)
-        self._day_keys = sorted(counts.keys(), reverse=True)
-        for day in self._day_keys[:20]:
-            table.add_row(day.isoformat(), str(counts[day]), key=day.isoformat())
-        self._sync_days_cursor()
-
     def _update_day_details(self, commits: list[CommitRecord]) -> None:
         details = Text()
         if self.selected_day is None:
+            self.query_one("#details-title", Static).update("Commit Details")
             details.append("No active day in current selection.", style="bold #8b949e")
             self.query_one("#day-details", Static).update(details)
+            self.query_one("#day-scroll-hint", Static).update("")
+            self.query_one("#day-details-scroll", VerticalScroll).scroll_home(animate=False)
             return
 
         day_commits = [commit for commit in commits if commit.authored_date == self.selected_day]
-        details.append(
-            f"{self.selected_day.isoformat()}  {len(day_commits)} commit(s)\n",
-            style="bold #c9d1d9",
-        )
         selected_commit = next(
             (commit for commit in day_commits if commit.commit_hash == self.selected_commit_hash),
             day_commits[0] if day_commits else None,
         )
         if selected_commit is None:
+            self.query_one("#details-title", Static).update("Commit Details")
             details.append("No commit selected.", style="#8b949e")
             self.query_one("#day-details", Static).update(details)
+            self.query_one("#day-scroll-hint", Static).update("")
+            self.query_one("#day-details-scroll", VerticalScroll).scroll_home(animate=False)
             return
 
-        details.append(f"{selected_commit.commit_hash[:7]}", style="bold #58a6ff")
-        details.append("  ")
-        details.append(selected_commit.author_name, style="bold #c9d1d9")
-        details.append(
-            f"  {rel_time(selected_commit.authored_at, dt.datetime.utcnow())}\n",
-            style="#8b949e",
+        title_row = Table.grid(expand=True)
+        title_row.add_column(ratio=1)
+        title_row.add_column(justify="right", width=7)
+        title_row.add_row(
+            Text("Commit Details", style="bold #8b949e"),
+            Text(selected_commit.commit_hash[:7], style="#8b949e"),
         )
-        details.append(f"{truncate_middle(selected_commit.message, 54)}\n", style="#c9d1d9")
-        for path in selected_commit.changed_files[:6]:
-            details.append(f"  - {truncate_middle(path, 44)}\n", style="#8b949e")
-        if len(selected_commit.changed_files) > 6:
-            details.append(
-                f"  ... {len(selected_commit.changed_files) - 6} more files\n",
-                style="#8b949e",
-            )
+        self.query_one("#details-title", Static).update(title_row)
+
+        details.append(selected_commit.authored_date.isoformat(), style="#8b949e")
+        details.append("  ", style="#8b949e")
+        details.append(truncate_middle(selected_commit.author_name, 20), style="bold #c9d1d9")
+        details.append("\n")
+        details.append(f"{selected_commit.message}\n", style="#c9d1d9")
+        details.append("\nFiles changed\n", style="bold #8b949e")
+        for index, path in enumerate(selected_commit.changed_files):
+            suffix = "\n" if index < len(selected_commit.changed_files) - 1 else ""
+            details.append(f"  - {path}{suffix}", style="#8b949e")
         self.query_one("#day-details", Static).update(details)
+        overflow_hint = "Scroll for more" if len(selected_commit.changed_files) > 4 or len(selected_commit.message) > 54 else ""
+        self.query_one("#day-scroll-hint", Static).update(overflow_hint)
+        self.query_one("#day-details-scroll", VerticalScroll).scroll_home(animate=False)
 
     def _update_language_files(self, commits: list[CommitRecord]) -> None:
         activity = aggregate_file_activity(commits)
@@ -1022,20 +1029,7 @@ class GitViewerTUI(App[None]):
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         if self._suspend_table_events:
             return
-        if event.data_table.id == "days-table":
-            row_key = event.row_key.value if event.row_key else None
-            if row_key:
-                self.selected_day = dt.date.fromisoformat(str(row_key))
-                branch_data, commits = self._filtered_branch_data()
-                day_commits = [
-                    commit for commit in commits if commit.authored_date == self.selected_day
-                ]
-                self.selected_commit_hash = day_commits[0].commit_hash if day_commits else None
-                counts: collections.Counter[dt.date] = collections.Counter(
-                    commit.authored_date for commit in commits
-                )
-                self._update_selection_views(commits, counts)
-        elif event.data_table.id == "commits-table":
+        if event.data_table.id == "commits-table":
             row_key = event.row_key.value if event.row_key else None
             if row_key:
                 self.selected_commit_hash = str(row_key)
@@ -1049,28 +1043,12 @@ class GitViewerTUI(App[None]):
                 counts: collections.Counter[dt.date] = collections.Counter(
                     commit.authored_date for commit in commits
                 )
-                self._sync_days_cursor()
                 self._update_selection_views(commits, counts)
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         if self._suspend_table_events:
             return
-        if event.data_table.id == "days-table":
-            row_key = event.row_key.value if event.row_key else None
-            if row_key:
-                next_day = dt.date.fromisoformat(str(row_key))
-                if next_day != self.selected_day:
-                    self.selected_day = next_day
-                    _branch_data, commits = self._filtered_branch_data()
-                    day_commits = [
-                        commit for commit in commits if commit.authored_date == self.selected_day
-                    ]
-                    self.selected_commit_hash = day_commits[0].commit_hash if day_commits else None
-                    counts: collections.Counter[dt.date] = collections.Counter(
-                        commit.authored_date for commit in commits
-                    )
-                    self._update_selection_views(commits, counts)
-        elif event.data_table.id == "commits-table":
+        if event.data_table.id == "commits-table":
             row_key = event.row_key.value if event.row_key else None
             if row_key and str(row_key) != self.selected_commit_hash:
                 self.selected_commit_hash = str(row_key)
@@ -1084,7 +1062,6 @@ class GitViewerTUI(App[None]):
                 counts: collections.Counter[dt.date] = collections.Counter(
                     commit.authored_date for commit in commits
                 )
-                self._sync_days_cursor()
                 self._update_selection_views(commits, counts)
 
     def action_prev_year(self) -> None:
@@ -1128,8 +1105,13 @@ class GitViewerTUI(App[None]):
             idx = self._day_keys.index(self.selected_day)
             if idx < len(self._day_keys) - 1:
                 self.selected_day = self._day_keys[idx + 1]
-        self._sync_days_cursor()
-        self.refresh_view()
+        _branch_data, commits = self._filtered_branch_data()
+        day_commits = [commit for commit in commits if commit.authored_date == self.selected_day]
+        self.selected_commit_hash = day_commits[0].commit_hash if day_commits else None
+        counts: collections.Counter[dt.date] = collections.Counter(
+            commit.authored_date for commit in commits
+        )
+        self._update_selection_views(commits, counts)
 
     def action_day_up(self) -> None:
         if not self._day_keys:
@@ -1140,18 +1122,13 @@ class GitViewerTUI(App[None]):
             idx = self._day_keys.index(self.selected_day)
             if idx > 0:
                 self.selected_day = self._day_keys[idx - 1]
-        self._sync_days_cursor()
-        self.refresh_view()
-
-    def _sync_days_cursor(self) -> None:
-        if self.selected_day not in self._day_keys:
-            return
-        table = self.query_one("#days-table", DataTable)
-        row_index = self._day_keys.index(self.selected_day)
-        try:
-            table.move_cursor(row=row_index)
-        except Exception:
-            pass
+        _branch_data, commits = self._filtered_branch_data()
+        day_commits = [commit for commit in commits if commit.authored_date == self.selected_day]
+        self.selected_commit_hash = day_commits[0].commit_hash if day_commits else None
+        counts: collections.Counter[dt.date] = collections.Counter(
+            commit.authored_date for commit in commits
+        )
+        self._update_selection_views(commits, counts)
 
     def action_next_language(self) -> None:
         if not self._language_keys:
