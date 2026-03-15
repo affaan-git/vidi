@@ -21,7 +21,8 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
-from textual.widgets import DataTable, Footer, Header, Static
+from textual.screen import ModalScreen
+from textual.widgets import DataTable, Footer, Header, Input, Static
 
 
 DEFAULT_IGNORED_DIRS = {
@@ -630,6 +631,25 @@ def build_graph_title(branch: str, range_value: str, year: int) -> Text:
     return title
 
 
+def fuzzy_score(query: str, value: str) -> int | None:
+    query = query.strip().lower()
+    value = value.lower()
+    if not query:
+        return 0
+    if query in value:
+        return value.index(query)
+    pos = -1
+    gap_penalty = 0
+    for char in query:
+        next_pos = value.find(char, pos + 1)
+        if next_pos == -1:
+            return None
+        if pos >= 0:
+            gap_penalty += next_pos - pos - 1
+        pos = next_pos
+    return 100 + gap_penalty
+
+
 def build_language_summary(
     language_stats: list[dict[str, Any]], selected_language: str
 ) -> Group:
@@ -654,6 +674,148 @@ def build_language_summary(
         legend_lines.append(line)
 
     return Group(bar, *legend_lines)
+
+
+class BranchPickerScreen(ModalScreen[str | None]):
+    CSS = """
+    BranchPickerScreen {
+        align: center middle;
+        background: rgba(1, 4, 9, 0.7);
+    }
+
+    #branch-picker {
+        width: 52;
+        height: 14;
+        border: solid #30363d;
+        background: #161b22;
+        padding: 1 1;
+    }
+
+    #branch-picker-title {
+        color: #c9d1d9;
+        text-style: bold;
+        margin: 0 1 1 1;
+    }
+
+    #branch-picker-help {
+        color: #8b949e;
+        margin: 1 1 0 1;
+        content-align: right middle;
+    }
+
+    #branch-picker-filter {
+        margin: 0 1 1 1;
+        background: #0d1117;
+        border: solid #30363d;
+        color: #c9d1d9;
+    }
+
+    #branch-picker-table {
+        height: 1fr;
+        margin: 0 1;
+    }
+    """
+
+    BINDINGS = [
+        ("escape", "cancel", "Cancel"),
+        ("enter", "choose", "Choose"),
+    ]
+
+    def __init__(self, branches: list[str], current_branch: str) -> None:
+        super().__init__()
+        self.branches = branches
+        self.current_branch = current_branch
+        self.highlighted_branch = current_branch
+        self.filtered_branches = branches[:]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="branch-picker"):
+            yield Static("Select Branch  /  type to filter", id="branch-picker-title")
+            yield Input(placeholder="Filter branches", id="branch-picker-filter")
+            yield DataTable(id="branch-picker-table")
+            yield Static("Enter choose   Esc cancel", id="branch-picker-help")
+
+    def on_mount(self) -> None:
+        table = self.query_one("#branch-picker-table", DataTable)
+        table.cursor_type = "row"
+        table.show_horizontal_scrollbar = False
+        table.add_column("Branch", width=42)
+        self._refresh_branch_table()
+        self.query_one("#branch-picker-filter", Input).focus()
+
+    def _refresh_branch_table(self) -> None:
+        table = self.query_one("#branch-picker-table", DataTable)
+        table.clear(columns=False)
+        for branch in self.filtered_branches:
+            label = f"* {branch}" if branch == self.current_branch else f"  {branch}"
+            table.add_row(truncate_middle(label, 42), key=branch)
+        if not self.filtered_branches:
+            self.highlighted_branch = self.current_branch
+            return
+        if self.highlighted_branch not in self.filtered_branches:
+            self.highlighted_branch = (
+                self.current_branch
+                if self.current_branch in self.filtered_branches
+                else self.filtered_branches[0]
+            )
+        row_index = self.filtered_branches.index(self.highlighted_branch)
+        try:
+            table.move_cursor(row=row_index, animate=False, scroll=True)
+        except Exception:
+            pass
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "branch-picker-filter":
+            return
+        query = event.value
+        ranked: list[tuple[int, str]] = []
+        for branch in self.branches:
+            score = fuzzy_score(query, branch)
+            if score is not None:
+                ranked.append((score, branch))
+        ranked.sort(key=lambda item: (item[0], item[1]))
+        self.filtered_branches = [branch for _score, branch in ranked]
+        stripped = query.strip().lower()
+        if stripped:
+            exact = next(
+                (branch for branch in self.filtered_branches if branch.lower() == stripped),
+                None,
+            )
+            if exact is not None:
+                self.highlighted_branch = exact
+        self._refresh_branch_table()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id != "branch-picker-filter":
+            return
+        query = event.value.strip().lower()
+        if not query:
+            self.dismiss(self.highlighted_branch if self.filtered_branches else None)
+            return
+        exact = next(
+            (branch for branch in self.filtered_branches if branch.lower() == query),
+            None,
+        )
+        self.dismiss(exact)
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        if event.data_table.id != "branch-picker-table":
+            return
+        row_key = event.row_key.value if event.row_key else None
+        if row_key:
+            self.highlighted_branch = str(row_key)
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        if event.data_table.id != "branch-picker-table":
+            return
+        row_key = event.row_key.value if event.row_key else None
+        self.dismiss(str(row_key) if row_key else self.highlighted_branch)
+
+    def action_choose(self) -> None:
+        self.dismiss(self.highlighted_branch)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
 
 
 def parse_args() -> argparse.Namespace:
@@ -771,7 +933,7 @@ class GitViewerTUI(App[None]):
 
     BINDINGS = [
         ("q", "quit", "Quit"),
-        ("b", "cycle_branch", "Cycle Branch"),
+        ("b", "open_branch_picker", "Branches"),
         ("[", "prev_year", "Prev Year"),
         ("]", "next_year", "Next Year"),
         ("r", "cycle_range", "Cycle Range"),
@@ -904,6 +1066,37 @@ class GitViewerTUI(App[None]):
         )
         self._update_day_details(commits)
 
+    def _set_selected_commit(
+        self,
+        commits: list[CommitRecord],
+        commit_hash: str | None,
+        *,
+        sync_table: bool,
+    ) -> None:
+        self.selected_commit_hash = commit_hash
+        selected = next(
+            (commit for commit in commits if commit.commit_hash == self.selected_commit_hash),
+            None,
+        )
+        if selected is not None:
+            self.selected_day = selected.authored_date
+        counts: collections.Counter[dt.date] = collections.Counter(
+            commit.authored_date for commit in commits
+        )
+        if sync_table and self.selected_commit_hash:
+            visible_hashes = [commit.commit_hash for commit in commits[:30]]
+            if self.selected_commit_hash in visible_hashes:
+                table = self.query_one("#commits-table", DataTable)
+                row_index = visible_hashes.index(self.selected_commit_hash)
+                self._suspend_table_events = True
+                try:
+                    table.move_cursor(row=row_index, animate=False, scroll=True)
+                except Exception:
+                    pass
+                finally:
+                    self._suspend_table_events = False
+        self._update_selection_views(commits, counts)
+
     def _update_commits_table(self, commits: list[CommitRecord]) -> None:
         table = self.query_one("#commits-table", DataTable)
         table.scroll_home(immediate=True, x_axis=True, y_axis=True)
@@ -1010,18 +1203,8 @@ class GitViewerTUI(App[None]):
         if event.data_table.id == "commits-table":
             row_key = event.row_key.value if event.row_key else None
             if row_key:
-                self.selected_commit_hash = str(row_key)
                 _branch_data, commits = self._filtered_branch_data()
-                selected = next(
-                    (commit for commit in commits if commit.commit_hash == self.selected_commit_hash),
-                    None,
-                )
-                if selected is not None:
-                    self.selected_day = selected.authored_date
-                counts: collections.Counter[dt.date] = collections.Counter(
-                    commit.authored_date for commit in commits
-                )
-                self._update_selection_views(commits, counts)
+                self._set_selected_commit(commits, str(row_key), sync_table=False)
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         if self._suspend_table_events:
@@ -1029,18 +1212,8 @@ class GitViewerTUI(App[None]):
         if event.data_table.id == "commits-table":
             row_key = event.row_key.value if event.row_key else None
             if row_key and str(row_key) != self.selected_commit_hash:
-                self.selected_commit_hash = str(row_key)
                 _branch_data, commits = self._filtered_branch_data()
-                selected = next(
-                    (commit for commit in commits if commit.commit_hash == self.selected_commit_hash),
-                    None,
-                )
-                if selected is not None:
-                    self.selected_day = selected.authored_date
-                counts: collections.Counter[dt.date] = collections.Counter(
-                    commit.authored_date for commit in commits
-                )
-                self._update_selection_views(commits, counts)
+                self._set_selected_commit(commits, str(row_key), sync_table=False)
 
     def action_prev_year(self) -> None:
         branch_data = self.service.get_branch_data(self.selected_branch)
@@ -1067,10 +1240,18 @@ class GitViewerTUI(App[None]):
         self._refresh_year_options()
         self.refresh_view()
 
-    def action_cycle_branch(self) -> None:
-        branches = self.context.branches
-        idx = branches.index(self.selected_branch)
-        self.selected_branch = branches[(idx + 1) % len(branches)]
+    def action_open_branch_picker(self) -> None:
+        self.push_screen(
+            BranchPickerScreen(self.context.branches, self.selected_branch),
+            self._handle_branch_selected,
+        )
+
+    def _handle_branch_selected(self, branch: str | None) -> None:
+        if not branch or branch == self.selected_branch:
+            return
+        self.selected_branch = branch
+        self.selected_day = None
+        self.selected_commit_hash = None
         self._refresh_year_options()
         self.refresh_view()
 
@@ -1078,35 +1259,39 @@ class GitViewerTUI(App[None]):
         if not self._day_keys:
             return
         if self.selected_day not in self._day_keys:
-            self.selected_day = self._day_keys[0]
+            next_day = self._day_keys[0]
         else:
             idx = self._day_keys.index(self.selected_day)
             if idx < len(self._day_keys) - 1:
-                self.selected_day = self._day_keys[idx + 1]
+                next_day = self._day_keys[idx + 1]
+            else:
+                return
         _branch_data, commits = self._filtered_branch_data()
-        day_commits = [commit for commit in commits if commit.authored_date == self.selected_day]
-        self.selected_commit_hash = day_commits[0].commit_hash if day_commits else None
-        counts: collections.Counter[dt.date] = collections.Counter(
-            commit.authored_date for commit in commits
+        day_commits = [commit for commit in commits if commit.authored_date == next_day]
+        self._set_selected_commit(
+            commits,
+            day_commits[0].commit_hash if day_commits else None,
+            sync_table=True,
         )
-        self._update_selection_views(commits, counts)
 
     def action_day_up(self) -> None:
         if not self._day_keys:
             return
         if self.selected_day not in self._day_keys:
-            self.selected_day = self._day_keys[0]
+            next_day = self._day_keys[0]
         else:
             idx = self._day_keys.index(self.selected_day)
             if idx > 0:
-                self.selected_day = self._day_keys[idx - 1]
+                next_day = self._day_keys[idx - 1]
+            else:
+                return
         _branch_data, commits = self._filtered_branch_data()
-        day_commits = [commit for commit in commits if commit.authored_date == self.selected_day]
-        self.selected_commit_hash = day_commits[0].commit_hash if day_commits else None
-        counts: collections.Counter[dt.date] = collections.Counter(
-            commit.authored_date for commit in commits
+        day_commits = [commit for commit in commits if commit.authored_date == next_day]
+        self._set_selected_commit(
+            commits,
+            day_commits[0].commit_hash if day_commits else None,
+            sync_table=True,
         )
-        self._update_selection_views(commits, counts)
 
     def action_next_language(self) -> None:
         if not self._language_keys:
