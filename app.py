@@ -16,9 +16,11 @@ from pathlib import Path
 from typing import Any
 
 from rich.console import Group
+from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 from textual.app import App, ComposeResult
+from textual.color import Color
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
 from textual.screen import ModalScreen
@@ -737,6 +739,11 @@ class BranchPickerScreen(ModalScreen[str | None]):
         self.current_branch = current_branch
         self.highlighted_branch = current_branch
         self.filtered_branches = branches[:]
+        self._row_style = Style()
+        self._selected_row_style = Style(reverse=True, bold=True)
+        self._muted_style = Style(dim=True)
+        self._current_tag_style = Style(bold=True)
+        self._selected_current_tag_style = Style(reverse=True, bold=True)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="branch-picker"):
@@ -747,8 +754,70 @@ class BranchPickerScreen(ModalScreen[str | None]):
             yield Static("Enter choose   Esc cancel", id="branch-picker-help")
 
     def on_mount(self) -> None:
+        self._apply_theme()
         self._refresh_branch_list()
         self.query_one("#branch-picker-filter", Input).focus()
+
+    def on_theme_change(self, old_value: str, new_value: str) -> None:
+        self._apply_theme()
+        self._refresh_branch_list()
+
+    def _apply_theme(self) -> None:
+        theme = self.app.current_theme
+        background = Color.parse(theme.background or ("#0d1117" if theme.dark else "#f6f8fa"))
+        panel = Color.parse(
+            theme.panel
+            or theme.surface
+            or (background.lighten(0.08) if theme.dark else background.darken(0.03))
+        )
+        surface = Color.parse(
+            theme.surface
+            or theme.panel
+            or (background.lighten(0.03) if theme.dark else background.darken(0.01))
+        )
+        foreground = Color.parse(theme.foreground or ("#e6edf3" if theme.dark else "#1f2328"))
+        primary = Color.parse(theme.primary)
+        muted = foreground.blend(panel, 0.45 if theme.dark else 0.55)
+        border = panel.blend(foreground, 0.18 if theme.dark else 0.22)
+        selected_bg = primary.blend(panel, 0.45 if theme.dark else 0.78)
+        selected_fg = selected_bg.get_contrast_text()
+
+        self.styles.background = background.with_alpha(0.72)
+
+        picker = self.query_one("#branch-picker", Vertical)
+        picker.styles.background = panel
+        picker.styles.color = foreground
+        picker.styles.border = ("solid", border)
+
+        title = self.query_one("#branch-picker-title", Static)
+        title.styles.color = foreground
+
+        help_text = self.query_one("#branch-picker-help", Static)
+        help_text.styles.color = muted
+
+        filter_widget = self.query_one("#branch-picker-filter", Input)
+        filter_widget.styles.background = surface
+        filter_widget.styles.color = foreground
+        filter_widget.styles.border = ("solid", border)
+
+        list_widget = self.query_one("#branch-picker-list", Static)
+        list_widget.styles.background = surface
+        list_widget.styles.color = foreground
+        list_widget.styles.border = ("solid", border)
+
+        self._row_style = Style(color=foreground.rich_color)
+        self._selected_row_style = Style(
+            color=selected_fg.rich_color,
+            bgcolor=selected_bg.rich_color,
+            bold=True,
+        )
+        self._muted_style = Style(color=muted.rich_color, dim=True)
+        self._current_tag_style = Style(color=primary.rich_color, bold=True)
+        self._selected_current_tag_style = Style(
+            color=selected_fg.rich_color,
+            bgcolor=selected_bg.rich_color,
+            bold=True,
+        )
 
     def _refresh_branch_list(self) -> None:
         widget = self.query_one("#branch-picker-list", Static)
@@ -758,7 +827,7 @@ class BranchPickerScreen(ModalScreen[str | None]):
         if not self.filtered_branches:
             self.highlighted_branch = ""
             widget.styles.height = 3
-            lines.append("No matching branches".ljust(row_width), style="dim")
+            lines.append("No matching branches".ljust(row_width), style=self._muted_style)
             widget.update(lines)
             return
         if self.highlighted_branch not in self.filtered_branches:
@@ -771,19 +840,25 @@ class BranchPickerScreen(ModalScreen[str | None]):
         start = max(0, end - visible_rows)
 
         if start > 0:
-            lines.append(f"... {start} more\n", style="dim")
+            lines.append(f"... {start} more\n", style=self._muted_style)
         for branch in self.filtered_branches[start:end]:
             is_current = branch == self.current_branch
             is_highlighted = branch == self.highlighted_branch
-            style = "bold reverse" if is_highlighted else ""
-            prefix = "* " if is_current else "  "
-            branch_text = truncate_middle(branch, max(8, row_width - len(prefix)))
-            label = f"{prefix}{branch_text}"
+            row_style = self._selected_row_style if is_highlighted else self._row_style
+            current_label = "Current" if is_current else ""
+            branch_width = max(8, row_width - len(current_label) - (1 if current_label else 0))
+            branch_text = truncate_middle(branch, branch_width)
             suffix = "\n" if branch != self.filtered_branches[end - 1] or end < len(self.filtered_branches) else ""
-            lines.append(label.ljust(row_width), style=style)
+            lines.append(branch_text.ljust(branch_width), style=row_style)
+            if current_label:
+                lines.append(" ", style=row_style)
+                current_style = (
+                    self._selected_current_tag_style if is_highlighted else self._current_tag_style
+                )
+                lines.append(current_label, style=current_style)
             lines.append(suffix)
         if end < len(self.filtered_branches):
-            lines.append(f"\n... {len(self.filtered_branches) - end} more", style="dim")
+            lines.append(f"\n... {len(self.filtered_branches) - end} more", style=self._muted_style)
         widget.update(lines)
 
     def _move_highlight(self, direction: int) -> None:
