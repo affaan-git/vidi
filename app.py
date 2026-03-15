@@ -1219,14 +1219,16 @@ class GitViewerTUI(App[None]):
 
     def _apply_row_heights(self) -> None:
         total_height = self.size.height
-        if total_height <= 26:
+        if total_height <= 24:
+            top_height = 12
+        elif total_height <= 30:
             top_height = 13
-        elif total_height <= 34:
+        elif total_height <= 36:
             top_height = 14
         elif total_height <= 42:
             top_height = 16
         else:
-            top_height = 18
+            top_height = 20
 
         self.query_one("#top-row", Horizontal).styles.height = top_height
         self.query_one("#bottom-row", Horizontal).styles.height = "1fr"
