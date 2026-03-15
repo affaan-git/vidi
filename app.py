@@ -809,6 +809,11 @@ class BranchPickerScreen(ModalScreen[str | None]):
 
     #branch-picker-filter {
         margin: 0 1 1 1;
+        border: solid $border-blurred;
+    }
+
+    #branch-picker-filter:focus {
+        border: solid $border;
     }
 
     #branch-picker-list {
@@ -865,20 +870,11 @@ class BranchPickerScreen(ModalScreen[str | None]):
         picker.styles.color = palette.foreground
         picker.styles.border = ("solid", palette.border)
 
-        title = self.query_one("#branch-picker-title", Static)
-        title.styles.color = palette.foreground
-
         help_text = self.query_one("#branch-picker-help", Static)
         help_text.styles.color = palette.muted
 
-        filter_widget = self.query_one("#branch-picker-filter", Input)
-        filter_widget.styles.background = palette.surface
-        filter_widget.styles.color = palette.foreground
-        filter_widget.styles.border = ("solid", palette.border)
-
         list_widget = self.query_one("#branch-picker-list", Static)
         list_widget.styles.background = palette.surface
-        list_widget.styles.color = palette.foreground
         list_widget.styles.border = ("solid", palette.border)
 
         self._row_style = make_style(palette.foreground)
@@ -1168,31 +1164,18 @@ class GitViewerTUI(App[None]):
         palette = resolve_theme_palette(self.current_theme)
         self._theme_palette = palette
 
-        self.styles.background = palette.background
-        self.styles.color = palette.foreground
-
         summary_bar = self.query_one("#summary-bar", Static)
         summary_bar.styles.background = palette.surface
         summary_bar.styles.border = ("solid", palette.border)
-        summary_bar.styles.color = palette.foreground
 
         for panel in self.query(".panel"):
             panel.styles.background = palette.panel
             panel.styles.border = ("solid", palette.border)
-            panel.styles.color = palette.foreground
 
         for title in self.query(".panel-title"):
             title.styles.color = palette.muted
 
-        self.query_one("#graph-content", Static).styles.color = palette.foreground
         self.query_one("#day-scroll-hint", Static).styles.color = palette.muted
-        self.query_one("#day-details", Static).styles.color = palette.foreground
-        self.query_one("#language-summary", Static).styles.color = palette.foreground
-        self.query_one("#language-files", Static).styles.color = palette.foreground
-
-        commits_table = self.query_one("#commits-table", DataTable)
-        commits_table.styles.background = palette.surface
-        commits_table.styles.color = palette.foreground
 
     def _refresh_year_options(self) -> None:
         branch_data = self.service.get_branch_data(self.selected_branch)
