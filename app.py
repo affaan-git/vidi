@@ -1029,30 +1029,20 @@ class GitViewerTUI(App[None]):
     }
 
     #body {
-        layout: vertical;
+        layout: horizontal;
         height: 1fr;
         margin: 1 1 1 1;
-    }
-
-    .body-row {
-        layout: horizontal;
-    }
-
-    .body-row.top {
-        margin-bottom: 1;
-    }
-
-    .body-row.bottom {
-        height: 1fr;
     }
 
     .left-column {
         width: 2fr;
         margin-right: 1;
+        height: 1fr;
     }
 
     .right-column {
         width: 1fr;
+        height: 1fr;
     }
 
     .panel {
@@ -1066,10 +1056,8 @@ class GitViewerTUI(App[None]):
     }
 
     #graph-panel,
-    #details-panel,
-    #commits-panel,
-    #languages-panel {
-        height: 1fr;
+    #details-panel {
+        margin-bottom: 1;
     }
 
     #day-details-scroll {
@@ -1083,6 +1071,7 @@ class GitViewerTUI(App[None]):
         content-align: right middle;
     }
 
+    #commits-panel,
     #languages-panel {
         height: 1fr;
     }
@@ -1146,28 +1135,24 @@ class GitViewerTUI(App[None]):
         with Static(id="summary-bar"):
             yield Static(id="summary-content")
 
-        with Vertical(id="body"):
-            with Horizontal(id="top-row", classes="body-row top"):
-                with Vertical(classes="left-column"):
-                    with Vertical(id="graph-panel", classes="panel"):
-                        yield Static("Contribution Activity", id="graph-title", classes="panel-title")
-                        yield Static(id="graph-content")
-                with Vertical(classes="right-column"):
-                    with Vertical(id="details-panel", classes="panel"):
-                        yield Static("Commit Details", id="details-title", classes="panel-title")
-                        with VerticalScroll(id="day-details-scroll"):
-                            yield Static(id="day-details")
-                        yield Static(id="day-scroll-hint")
-            with Horizontal(id="bottom-row", classes="body-row bottom"):
-                with Vertical(classes="left-column"):
-                    with Vertical(id="commits-panel", classes="panel"):
-                        yield Static("Year Commits", classes="panel-title")
-                        yield DataTable(id="commits-table")
-                with Vertical(classes="right-column"):
-                    with Vertical(id="languages-panel", classes="panel"):
-                        yield Static("Languages / Files", classes="panel-title")
-                        yield Static(id="language-summary")
-                        yield Static(id="language-files")
+        with Horizontal(id="body"):
+            with Vertical(classes="left-column"):
+                with Vertical(id="graph-panel", classes="panel"):
+                    yield Static("Contribution Activity", id="graph-title", classes="panel-title")
+                    yield Static(id="graph-content")
+                with Vertical(id="commits-panel", classes="panel"):
+                    yield Static("Year Commits", classes="panel-title")
+                    yield DataTable(id="commits-table")
+            with Vertical(classes="right-column"):
+                with Vertical(id="details-panel", classes="panel"):
+                    yield Static("Commit Details", id="details-title", classes="panel-title")
+                    with VerticalScroll(id="day-details-scroll"):
+                        yield Static(id="day-details")
+                    yield Static(id="day-scroll-hint")
+                with Vertical(id="languages-panel", classes="panel"):
+                    yield Static("Languages / Files", classes="panel-title")
+                    yield Static(id="language-summary")
+                    yield Static(id="language-files")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -1185,7 +1170,7 @@ class GitViewerTUI(App[None]):
         commits_table.add_column("Files", width=5)
 
         self._apply_theme()
-        self._apply_row_heights()
+        self._apply_panel_heights(self.size.height)
         self._refresh_year_options()
         self.refresh_view()
         self._mounted = True
@@ -1197,7 +1182,7 @@ class GitViewerTUI(App[None]):
     def on_resize(self, event: events.Resize) -> None:
         if not self._mounted:
             return
-        self._apply_row_heights()
+        self._apply_panel_heights(event.size.height)
         self.refresh_view()
 
     def _apply_theme(self) -> None:
@@ -1217,21 +1202,23 @@ class GitViewerTUI(App[None]):
 
         self.query_one("#day-scroll-hint", Static).styles.color = palette.muted
 
-    def _apply_row_heights(self) -> None:
-        total_height = self.size.height
+    def _apply_panel_heights(self, total_height: int) -> None:
+        graph_height = 14
         if total_height <= 24:
-            top_height = 12
+            details_height = 13
         elif total_height <= 30:
-            top_height = 13
-        elif total_height <= 36:
-            top_height = 14
-        elif total_height <= 42:
-            top_height = 16
+            details_height = 14
+        elif total_height <= 38:
+            details_height = 15
+        elif total_height <= 46:
+            details_height = 17
         else:
-            top_height = 20
+            details_height = 19
 
-        self.query_one("#top-row", Horizontal).styles.height = top_height
-        self.query_one("#bottom-row", Horizontal).styles.height = "1fr"
+        self.query_one("#graph-panel", Vertical).styles.height = graph_height
+        self.query_one("#commits-panel", Vertical).styles.height = "1fr"
+        self.query_one("#details-panel", Vertical).styles.height = details_height
+        self.query_one("#languages-panel", Vertical).styles.height = "1fr"
 
     def _refresh_year_options(self) -> None:
         branch_data = self.service.get_branch_data(self.selected_branch)
