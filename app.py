@@ -716,7 +716,7 @@ class BranchPickerScreen(ModalScreen[str | None]):
     }
 
     #branch-picker-list {
-        height: 4;
+        height: 3;
         margin: 0 1;
         background: #0d1117;
         color: #c9d1d9;
@@ -753,21 +753,22 @@ class BranchPickerScreen(ModalScreen[str | None]):
     def _refresh_branch_list(self) -> None:
         widget = self.query_one("#branch-picker-list", Static)
         row_width = max(24, (widget.size.width - 2) if widget.size.width > 2 else 40)
+        max_visible = 3
         lines = Text()
-        lines.append("Branch".ljust(row_width), style="bold")
-        lines.append("\n")
         if not self.filtered_branches:
             self.highlighted_branch = ""
+            widget.styles.height = 3
             lines.append("No matching branches".ljust(row_width), style="dim")
             widget.update(lines)
             return
         if self.highlighted_branch not in self.filtered_branches:
             self.highlighted_branch = self.filtered_branches[0]
-        max_visible = 2
+        visible_rows = min(max_visible, len(self.filtered_branches))
+        widget.styles.height = visible_rows + 2
         selected_index = self.filtered_branches.index(self.highlighted_branch)
-        start = max(0, selected_index - (max_visible // 2))
-        end = min(len(self.filtered_branches), start + max_visible)
-        start = max(0, end - max_visible)
+        start = max(0, selected_index - (visible_rows // 2))
+        end = min(len(self.filtered_branches), start + visible_rows)
+        start = max(0, end - visible_rows)
 
         if start > 0:
             lines.append(f"... {start} more\n", style="dim")
