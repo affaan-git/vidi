@@ -893,7 +893,10 @@ class BranchPickerScreen(ModalScreen[str | None]):
 
     def _refresh_branch_list(self) -> None:
         widget = self.query_one("#branch-picker-list", Static)
-        row_width = max(24, (widget.size.width - 2) if widget.size.width > 2 else 40)
+        available_width = widget.content_region.width or widget.content_size.width
+        if not available_width:
+            available_width = widget.size.width - 4 if widget.size.width > 4 else 40
+        row_width = max(24, available_width)
         lines = Text()
         if not self.filtered_branches:
             self.highlighted_branch = ""
@@ -916,17 +919,18 @@ class BranchPickerScreen(ModalScreen[str | None]):
             is_current = branch == self.current_branch
             is_highlighted = branch == self.highlighted_branch
             row_style = self._selected_row_style if is_highlighted else self._row_style
-            current_label = "Current" if is_current else ""
-            branch_width = max(8, row_width - len(current_label) - (1 if current_label else 0))
+            current_width = len("Current")
+            branch_width = max(8, row_width - current_width)
             branch_text = truncate_middle(branch, branch_width)
             suffix = "\n" if branch != self.filtered_branches[end - 1] or end < len(self.filtered_branches) else ""
             lines.append(branch_text.ljust(branch_width), style=row_style)
-            if current_label:
-                lines.append(" ", style=row_style)
+            if is_current:
                 current_style = (
                     self._selected_current_tag_style if is_highlighted else self._current_tag_style
                 )
-                lines.append(current_label, style=current_style)
+                lines.append("Current".rjust(current_width), style=current_style)
+            else:
+                lines.append(" " * current_width, style=row_style)
             lines.append(suffix)
         widget.update(lines)
 
