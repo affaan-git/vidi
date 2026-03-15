@@ -24,6 +24,7 @@ from textual.color import Color
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
 from textual.screen import ModalScreen
+from textual.theme import Theme
 from textual.widgets import DataTable, Footer, Header, Input, Static
 
 
@@ -139,12 +140,92 @@ RANGE_PRESETS = [
 ]
 
 HEATMAP_STYLES = [
-    "#1b1f27",
     "#0e4429",
     "#006d32",
     "#26a641",
     "#39d353",
 ]
+
+
+@dataclass(frozen=True)
+class ThemePalette:
+    background: Color
+    panel: Color
+    surface: Color
+    foreground: Color
+    muted: Color
+    border: Color
+    primary: Color
+    selected_bg: Color
+    selected_fg: Color
+    overlay: Color
+
+
+def make_style(
+    foreground: Color | None = None,
+    *,
+    background: Color | None = None,
+    bold: bool = False,
+    dim: bool = False,
+) -> Style:
+    return Style(
+        color=foreground.rich_color if foreground is not None else None,
+        bgcolor=background.rich_color if background is not None else None,
+        bold=bold,
+        dim=dim,
+    )
+
+
+def resolve_theme_palette(theme: Theme) -> ThemePalette:
+    primary = Color.parse(theme.primary)
+
+    if theme.foreground is not None:
+        foreground = Color.parse(theme.foreground)
+    elif theme.background is not None:
+        foreground = Color.parse(theme.background).get_contrast_text()
+    else:
+        foreground = primary.get_contrast_text()
+
+    if theme.background is not None:
+        background = Color.parse(theme.background)
+    elif theme.dark:
+        background = foreground.blend(primary, 0.08).darken(0.82)
+    else:
+        background = foreground.get_contrast_text().blend(primary, 0.05)
+
+    if theme.panel is not None:
+        panel = Color.parse(theme.panel)
+    elif theme.surface is not None:
+        source = Color.parse(theme.surface)
+        panel = source.lighten(0.02) if theme.dark else source.darken(0.03)
+    else:
+        panel = background.lighten(0.06) if theme.dark else background.darken(0.06)
+
+    if theme.surface is not None:
+        surface = Color.parse(theme.surface)
+    elif theme.panel is not None:
+        source = Color.parse(theme.panel)
+        surface = source.darken(0.02) if theme.dark else source.lighten(0.03)
+    else:
+        surface = background.lighten(0.10) if theme.dark else background.darken(0.03)
+
+    muted = foreground.blend(panel, 0.50 if theme.dark else 0.58)
+    border = panel.blend(foreground, 0.18 if theme.dark else 0.20)
+    selected_bg = primary.blend(surface, 0.42 if theme.dark else 0.80)
+    selected_fg = selected_bg.get_contrast_text()
+
+    return ThemePalette(
+        background=background,
+        panel=panel,
+        surface=surface,
+        foreground=foreground,
+        muted=muted,
+        border=border,
+        primary=primary,
+        selected_bg=selected_bg,
+        selected_fg=selected_fg,
+        overlay=background.with_alpha(0.72),
+    )
 
 
 def run_git(repo_dir: str, args: list[str]) -> str:
@@ -530,7 +611,10 @@ def build_year_grid(
 
 
 def render_contribution_graph(
-    commit_counts: collections.Counter[dt.date], year: int, selected_day: dt.date | None
+    commit_counts: collections.Counter[dt.date],
+    year: int,
+    selected_day: dt.date | None,
+    palette: ThemePalette,
 ) -> Group:
     grid, months, first_sunday = build_year_grid(commit_counts, year)
     month_line = [" "] * len(months)
@@ -552,18 +636,22 @@ def render_contribution_graph(
     lines: list[Text] = [header]
     day_labels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
     max_value = max((value for row in grid for value in row), default=0)
+    inactive_style = palette.surface.blend(
+        palette.foreground, 0.10 if palette.background.brightness < 0.5 else 0.06
+    ).hex6
+    heatmap_styles = [inactive_style, *HEATMAP_STYLES]
 
     for row_index, day_name in enumerate(day_labels):
         line = Text(f"{day_name} ")
         for col_index, value in enumerate(grid[row_index]):
             if value <= 0:
-                style = HEATMAP_STYLES[0]
+                style = heatmap_styles[0]
             elif max_value <= 1:
-                style = HEATMAP_STYLES[-1]
+                style = heatmap_styles[-1]
             else:
                 ratio = value / max_value
                 bucket = min(4, max(1, int(round(ratio * 4))))
-                style = HEATMAP_STYLES[bucket]
+                style = heatmap_styles[bucket]
             cell_day = first_sunday + dt.timedelta(days=col_index * 7 + row_index)
             if selected_day == cell_day:
                 line.append("▣", style=f"bold {style}")
@@ -571,14 +659,16 @@ def render_contribution_graph(
                 line.append("▪", style=style)
         lines.append(line)
 
-    legend = Text("Less ", style="bold #8b949e")
-    for style in HEATMAP_STYLES:
+    legend = Text("Less ", style=make_style(palette.muted, bold=True))
+    for style in heatmap_styles:
         legend.append("▪", style=style)
-    legend.append(" More", style="bold #8b949e")
+    legend.append(" More", style=make_style(palette.muted, bold=True))
     return Group(*lines, legend)
 
 
-def build_stats_text(branch: str, year: int, commits: list[CommitRecord]) -> Text:
+def build_stats_text(
+    branch: str, year: int, commits: list[CommitRecord], palette: ThemePalette
+) -> Text:
     counts: collections.Counter[dt.date] = collections.Counter(
         commit.authored_date for commit in commits
     )
@@ -589,47 +679,52 @@ def build_stats_text(branch: str, year: int, commits: list[CommitRecord]) -> Tex
     latest_text = rel_time(latest, dt.datetime.utcnow()) if latest else "n/a"
 
     text = Text()
-    text.append(f"Branch: {branch}\n", style="bold #c9d1d9")
-    text.append(f"Year: {year}\n")
-    text.append(f"Commits: {len(commits)}\n")
-    text.append(f"Active days: {active_days}\n")
-    text.append(f"Avg/day: {avg_per_day:.2f}\n")
-    text.append(f"Current streak: {current_streak}d\n")
-    text.append(f"Longest streak: {longest_streak}d\n")
-    text.append(f"Last commit: {latest_text}")
+    text.append(f"Branch: {branch}\n", style=make_style(palette.foreground, bold=True))
+    text.append(f"Year: {year}\n", style=make_style(palette.muted))
+    text.append(f"Commits: {len(commits)}\n", style=make_style(palette.muted))
+    text.append(f"Active days: {active_days}\n", style=make_style(palette.muted))
+    text.append(f"Avg/day: {avg_per_day:.2f}\n", style=make_style(palette.muted))
+    text.append(f"Current streak: {current_streak}d\n", style=make_style(palette.muted))
+    text.append(f"Longest streak: {longest_streak}d\n", style=make_style(palette.muted))
+    text.append(f"Last commit: {latest_text}", style=make_style(palette.muted))
     return text
 
 
 def build_summary_text(
-    project_name: str, branch: str, year: int, commits: list[CommitRecord], language_stats: list[dict[str, Any]]
+    project_name: str,
+    branch: str,
+    year: int,
+    commits: list[CommitRecord],
+    language_stats: list[dict[str, Any]],
+    palette: ThemePalette,
 ) -> Text:
     counts: collections.Counter[dt.date] = collections.Counter(commit.authored_date for commit in commits)
     top_language = language_stats[0]["language"] if language_stats else "Other"
     text = Text()
-    text.append(project_name, style="bold #c9d1d9")
-    text.append("  |  ", style="#8b949e")
-    text.append(f"branch {branch}", style="#8b949e")
-    text.append("  |  ", style="#8b949e")
-    text.append(f"year {year}", style="#8b949e")
-    text.append("  |  ", style="#8b949e")
-    text.append(f"{len(commits)} commits", style="#8b949e")
-    text.append("  |  ", style="#8b949e")
-    text.append(f"{len(counts)} active days", style="#8b949e")
-    text.append("  |  ", style="#8b949e")
-    text.append(f"top language {top_language}", style="#8b949e")
+    text.append(project_name, style=make_style(palette.foreground, bold=True))
+    text.append("  |  ", style=make_style(palette.muted))
+    text.append(f"branch {branch}", style=make_style(palette.muted))
+    text.append("  |  ", style=make_style(palette.muted))
+    text.append(f"year {year}", style=make_style(palette.muted))
+    text.append("  |  ", style=make_style(palette.muted))
+    text.append(f"{len(commits)} commits", style=make_style(palette.muted))
+    text.append("  |  ", style=make_style(palette.muted))
+    text.append(f"{len(counts)} active days", style=make_style(palette.muted))
+    text.append("  |  ", style=make_style(palette.muted))
+    text.append(f"top language {top_language}", style=make_style(palette.muted))
     return text
 
 
-def build_graph_title(branch: str, range_value: str, year: int) -> Text:
+def build_graph_title(branch: str, range_value: str, year: int, palette: ThemePalette) -> Text:
     range_label = dict(RANGE_PRESETS).get(range_value, range_value)
     title = Text()
-    title.append("Contribution Activity", style="bold #8b949e")
-    title.append("  ", style="#8b949e")
-    title.append(branch, style="#c9d1d9")
-    title.append(" · ", style="#8b949e")
-    title.append(range_label, style="#c9d1d9")
-    title.append(" · ", style="#8b949e")
-    title.append(str(year), style="bold #c9d1d9")
+    title.append("Contribution Activity", style=make_style(palette.muted, bold=True))
+    title.append("  ", style=make_style(palette.muted))
+    title.append(branch, style=make_style(palette.foreground))
+    title.append(" · ", style=make_style(palette.muted))
+    title.append(range_label, style=make_style(palette.foreground))
+    title.append(" · ", style=make_style(palette.muted))
+    title.append(str(year), style=make_style(palette.foreground, bold=True))
     return title
 
 
@@ -653,7 +748,7 @@ def fuzzy_score(query: str, value: str) -> int | None:
 
 
 def build_language_summary(
-    language_stats: list[dict[str, Any]], selected_language: str
+    language_stats: list[dict[str, Any]], selected_language: str, palette: ThemePalette
 ) -> Group:
     bar = Text()
     for item in language_stats[:8]:
@@ -668,11 +763,15 @@ def build_language_summary(
     for item in language_stats[:4]:
         line = Text()
         prefix = ">" if item["language"] == selected_language else " "
-        line.append(prefix + " ", style="#8b949e")
+        line.append(prefix + " ", style=make_style(palette.muted))
         line.append("● ", style=item["color"])
-        label_style = "bold #c9d1d9" if item["language"] == selected_language else "#c9d1d9"
+        label_style = (
+            make_style(palette.foreground, bold=True)
+            if item["language"] == selected_language
+            else make_style(palette.foreground)
+        )
         line.append(item["language"], style=label_style)
-        line.append(f" {item['percentage']:.1f}%", style="#8b949e")
+        line.append(f" {item['percentage']:.1f}%", style=make_style(palette.muted))
         legend_lines.append(line)
 
     return Group(bar, *legend_lines)
@@ -753,59 +852,42 @@ class BranchPickerScreen(ModalScreen[str | None]):
         self._refresh_branch_list()
 
     def _apply_theme(self) -> None:
-        theme = self.app.current_theme
-        background = Color.parse(theme.background or ("#0d1117" if theme.dark else "#f6f8fa"))
-        panel = Color.parse(
-            theme.panel
-            or theme.surface
-            or (background.lighten(0.08) if theme.dark else background.darken(0.03))
-        )
-        surface = Color.parse(
-            theme.surface
-            or theme.panel
-            or (background.lighten(0.03) if theme.dark else background.darken(0.01))
-        )
-        foreground = Color.parse(theme.foreground or ("#e6edf3" if theme.dark else "#1f2328"))
-        primary = Color.parse(theme.primary)
-        muted = foreground.blend(panel, 0.45 if theme.dark else 0.55)
-        border = panel.blend(foreground, 0.18 if theme.dark else 0.22)
-        selected_bg = primary.blend(panel, 0.45 if theme.dark else 0.78)
-        selected_fg = selected_bg.get_contrast_text()
+        palette = resolve_theme_palette(self.app.current_theme)
 
-        self.styles.background = background.with_alpha(0.72)
+        self.styles.background = palette.overlay
 
         picker = self.query_one("#branch-picker", Vertical)
-        picker.styles.background = panel
-        picker.styles.color = foreground
-        picker.styles.border = ("solid", border)
+        picker.styles.background = palette.panel
+        picker.styles.color = palette.foreground
+        picker.styles.border = ("solid", palette.border)
 
         title = self.query_one("#branch-picker-title", Static)
-        title.styles.color = foreground
+        title.styles.color = palette.foreground
 
         help_text = self.query_one("#branch-picker-help", Static)
-        help_text.styles.color = muted
+        help_text.styles.color = palette.muted
 
         filter_widget = self.query_one("#branch-picker-filter", Input)
-        filter_widget.styles.background = surface
-        filter_widget.styles.color = foreground
-        filter_widget.styles.border = ("solid", border)
+        filter_widget.styles.background = palette.surface
+        filter_widget.styles.color = palette.foreground
+        filter_widget.styles.border = ("solid", palette.border)
 
         list_widget = self.query_one("#branch-picker-list", Static)
-        list_widget.styles.background = surface
-        list_widget.styles.color = foreground
-        list_widget.styles.border = ("solid", border)
+        list_widget.styles.background = palette.surface
+        list_widget.styles.color = palette.foreground
+        list_widget.styles.border = ("solid", palette.border)
 
-        self._row_style = Style(color=foreground.rich_color)
-        self._selected_row_style = Style(
-            color=selected_fg.rich_color,
-            bgcolor=selected_bg.rich_color,
+        self._row_style = make_style(palette.foreground)
+        self._selected_row_style = make_style(
+            palette.selected_fg,
+            background=palette.selected_bg,
             bold=True,
         )
-        self._muted_style = Style(color=muted.rich_color, dim=True)
-        self._current_tag_style = Style(color=primary.rich_color, bold=True)
-        self._selected_current_tag_style = Style(
-            color=selected_fg.rich_color,
-            bgcolor=selected_bg.rich_color,
+        self._muted_style = make_style(palette.muted, dim=True)
+        self._current_tag_style = make_style(palette.primary, bold=True)
+        self._selected_current_tag_style = make_style(
+            palette.selected_fg,
+            background=palette.selected_bg,
             bold=True,
         )
 
@@ -919,15 +1001,11 @@ def parse_args() -> argparse.Namespace:
 class GitViewerTUI(App[None]):
     CSS = """
     Screen {
-        background: #0d1117;
-        color: #c9d1d9;
     }
 
     #summary-bar {
         display: none;
         padding: 0 1;
-        border: solid #30363d;
-        background: #11161d;
     }
 
     #body {
@@ -946,14 +1024,11 @@ class GitViewerTUI(App[None]):
     }
 
     .panel {
-        border: solid #30363d;
-        background: #161b22;
         margin-bottom: 1;
         padding: 1 2;
     }
 
     .panel-title {
-        color: #8b949e;
         text-style: bold;
         margin-bottom: 0;
     }
@@ -978,7 +1053,6 @@ class GitViewerTUI(App[None]):
 
     #day-scroll-hint {
         height: 1;
-        color: #8b949e;
         content-align: right middle;
     }
 
@@ -987,17 +1061,14 @@ class GitViewerTUI(App[None]):
     }
 
     #language-summary {
-        color: #c9d1d9;
     }
 
     #day-details {
-        color: #8b949e;
         height: auto;
         min-height: 1;
     }
 
     #language-files {
-        color: #8b949e;
     }
 
     DataTable {
@@ -1028,6 +1099,7 @@ class GitViewerTUI(App[None]):
         super().__init__()
         self.context = context
         self.service = service
+        self._theme_palette = resolve_theme_palette(self.current_theme)
         self.selected_branch = context.current_branch
         self.selected_range = "all"
         initial_branch = service.get_branch_data(context.current_branch)
@@ -1079,8 +1151,43 @@ class GitViewerTUI(App[None]):
         commits_table.add_column("When", width=7)
         commits_table.add_column("Files", width=5)
 
+        self._apply_theme()
         self._refresh_year_options()
         self.refresh_view()
+
+    def on_theme_change(self, old_value: str, new_value: str) -> None:
+        self._apply_theme()
+        self.refresh_view()
+
+    def _apply_theme(self) -> None:
+        palette = resolve_theme_palette(self.current_theme)
+        self._theme_palette = palette
+
+        self.styles.background = palette.background
+        self.styles.color = palette.foreground
+
+        summary_bar = self.query_one("#summary-bar", Static)
+        summary_bar.styles.background = palette.surface
+        summary_bar.styles.border = ("solid", palette.border)
+        summary_bar.styles.color = palette.foreground
+
+        for panel in self.query(".panel"):
+            panel.styles.background = palette.panel
+            panel.styles.border = ("solid", palette.border)
+            panel.styles.color = palette.foreground
+
+        for title in self.query(".panel-title"):
+            title.styles.color = palette.muted
+
+        self.query_one("#graph-content", Static).styles.color = palette.foreground
+        self.query_one("#day-scroll-hint", Static).styles.color = palette.muted
+        self.query_one("#day-details", Static).styles.color = palette.foreground
+        self.query_one("#language-summary", Static).styles.color = palette.foreground
+        self.query_one("#language-files", Static).styles.color = palette.foreground
+
+        commits_table = self.query_one("#commits-table", DataTable)
+        commits_table.styles.background = palette.surface
+        commits_table.styles.color = palette.foreground
 
     def _refresh_year_options(self) -> None:
         branch_data = self.service.get_branch_data(self.selected_branch)
@@ -1110,7 +1217,12 @@ class GitViewerTUI(App[None]):
             self.selected_commit_hash = day_commits[0].commit_hash if day_commits else (commits[0].commit_hash if commits else None)
 
         self.query_one("#graph-title", Static).update(
-            build_graph_title(self.selected_branch, self.selected_range, self.selected_year)
+            build_graph_title(
+                self.selected_branch,
+                self.selected_range,
+                self.selected_year,
+                self._theme_palette,
+            )
         )
         self.query_one("#summary-content", Static).update(
             build_summary_text(
@@ -1119,13 +1231,18 @@ class GitViewerTUI(App[None]):
                 self.selected_year,
                 commits,
                 self.context.language_stats,
+                self._theme_palette,
             )
         )
         self._update_commits_table(commits)
         self._day_keys = sorted(counts.keys(), reverse=True)
         self._update_selection_views(commits, counts)
         self.query_one("#language-summary", Static).update(
-            build_language_summary(self.context.language_stats, self.selected_language)
+            build_language_summary(
+                self.context.language_stats,
+                self.selected_language,
+                self._theme_palette,
+            )
         )
         self._update_language_files(commits)
         self._suspend_table_events = False
@@ -1136,7 +1253,12 @@ class GitViewerTUI(App[None]):
         counts: collections.Counter[dt.date],
     ) -> None:
         self.query_one("#graph-content", Static).update(
-            render_contribution_graph(counts, self.selected_year, self.selected_day)
+            render_contribution_graph(
+                counts,
+                self.selected_year,
+                self.selected_day,
+                self._theme_palette,
+            )
         )
         self._update_day_details(commits)
 
@@ -1193,10 +1315,14 @@ class GitViewerTUI(App[None]):
                 pass
 
     def _update_day_details(self, commits: list[CommitRecord]) -> None:
+        palette = self._theme_palette
         details = Text()
         if self.selected_day is None:
             self.query_one("#details-title", Static).update("Commit Details")
-            details.append("No active day in current selection.", style="bold #8b949e")
+            details.append(
+                "No active day in current selection.",
+                style=make_style(palette.muted, bold=True),
+            )
             self.query_one("#day-details", Static).update(details)
             self.query_one("#day-scroll-hint", Static).update("")
             self.query_one("#day-details-scroll", VerticalScroll).scroll_home(animate=False)
@@ -1209,7 +1335,7 @@ class GitViewerTUI(App[None]):
         )
         if selected_commit is None:
             self.query_one("#details-title", Static).update("Commit Details")
-            details.append("No commit selected.", style="#8b949e")
+            details.append("No commit selected.", style=make_style(palette.muted))
             self.query_one("#day-details", Static).update(details)
             self.query_one("#day-scroll-hint", Static).update("")
             self.query_one("#day-details-scroll", VerticalScroll).scroll_home(animate=False)
@@ -1219,56 +1345,60 @@ class GitViewerTUI(App[None]):
         title_row.add_column(ratio=1)
         title_row.add_column(justify="right", width=7)
         title_row.add_row(
-            Text("Commit Details", style="bold #8b949e"),
-            Text(selected_commit.commit_hash[:7], style="#8b949e"),
+            Text("Commit Details", style=make_style(palette.muted, bold=True)),
+            Text(selected_commit.commit_hash[:7], style=make_style(palette.muted)),
         )
         self.query_one("#details-title", Static).update(title_row)
 
-        details.append(selected_commit.authored_date.isoformat(), style="#8b949e")
-        details.append("  ", style="#8b949e")
-        details.append(truncate_middle(selected_commit.author_name, 20), style="bold #c9d1d9")
+        details.append(selected_commit.authored_date.isoformat(), style=make_style(palette.muted))
+        details.append("  ", style=make_style(palette.muted))
+        details.append(
+            truncate_middle(selected_commit.author_name, 20),
+            style=make_style(palette.foreground, bold=True),
+        )
         details.append("\n")
-        details.append(f"{selected_commit.message}\n", style="#c9d1d9")
-        details.append("\nFiles changed\n", style="bold #8b949e")
+        details.append(f"{selected_commit.message}\n", style=make_style(palette.foreground))
+        details.append("\nFiles changed\n", style=make_style(palette.muted, bold=True))
         for index, path in enumerate(selected_commit.changed_files):
             suffix = "\n" if index < len(selected_commit.changed_files) - 1 else ""
-            details.append(f"  - {path}{suffix}", style="#8b949e")
+            details.append(f"  - {path}{suffix}", style=make_style(palette.muted))
         self.query_one("#day-details", Static).update(details)
         overflow_hint = "Scroll for more" if len(selected_commit.changed_files) > 4 or len(selected_commit.message) > 54 else ""
         self.query_one("#day-scroll-hint", Static).update(overflow_hint)
         self.query_one("#day-details-scroll", VerticalScroll).scroll_home(animate=False)
 
     def _update_language_files(self, commits: list[CommitRecord]) -> None:
+        palette = self._theme_palette
         activity = aggregate_file_activity(commits)
         files = self.context.files_by_language.get(self.selected_language, [])
         now = dt.datetime.utcnow()
 
         lines = Text()
-        lines.append(self.selected_language, style="bold #c9d1d9")
-        lines.append(f"  {len(files)} files\n", style="#8b949e")
+        lines.append(self.selected_language, style=make_style(palette.foreground, bold=True))
+        lines.append(f"  {len(files)} files\n", style=make_style(palette.muted))
         for path in files[:10]:
             info = activity.get(path)
             if info:
                 top_author = info["authors"].most_common(1)[0][0] if info["authors"] else "-"
                 lines.append(
                     f"{truncate_middle(path, 24)}\n",
-                    style="#c9d1d9",
+                    style=make_style(palette.foreground),
                 )
                 lines.append(
                     f"  {info['commits']} commits  {truncate_middle(top_author, 10)}  {rel_time(info['last_modified'], now)}\n",
-                    style="#8b949e",
+                    style=make_style(palette.muted),
                 )
             else:
                 lines.append(
                     f"{truncate_middle(path, 24)}\n",
-                    style="#c9d1d9",
+                    style=make_style(palette.foreground),
                 )
                 lines.append(
                     "  no activity in selection\n",
-                    style="#8b949e",
+                    style=make_style(palette.muted),
                 )
         if len(files) > 10:
-            lines.append(f"... {len(files) - 10} more files", style="#8b949e")
+            lines.append(f"... {len(files) - 10} more files", style=make_style(palette.muted))
         self.query_one("#language-files", Static).update(lines)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
