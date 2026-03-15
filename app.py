@@ -136,7 +136,7 @@ RANGE_PRESETS = [
 ]
 
 HEATMAP_STYLES = [
-    "#30363d",
+    "#1b1f27",
     "#0e4429",
     "#006d32",
     "#26a641",
@@ -563,13 +563,14 @@ def render_contribution_graph(
                 style = HEATMAP_STYLES[bucket]
             cell_day = first_sunday + dt.timedelta(days=col_index * 7 + row_index)
             if selected_day == cell_day:
-                style = f"bold {style}"
-            line.append("■", style=style)
+                line.append("▣", style=f"bold {style}")
+            else:
+                line.append("▪", style=style)
         lines.append(line)
 
     legend = Text("Less ", style="bold #8b949e")
     for style in HEATMAP_STYLES:
-        legend.append("■", style=style)
+        legend.append("▪", style=style)
     legend.append(" More", style="bold #8b949e")
     return Group(
         Text(f"Contribution Graph ({year})", style="bold #c9d1d9"),
@@ -623,17 +624,17 @@ def build_summary_text(
 def build_control_text(branch: str, range_value: str, year: int, language: str) -> Text:
     range_label = dict(RANGE_PRESETS).get(range_value, range_value)
     text = Text()
-    text.append("Branch ", style="#8b949e")
-    text.append(f"[b] {branch}", style="bold #c9d1d9")
+    text.append("b ", style="bold #e3b341")
+    text.append(branch, style="bold #c9d1d9")
     text.append("   ", style="#8b949e")
-    text.append("Range ", style="#8b949e")
-    text.append(f"[r] {range_label}", style="bold #c9d1d9")
+    text.append("r ", style="bold #e3b341")
+    text.append(range_label, style="bold #c9d1d9")
     text.append("   ", style="#8b949e")
-    text.append("Year ", style="#8b949e")
-    text.append(f"[[ / ]] {year}", style="bold #c9d1d9")
+    text.append("[ ] ", style="bold #e3b341")
+    text.append(str(year), style="bold #c9d1d9")
     text.append("   ", style="#8b949e")
-    text.append("Language ", style="#8b949e")
-    text.append(f"[n/p] {language}", style="bold #c9d1d9")
+    text.append("n/p ", style="bold #e3b341")
+    text.append(language, style="bold #c9d1d9")
     return text
 
 
@@ -642,15 +643,15 @@ def build_language_summary(
 ) -> Group:
     bar = Text()
     for item in language_stats[:8]:
-        width = max(1, int(round(item["percentage"] / 5)))
-        marker = "█" * min(width, 20)
+        width = max(1, int(round(item["percentage"] / 4)))
+        marker = "█" * min(width, 18)
         style = item["color"]
         if item["language"] == selected_language:
             style = f"bold {style}"
         bar.append(marker, style=style)
 
     legend_lines: list[Text] = []
-    for item in language_stats[:6]:
+    for item in language_stats[:4]:
         line = Text()
         prefix = ">" if item["language"] == selected_language else " "
         line.append(prefix + " ", style="#8b949e")
@@ -701,7 +702,7 @@ class GitViewerTUI(App[None]):
     #controls {
         height: 3;
         margin: 0 1 0 1;
-        padding: 0 1;
+        padding: 0 2;
         border: solid #30363d;
         background: #161b22;
         content-align: left middle;
@@ -733,7 +734,7 @@ class GitViewerTUI(App[None]):
         border: solid #30363d;
         background: #161b22;
         margin-bottom: 1;
-        padding: 1;
+        padding: 1 2;
     }
 
     .panel-title {
@@ -760,6 +761,10 @@ class GitViewerTUI(App[None]):
 
     #control-content, #language-summary {
         color: #c9d1d9;
+    }
+
+    #day-details, #language-files {
+        color: #8b949e;
     }
 
     DataTable {
@@ -964,8 +969,14 @@ class GitViewerTUI(App[None]):
             self.query_one("#day-details", Static).update(details)
             return
 
-        details.append(f"{selected_commit.commit_hash[:7]} ", style="bold #58a6ff")
-        details.append(f"{selected_commit.author_name}  {selected_commit.message}\n")
+        details.append(f"{selected_commit.commit_hash[:7]}", style="bold #58a6ff")
+        details.append("  ")
+        details.append(selected_commit.author_name, style="bold #c9d1d9")
+        details.append(
+            f"  {rel_time(selected_commit.authored_at, dt.datetime.utcnow())}\n",
+            style="#8b949e",
+        )
+        details.append(f"{truncate_middle(selected_commit.message, 54)}\n", style="#c9d1d9")
         for path in selected_commit.changed_files[:6]:
             details.append(f"  - {truncate_middle(path, 44)}\n", style="#8b949e")
         if len(selected_commit.changed_files) > 6:
@@ -981,25 +992,31 @@ class GitViewerTUI(App[None]):
         now = dt.datetime.utcnow()
 
         lines = Text()
-        lines.append(
-            f"{self.selected_language}  ({len(files)} files in repo)\n",
-            style="bold #c9d1d9",
-        )
-        for path in files[:14]:
+        lines.append(self.selected_language, style="bold #c9d1d9")
+        lines.append(f"  {len(files)} files\n", style="#8b949e")
+        for path in files[:10]:
             info = activity.get(path)
             if info:
                 top_author = info["authors"].most_common(1)[0][0] if info["authors"] else "-"
                 lines.append(
-                    f"{truncate_middle(path, 22)} | {info['commits']} | {truncate_middle(top_author, 10)} | {rel_time(info['last_modified'], now)}\n",
+                    f"{truncate_middle(path, 24)}\n",
+                    style="#c9d1d9",
+                )
+                lines.append(
+                    f"  {info['commits']} commits  {truncate_middle(top_author, 10)}  {rel_time(info['last_modified'], now)}\n",
                     style="#8b949e",
                 )
             else:
                 lines.append(
-                    f"{truncate_middle(path, 22)} | no activity in selection\n",
+                    f"{truncate_middle(path, 24)}\n",
+                    style="#c9d1d9",
+                )
+                lines.append(
+                    "  no activity in selection\n",
                     style="#8b949e",
                 )
-        if len(files) > 14:
-            lines.append(f"... {len(files) - 14} more files", style="#8b949e")
+        if len(files) > 10:
+            lines.append(f"... {len(files) - 10} more files", style="#8b949e")
         self.query_one("#language-files", Static).update(lines)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
