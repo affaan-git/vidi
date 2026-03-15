@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local Git repository viewer with a GitHub-style read-only dashboard."""
+"""Terminal-first local git repository viewer built with Textual."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ import argparse
 import collections
 import datetime as dt
 import hashlib
-import json
 import os
 import subprocess
 import sys
@@ -16,55 +15,14 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-import dash
-from dash import ALL, Input, Output, State, dcc, html
-import plotly.graph_objects as go
+from rich.console import Group
+from rich.table import Table
+from rich.text import Text
+from textual.app import App, ComposeResult
+from textual.containers import Horizontal, Vertical
+from textual.reactive import reactive
+from textual.widgets import DataTable, Footer, Header, Static
 
-
-# Theme constants exposed as CSS variables for HTML components.
-BG = "var(--bg)"
-PANEL = "var(--panel)"
-BORDER = "var(--border)"
-TEXT = "var(--text)"
-SUBTLE = "var(--subtle)"
-LINK = "var(--link)"
-GOOD = "var(--good)"
-
-THEME_CONFIG = {
-    "dark": {
-        "bg": "#0d1117",
-        "panel": "#161b22",
-        "border": "#30363d",
-        "text": "#c9d1d9",
-        "subtle": "#8b949e",
-        "link": "#58a6ff",
-        "good": "#3fb950",
-        "heatmap": [
-            [0.0, "#161b22"],
-            [0.1, "#0e4429"],
-            [0.3, "#006d32"],
-            [0.6, "#26a641"],
-            [1.0, "#39d353"],
-        ],
-    },
-    "light": {
-        "bg": "#f6f8fa",
-        "panel": "#ffffff",
-        "border": "#d0d7de",
-        "text": "#24292f",
-        "subtle": "#57606a",
-        "link": "#0969da",
-        "good": "#1f883d",
-        "heatmap": [
-            [0.0, "#ebedf0"],
-            [0.1, "#9be9a8"],
-            [0.3, "#40c463"],
-            [0.6, "#30a14e"],
-            [1.0, "#216e39"],
-        ],
-    },
-}
 
 DEFAULT_IGNORED_DIRS = {
     ".git",
@@ -170,11 +128,19 @@ LANGUAGE_COLORS = {
 }
 
 RANGE_PRESETS = [
-    {"label": "All time", "value": "all"},
-    {"label": "1 year", "value": "365"},
-    {"label": "90 days", "value": "90"},
-    {"label": "30 days", "value": "30"},
-    {"label": "7 days", "value": "7"},
+    ("All time", "all"),
+    ("1 year", "365"),
+    ("90 days", "90"),
+    ("30 days", "30"),
+    ("7 days", "7"),
+]
+
+HEATMAP_STYLES = [
+    "#30363d",
+    "#0e4429",
+    "#006d32",
+    "#26a641",
+    "#39d353",
 ]
 
 
@@ -188,24 +154,11 @@ def run_git(repo_dir: str, args: list[str]) -> str:
         raise RuntimeError(f"git {' '.join(args)} failed: {stderr}") from exc
 
 
-def detect_language(filename: str) -> str:
-    basename = os.path.basename(filename)
-    if basename.lower() == "dockerfile":
-        return "Dockerfile"
-    ext = os.path.splitext(filename)[1].lower()
-    if ext in EXTENSION_TO_LANGUAGE:
-        return EXTENSION_TO_LANGUAGE[ext]
-    return ext[1:].upper() if ext else "Other"
-
-
-def random_color(label: str) -> str:
-    return f"#{hashlib.md5(label.encode('utf-8')).hexdigest()[:6]}"
-
-
-def format_percent(percent: float) -> str:
-    if 0 < percent < 0.1:
-        return "<0.1%"
-    return f"{percent:.1f}%"
+def parse_iso_datetime(value: str) -> dt.datetime:
+    parsed = dt.datetime.fromisoformat(value)
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(dt.timezone.utc).replace(tzinfo=None)
+    return parsed
 
 
 def rel_time(value: dt.datetime, now: dt.datetime) -> str:
@@ -226,11 +179,29 @@ def rel_time(value: dt.datetime, now: dt.datetime) -> str:
     return f"{seconds // 29030400}y ago"
 
 
-def parse_iso_datetime(value: str) -> dt.datetime:
-    parsed = dt.datetime.fromisoformat(value)
-    if parsed.tzinfo is not None:
-        parsed = parsed.astimezone(dt.timezone.utc).replace(tzinfo=None)
-    return parsed
+def truncate_middle(value: str, max_len: int) -> str:
+    if len(value) <= max_len:
+        return value
+    if max_len <= 3:
+        return value[:max_len]
+    keep = max_len - 3
+    head = keep // 2
+    tail = keep - head
+    return f"{value[:head]}...{value[-tail:]}"
+
+
+def detect_language(filename: str) -> str:
+    basename = os.path.basename(filename)
+    if basename.lower() == "dockerfile":
+        return "Dockerfile"
+    ext = os.path.splitext(filename)[1].lower()
+    if ext in EXTENSION_TO_LANGUAGE:
+        return EXTENSION_TO_LANGUAGE[ext]
+    return ext[1:].upper() if ext else "Other"
+
+
+def random_color(label: str) -> str:
+    return f"#{hashlib.md5(label.encode('utf-8')).hexdigest()[:6]}"
 
 
 @dataclass(frozen=True)
@@ -294,7 +265,6 @@ class RepoService:
                 "--pretty=format:%H|%ad|%an|%ae|%s",
             ],
         )
-
         files_out = run_git(
             self.repo_dir,
             [
@@ -330,19 +300,18 @@ class RepoService:
                 continue
             commit_hash, authored_raw, author_name, author_email, message = parts
             authored_at = parse_iso_datetime(authored_raw)
-            changed = tuple(files_by_commit.get(commit_hash, []))
+            changed_files = tuple(files_by_commit.get(commit_hash, []))
             record = CommitRecord(
                 commit_hash=commit_hash,
                 authored_at=authored_at,
                 message=message.strip(),
                 author_name=author_name.strip(),
                 author_email=author_email.strip(),
-                changed_files=changed,
+                changed_files=changed_files,
             )
             commits.append(record)
             contributors[record.author_name] += 1
-
-            for path in record.changed_files:
+            for path in changed_files:
                 info = file_activity.setdefault(
                     path,
                     {
@@ -357,17 +326,11 @@ class RepoService:
                 info["authors"][record.author_name] += 1
 
         years = sorted({item.authored_date.year for item in commits})
-        return BranchData(
-            branch=branch,
-            commits=commits,
-            years=years,
-            contributors=contributors,
-            file_activity=file_activity,
-        )
+        return BranchData(branch, commits, years, contributors, file_activity)
 
 
 def get_branches(repo_dir: str) -> tuple[list[str], str]:
-    output = run_git(repo_dir, ["branch", "--format=%(refname:short)"]) 
+    output = run_git(repo_dir, ["branch", "--format=%(refname:short)"])
     branches = [line.strip() for line in output.splitlines() if line.strip()]
     head = run_git(repo_dir, ["rev-parse", "--abbrev-ref", "HEAD"]).strip()
     if head and head not in branches:
@@ -402,12 +365,9 @@ def extract_about_text(repo_dir: str) -> str:
         if not content:
             continue
         lines = [line.strip() for line in content.splitlines() if line.strip()]
-        if not lines:
-            continue
         for line in lines:
-            if line.startswith("#"):
-                continue
-            return line[:220]
+            if not line.startswith("#"):
+                return line[:220]
     return "Local repository analytics dashboard."
 
 
@@ -427,14 +387,11 @@ def scan_languages(
             full_path = os.path.join(root, filename)
             if not os.path.isfile(full_path):
                 continue
-
             language = detect_language(filename)
             if language in exclude_languages:
                 continue
-
             rel_path = os.path.relpath(full_path, repo_dir)
             files_by_language.setdefault(language, []).append(rel_path)
-
             if language_mode == "files":
                 value = 1
             else:
@@ -456,10 +413,9 @@ def scan_languages(
                 "color": LANGUAGE_COLORS.get(language, random_color(language)),
             }
         )
-
     stats.sort(key=lambda item: item["percentage"], reverse=True)
-    for key in files_by_language:
-        files_by_language[key].sort()
+    for language in files_by_language:
+        files_by_language[language].sort()
     return stats, files_by_language
 
 
@@ -473,14 +429,9 @@ def build_repo_context(
     ignore_dirs = set(DEFAULT_IGNORED_DIRS)
     ignore_dirs.update(parse_gitignore(repo_dir))
     ignore_dirs.update(extra_ignored_dirs)
-
     language_stats, files_by_language = scan_languages(
-        repo_dir=repo_dir,
-        language_mode=language_mode,
-        exclude_languages=exclude_languages,
-        ignore_dirs=ignore_dirs,
+        repo_dir, language_mode, exclude_languages, ignore_dirs
     )
-
     context = RepoContext(
         repo_dir=repo_dir,
         project_name=os.path.basename(os.path.abspath(repo_dir)),
@@ -493,612 +444,21 @@ def build_repo_context(
         files_by_language=files_by_language,
         about_text=extract_about_text(repo_dir),
     )
-    service = RepoService(repo_dir, language_mode, exclude_languages, ignore_dirs)
-    return context, service
+    return context, RepoService(repo_dir, language_mode, exclude_languages, ignore_dirs)
 
 
-def filter_commits(commits: list[CommitRecord], range_value: str, selected_year: int | None) -> list[CommitRecord]:
+def filter_commits(
+    commits: list[CommitRecord], range_value: str, selected_year: int | None
+) -> list[CommitRecord]:
     filtered = commits
-
-    if range_value != "all":
+    if range_value != "all" and filtered:
         days = int(range_value)
-        if filtered:
-            max_time = max(item.authored_at for item in filtered)
-            cutoff = max_time - dt.timedelta(days=days)
-            filtered = [item for item in filtered if item.authored_at >= cutoff]
-
+        max_time = max(item.authored_at for item in filtered)
+        cutoff = max_time - dt.timedelta(days=days)
+        filtered = [item for item in filtered if item.authored_at >= cutoff]
     if selected_year is not None:
         filtered = [item for item in filtered if item.authored_date.year == selected_year]
-
     return filtered
-
-
-def build_counts_and_details(commits: list[CommitRecord]) -> tuple[collections.Counter[dt.date], dict[str, list[dict[str, str]]]]:
-    counts: collections.Counter[dt.date] = collections.Counter()
-    details: dict[str, list[dict[str, str]]] = {}
-    for item in commits:
-        key = item.authored_date.strftime("%Y-%m-%d")
-        counts[item.authored_date] += 1
-        details.setdefault(key, []).append(
-            {
-                "hash": item.commit_hash,
-                "message": item.message,
-                "author": item.author_name,
-                "email": item.author_email,
-                "time": item.authored_at.isoformat(),
-            }
-        )
-    return counts, details
-
-
-def build_year_grid(
-    commit_counts: collections.Counter[dt.date], year: int
-) -> tuple[np.ndarray, list[list[str]], int, list[int], list[str]]:
-    start = dt.date(year, 1, 1)
-    end = dt.date(year, 12, 31)
-
-    days_to_prev_sunday = (start.weekday() + 1) % 7
-    first_sunday = start - dt.timedelta(days=days_to_prev_sunday)
-
-    row_for_end = (end.weekday() + 1) % 7
-    last_day = end + dt.timedelta(days=6 - row_for_end)
-
-    total_days = (last_day - first_sunday).days + 1
-    num_weeks = (total_days + 6) // 7
-
-    grid = np.zeros((7, num_weeks), dtype=int)
-    customdata = [["" for _ in range(num_weeks)] for _ in range(7)]
-
-    for idx in range(total_days):
-        day = first_sunday + dt.timedelta(days=idx)
-        col = idx // 7
-        row = idx % 7
-        grid[row, col] = commit_counts.get(day, 0)
-        customdata[row][col] = day.strftime("%Y-%m-%d")
-
-    tickvals: list[int] = []
-    ticktext: list[str] = []
-    for month in range(1, 13):
-        first_of_month = dt.date(year, month, 1)
-        if first_of_month < first_sunday or first_of_month > last_day:
-            continue
-        col = (first_of_month - first_sunday).days // 7
-        if col not in tickvals:
-            tickvals.append(col)
-            ticktext.append(first_of_month.strftime("%b"))
-
-    return grid, customdata, num_weeks, tickvals, ticktext
-
-
-def build_heatmap(
-    grid: np.ndarray,
-    customdata: list[list[str]],
-    num_weeks: int,
-    month_tickvals: list[int],
-    month_ticktext: list[str],
-    title: str,
-    height: int,
-    theme_name: str,
-) -> go.Figure:
-    palette = THEME_CONFIG.get(theme_name, THEME_CONFIG["dark"])
-    max_val = max(int(grid.max()), 1)
-    fig = go.Figure(
-        data=go.Heatmap(
-            z=grid,
-            x=list(range(num_weeks)),
-            y=list(range(7)),
-            customdata=customdata,
-            colorscale=palette["heatmap"],
-            zmin=0,
-            zmax=max_val,
-            xgap=3,
-            ygap=3,
-            showscale=False,
-            hovertemplate="Date: %{customdata}<br>Commits: %{z}<extra></extra>",
-        )
-    )
-    fig.update_layout(
-        paper_bgcolor=palette["bg"],
-        plot_bgcolor=palette["bg"],
-        margin=dict(l=16, r=16, t=42, b=16),
-        title=dict(text=title, font=dict(color=palette["text"], size=18), x=0, xanchor="left"),
-        height=height,
-        dragmode="pan",
-        xaxis=dict(
-            showgrid=False,
-            zeroline=False,
-            tickmode="array",
-            tickvals=month_tickvals,
-            ticktext=month_ticktext,
-            tickfont=dict(color=palette["subtle"]),
-            side="top",
-            range=[-0.5, num_weeks - 0.5],
-            minallowed=-0.5,
-            maxallowed=num_weeks - 0.5,
-        ),
-        yaxis=dict(
-            showgrid=False,
-            zeroline=False,
-            tickmode="array",
-            tickvals=list(range(7)),
-            ticktext=["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
-            tickfont=dict(color=palette["subtle"]),
-            autorange="reversed",
-            fixedrange=True,
-        ),
-    )
-    return fig
-
-
-def make_card(title: str, children: list[Any]) -> html.Div:
-    return html.Div(
-        [
-            html.Div(title, style={"fontWeight": "600", "marginBottom": "10px", "color": TEXT}),
-            *children,
-        ],
-        style={
-            "backgroundColor": PANEL,
-            "border": f"1px solid {BORDER}",
-            "borderRadius": "8px",
-            "padding": "12px",
-            "marginBottom": "12px",
-        },
-    )
-
-
-def top_repo_header(context: RepoContext) -> html.Div:
-    return html.Div(
-        [
-            html.Div(
-                [
-                    html.Div("<>", style={"color": TEXT, "fontWeight": "700", "fontSize": "18px"}),
-                    html.Div(
-                        [
-                            html.Div(
-                                [
-                                    html.Span("local", style={"color": SUBTLE}),
-                                    html.Span(" / ", style={"color": SUBTLE}),
-                                    html.Span(context.project_name, style={"color": TEXT, "fontWeight": "700"}),
-                                ],
-                                style={"fontSize": "20px"},
-                            ),
-                            html.Div(
-                                "Read-only local repository analytics",
-                                style={"color": SUBTLE, "fontSize": "13px"},
-                            ),
-                        ]
-                    ),
-                ],
-                style={"display": "flex", "alignItems": "center", "gap": "12px"},
-            ),
-            dcc.Tabs(
-                id="top-tabs",
-                value="overview",
-                children=[
-                    dcc.Tab(label="Overview", value="overview"),
-                    dcc.Tab(label="Commits", value="commits"),
-                    dcc.Tab(label="Activity", value="activity"),
-                    dcc.Tab(label="Languages", value="languages"),
-                    dcc.Tab(label="Files", value="files"),
-                ],
-                className="tabs-shell",
-            ),
-        ],
-        style={
-            "display": "flex",
-            "justifyContent": "space-between",
-            "alignItems": "center",
-            "gap": "12px",
-            "flexWrap": "wrap",
-            "backgroundColor": PANEL,
-            "border": f"1px solid {BORDER}",
-            "borderRadius": "8px",
-            "padding": "10px 14px",
-            "marginBottom": "12px",
-        },
-    )
-
-
-def controls_row(context: RepoContext) -> html.Div:
-    return html.Div(
-        [
-            html.Div(
-                [
-                    html.Div("Branch", style={"fontSize": "12px", "color": SUBTLE, "marginBottom": "4px"}),
-                    dcc.Dropdown(
-                        id="branch-dropdown",
-                        options=[{"label": b, "value": b} for b in context.branches],
-                        value=context.current_branch,
-                        clearable=False,
-                        className="themed-dropdown",
-                        style={"minWidth": "180px"},
-                    ),
-                ]
-            ),
-            html.Div(
-                [
-                    html.Div("Range", style={"fontSize": "12px", "color": SUBTLE, "marginBottom": "4px"}),
-                    dcc.Dropdown(
-                        id="range-dropdown",
-                        options=RANGE_PRESETS,
-                        value="all",
-                        clearable=False,
-                        className="themed-dropdown",
-                        style={"minWidth": "140px"},
-                    ),
-                ]
-            ),
-            html.Div(
-                [
-                    html.Div("Year", style={"fontSize": "12px", "color": SUBTLE, "marginBottom": "4px"}),
-                    dcc.Dropdown(
-                        id="year-dropdown",
-                        options=[],
-                        value=None,
-                        clearable=False,
-                        className="themed-dropdown",
-                        style={"minWidth": "120px"},
-                    ),
-                ]
-            ),
-            html.Div(
-                [
-                    html.Div("Theme", style={"fontSize": "12px", "color": SUBTLE, "marginBottom": "4px"}),
-                    dcc.Dropdown(
-                        id="theme-dropdown",
-                        options=[
-                            {"label": "Dark", "value": "dark"},
-                            {"label": "Light", "value": "light"},
-                        ],
-                        value="dark",
-                        clearable=False,
-                        className="themed-dropdown",
-                        style={"minWidth": "120px"},
-                    ),
-                ]
-            ),
-            html.Div(
-                [
-                    html.Button("Prev", id="year-prev", n_clicks=0, style={"marginRight": "6px"}),
-                    html.Button("Next", id="year-next", n_clicks=0),
-                ],
-                style={"paddingTop": "20px"},
-            ),
-        ],
-        style={
-            "display": "flex",
-            "gap": "12px",
-            "alignItems": "flex-end",
-            "flexWrap": "wrap",
-            "backgroundColor": PANEL,
-            "border": f"1px solid {BORDER}",
-            "borderRadius": "8px",
-            "padding": "10px",
-            "marginBottom": "12px",
-        },
-    )
-
-
-def language_legend(context: RepoContext, legend_type: str = "language-legend") -> html.Div:
-    return html.Div(
-        [
-            html.Span(
-                [
-                    html.Span(
-                        style={
-                            "display": "inline-block",
-                            "width": "10px",
-                            "height": "10px",
-                            "borderRadius": "50%",
-                            "backgroundColor": item["color"],
-                            "marginRight": "6px",
-                        }
-                    ),
-                    f"{item['language']} {format_percent(item['percentage'])}",
-                ],
-                id={"type": legend_type, "index": item["language"]},
-                style={"cursor": "pointer", "marginRight": "12px", "whiteSpace": "nowrap", "fontSize": "12px"},
-            )
-            for item in context.language_stats[:12]
-        ],
-        style={"display": "flex", "flexWrap": "wrap", "gap": "6px", "color": TEXT},
-    )
-
-
-def language_bar(context: RepoContext) -> html.Div:
-    return html.Div(
-        [
-            html.Div(
-                style={
-                    "width": f"{item['percentage']}%",
-                    "backgroundColor": item["color"],
-                    "height": "100%",
-                }
-            )
-            for item in context.language_stats
-        ],
-        style={"display": "flex", "height": "10px", "borderRadius": "999px", "overflow": "hidden"},
-    )
-
-
-def contribution_legend() -> html.Div:
-    chips = ["var(--heat0)", "var(--heat1)", "var(--heat2)", "var(--heat3)", "var(--heat4)"]
-    return html.Div(
-        [
-            html.Span("Less", style={"fontSize": "12px", "color": SUBTLE, "marginRight": "6px"}),
-            *[
-                html.Span(
-                    style={
-                        "display": "inline-block",
-                        "width": "10px",
-                        "height": "10px",
-                        "borderRadius": "2px",
-                        "backgroundColor": color,
-                        "marginRight": "3px",
-                    }
-                )
-                for color in chips
-            ],
-            html.Span("More", style={"fontSize": "12px", "color": SUBTLE, "marginLeft": "2px"}),
-        ],
-        style={"display": "flex", "justifyContent": "flex-end", "alignItems": "center", "marginTop": "6px"},
-    )
-
-
-def build_layout(context: RepoContext) -> html.Div:
-    return html.Div(
-        [
-            top_repo_header(context),
-            controls_row(context),
-            html.Div(
-                [
-                    html.Div(
-                        [
-                            html.Div(
-                                id="section-overview-graph",
-                                children=[
-                                    make_card(
-                                        "Contribution Activity",
-                                        [
-                                            dcc.Graph(
-                                                id="overview-graph",
-                                                config={
-                                                    "displaylogo": False,
-                                                    "modeBarButtonsToRemove": [
-                                                        "zoom2d",
-                                                        "select2d",
-                                                        "lasso2d",
-                                                        "zoomIn2d",
-                                                        "zoomOut2d",
-                                                        "autoScale2d",
-                                                        "resetScale2d",
-                                                    ],
-                                                    "scrollZoom": False,
-                                                },
-                                                style={"height": "250px"},
-                                            ),
-                                            contribution_legend(),
-                                        ],
-                                    ),
-                                ],
-                            ),
-                            html.Div(
-                                id="section-daily-details",
-                                children=[
-                                    make_card(
-                                        "Daily Commit Details",
-                                        [
-                                            html.Details(
-                                                open=False,
-                                                children=[
-                                                    html.Summary(
-                                                        "Open day details",
-                                                        style={"cursor": "pointer", "fontWeight": "600", "marginBottom": "8px"},
-                                                    ),
-                                                    html.Div(id="selected-day-summary", children="Click a day in the graph to inspect commits."),
-                                                    dcc.Dropdown(
-                                                        id="day-commit-dropdown",
-                                                        options=[],
-                                                        value=None,
-                                                        clearable=True,
-                                                        className="themed-dropdown",
-                                                        placeholder="Select a commit from selected day",
-                                                        style={"marginTop": "8px"},
-                                                    ),
-                                                    html.Div(id="commit-drawer", style={"marginTop": "10px"}),
-                                                ],
-                                            ),
-                                        ],
-                                    ),
-                                ],
-                            ),
-                            html.Div(
-                                id="section-recent-commits",
-                                children=[
-                                    make_card(
-                                        "Recent Commits",
-                                        [
-                                            html.Div(id="commit-table", className="mono", style={"fontSize": "12px", "overflowX": "auto"}),
-                                        ],
-                                    ),
-                                ],
-                            ),
-                            html.Div(
-                                id="section-language-explorer",
-                                children=[
-                                    make_card(
-                                        "Language Explorer",
-                                        [
-                                            html.Div(f"Languages by {context.language_mode}", style={"color": SUBTLE, "fontSize": "12px", "marginBottom": "6px"}),
-                                            language_bar(context),
-                                            html.Div(style={"height": "8px"}),
-                                            language_legend(context, legend_type="language-legend"),
-                                            html.Div(id="selected-language-label", style={"marginTop": "8px", "fontSize": "12px", "color": SUBTLE}),
-                                            html.Div(id="language-files", style={"marginTop": "10px"}),
-                                        ],
-                                    ),
-                                ],
-                            ),
-                        ],
-                        id="main-column",
-                        style={"minWidth": "0", "overflowY": "auto", "paddingRight": "6px"},
-                    ),
-                    html.Div(
-                        [
-                            html.Div(
-                                id="section-about",
-                                children=[make_card("About", [html.Div(context.about_text, style={"lineHeight": "1.5"})])],
-                            ),
-                            html.Div(
-                                id="section-repo-stats",
-                                children=[
-                                    make_card(
-                                        "Repository Stats",
-                                        [
-                                            html.Div(id="repo-stats"),
-                                        ],
-                                    )
-                                ],
-                            ),
-                            html.Div(
-                                id="section-sidebar-languages",
-                                children=[
-                                    make_card(
-                                        "Languages",
-                                        [
-                                            language_bar(context),
-                                            html.Div(style={"height": "8px"}),
-                                            language_legend(context, legend_type="sidebar-language-legend"),
-                                        ],
-                                    )
-                                ],
-                            ),
-                            html.Div(
-                                id="section-contributors",
-                                children=[
-                                    make_card(
-                                        "Top Contributors",
-                                        [
-                                            html.Div(id="contributors-list", className="mono", style={"fontSize": "12px"}),
-                                        ],
-                                    )
-                                ],
-                            ),
-                            html.Div(
-                                id="section-file-activity",
-                                children=[
-                                    make_card(
-                                        "File Activity",
-                                        [html.Div(id="file-activity-panel", className="mono", style={"fontSize": "12px"})],
-                                    )
-                                ],
-                            ),
-                        ],
-                        id="sidebar-column",
-                        style={"width": "320px", "minWidth": "280px", "overflowY": "auto", "paddingRight": "2px"},
-                    ),
-                ],
-                id="main-grid",
-                style={
-                    "display": "grid",
-                    "gridTemplateColumns": "minmax(0,1fr) 320px",
-                    "gap": "12px",
-                    "height": "calc(100vh - 170px)",
-                    "minHeight": "0",
-                },
-            ),
-            dcc.Store(id="day-details-store"),
-            dcc.Store(id="current-day-store"),
-            dcc.Store(id="selected-language-store"),
-        ],
-        id="app-root",
-        className="theme-dark",
-        style={
-            "backgroundColor": BG,
-            "color": TEXT,
-            "height": "100vh",
-            "overflow": "hidden",
-            "padding": "12px",
-            "fontFamily": "Segoe UI, -apple-system, BlinkMacSystemFont, sans-serif",
-        },
-    )
-
-
-def render_commit_table(commits: list[CommitRecord], limit: int = 25) -> html.Table:
-    now = dt.datetime.utcnow()
-    rows = commits[:limit]
-    return html.Table(
-        [
-            html.Thead(
-                html.Tr(
-                    [
-                        html.Th("Hash", style={"textAlign": "left"}),
-                        html.Th("Message", style={"textAlign": "left"}),
-                        html.Th("Author", style={"textAlign": "left"}),
-                        html.Th("When", style={"textAlign": "left"}),
-                        html.Th("Files", style={"textAlign": "right"}),
-                    ]
-                )
-            ),
-            html.Tbody(
-                [
-                    html.Tr(
-                        [
-                            html.Td(c.commit_hash[:7], style={"color": LINK}),
-                            html.Td(c.message[:90]),
-                            html.Td(c.author_name),
-                            html.Td(rel_time(c.authored_at, now), style={"color": SUBTLE}),
-                            html.Td(str(len(c.changed_files)), style={"textAlign": "right", "color": SUBTLE}),
-                        ],
-                        style={"borderTop": f"1px solid {BORDER}"},
-                    )
-                    for c in rows
-                ]
-            ),
-        ],
-        style={"width": "100%", "borderCollapse": "collapse"},
-    )
-
-
-def calc_streaks(counts: collections.Counter[dt.date]) -> tuple[int, int]:
-    if not counts:
-        return 0, 0
-    days = sorted(d for d, c in counts.items() if c > 0)
-    longest = 0
-    current = 0
-    prev = None
-    for day in days:
-        if prev is None or (day - prev).days == 1:
-            current += 1
-        else:
-            current = 1
-        longest = max(longest, current)
-        prev = day
-
-    latest = days[-1]
-    running = 0
-    day = latest
-    while counts.get(day, 0) > 0:
-        running += 1
-        day -= dt.timedelta(days=1)
-    return running, longest
-
-
-def build_file_activity_panel(file_activity: dict[str, dict[str, Any]], limit: int = 20) -> html.Div:
-    rows = sorted(file_activity.items(), key=lambda kv: kv[1]["commits"], reverse=True)[:limit]
-    if not rows:
-        return html.Div("No file activity for this selection.", style={"color": SUBTLE})
-
-    now = dt.datetime.utcnow()
-    return html.Div(
-        [
-            html.Div(
-                f"{path} | {info['commits']} commits | {rel_time(info['last_modified'], now)}",
-                style={"padding": "4px 0", "borderTop": f"1px solid {BORDER}"},
-            )
-            for path, info in rows
-        ]
-    )
 
 
 def aggregate_file_activity(commits: list[CommitRecord]) -> dict[str, dict[str, Any]]:
@@ -1120,361 +480,196 @@ def aggregate_file_activity(commits: list[CommitRecord]) -> dict[str, dict[str, 
     return file_activity
 
 
-def register_callbacks(app: dash.Dash, context: RepoContext, service: RepoService) -> None:
-    @app.callback(
-        Output("app-root", "className"),
-        Output("section-overview-graph", "style"),
-        Output("section-daily-details", "style"),
-        Output("section-recent-commits", "style"),
-        Output("section-language-explorer", "style"),
-        Output("section-about", "style"),
-        Output("section-repo-stats", "style"),
-        Output("section-sidebar-languages", "style"),
-        Output("section-contributors", "style"),
-        Output("section-file-activity", "style"),
-        Input("theme-dropdown", "value"),
-        Input("top-tabs", "value"),
-    )
-    def update_theme_and_tab_layout(theme: str, tab: str):
-        base = {"display": "none"}
-        sections = {
-            "overview_graph": dict(base),
-            "daily_details": dict(base),
-            "recent_commits": dict(base),
-            "language_explorer": dict(base),
-            "about": dict(base),
-            "repo_stats": dict(base),
-            "sidebar_languages": dict(base),
-            "contributors": dict(base),
-            "file_activity": dict(base),
-        }
-
-        if tab == "overview":
-            sections["overview_graph"] = {"display": "block"}
-            sections["daily_details"] = {"display": "block"}
-            sections["about"] = {"display": "block"}
-            sections["repo_stats"] = {"display": "block"}
-            sections["sidebar_languages"] = {"display": "block"}
-        elif tab == "commits":
-            sections["daily_details"] = {"display": "block"}
-            sections["recent_commits"] = {"display": "block"}
-            sections["contributors"] = {"display": "block"}
-        elif tab == "activity":
-            sections["overview_graph"] = {"display": "block"}
-            sections["repo_stats"] = {"display": "block"}
-            sections["file_activity"] = {"display": "block"}
-        elif tab == "languages":
-            sections["language_explorer"] = {"display": "block"}
-            sections["sidebar_languages"] = {"display": "block"}
-        elif tab == "files":
-            sections["recent_commits"] = {"display": "block"}
-            sections["file_activity"] = {"display": "block"}
-            sections["language_explorer"] = {"display": "block"}
+def calc_streaks(counts: collections.Counter[dt.date]) -> tuple[int, int]:
+    if not counts:
+        return 0, 0
+    days = sorted(day for day, value in counts.items() if value > 0)
+    longest = 0
+    current = 0
+    previous = None
+    for day in days:
+        if previous is None or (day - previous).days == 1:
+            current += 1
         else:
-            sections["overview_graph"] = {"display": "block"}
-            sections["daily_details"] = {"display": "block"}
-            sections["about"] = {"display": "block"}
-            sections["sidebar_languages"] = {"display": "block"}
+            current = 1
+        longest = max(longest, current)
+        previous = day
+    latest = days[-1]
+    running = 0
+    day = latest
+    while counts.get(day, 0) > 0:
+        running += 1
+        day -= dt.timedelta(days=1)
+    return running, longest
 
-        theme_class = "theme-light" if theme == "light" else "theme-dark"
-        return (
-            theme_class,
-            sections["overview_graph"],
-            sections["daily_details"],
-            sections["recent_commits"],
-            sections["language_explorer"],
-            sections["about"],
-            sections["repo_stats"],
-            sections["sidebar_languages"],
-            sections["contributors"],
-            sections["file_activity"],
-        )
 
-    @app.callback(
-        Output("selected-language-store", "data"),
-        Output("top-tabs", "value", allow_duplicate=True),
-        Input({"type": "language-legend", "index": ALL}, "n_clicks"),
-        Input({"type": "sidebar-language-legend", "index": ALL}, "n_clicks"),
-        prevent_initial_call=True,
+def build_year_grid(
+    commit_counts: collections.Counter[dt.date], year: int
+) -> tuple[list[list[int]], list[str], dt.date]:
+    start = dt.date(year, 1, 1)
+    end = dt.date(year, 12, 31)
+    days_to_prev_sunday = (start.weekday() + 1) % 7
+    first_sunday = start - dt.timedelta(days=days_to_prev_sunday)
+    row_for_end = (end.weekday() + 1) % 7
+    last_day = end + dt.timedelta(days=6 - row_for_end)
+    total_days = (last_day - first_sunday).days + 1
+    num_weeks = (total_days + 6) // 7
+    grid = [[0 for _ in range(num_weeks)] for _ in range(7)]
+    month_labels = ["   " for _ in range(num_weeks)]
+    for idx in range(total_days):
+        day = first_sunday + dt.timedelta(days=idx)
+        col = idx // 7
+        row = idx % 7
+        grid[row][col] = commit_counts.get(day, 0)
+        if day.day == 1 and day.year == year:
+            month_labels[col] = day.strftime("%b")
+    return grid, month_labels, first_sunday
+
+
+def render_contribution_graph(
+    commit_counts: collections.Counter[dt.date], year: int, selected_day: dt.date | None
+) -> Group:
+    grid, months, first_sunday = build_year_grid(commit_counts, year)
+    month_line = [" "] * len(months)
+    last_end = -4
+    for index, label in enumerate(months):
+        if not label.strip():
+            continue
+        short = label[:3]
+        if index < last_end:
+            continue
+        for offset, char in enumerate(short):
+            pos = index + offset
+            if pos < len(month_line):
+                month_line[pos] = char
+        last_end = index + len(short) + 1
+
+    header = Text("    " + "".join(month_line))
+
+    lines: list[Text] = [header]
+    day_labels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    max_value = max((value for row in grid for value in row), default=0)
+
+    for row_index, day_name in enumerate(day_labels):
+        line = Text(f"{day_name} ")
+        for col_index, value in enumerate(grid[row_index]):
+            if value <= 0:
+                style = HEATMAP_STYLES[0]
+            elif max_value <= 1:
+                style = HEATMAP_STYLES[-1]
+            else:
+                ratio = value / max_value
+                bucket = min(4, max(1, int(round(ratio * 4))))
+                style = HEATMAP_STYLES[bucket]
+            cell_day = first_sunday + dt.timedelta(days=col_index * 7 + row_index)
+            if selected_day == cell_day:
+                style = f"bold {style}"
+            line.append("■", style=style)
+        lines.append(line)
+
+    legend = Text("Less ", style="bold #8b949e")
+    for style in HEATMAP_STYLES:
+        legend.append("■", style=style)
+    legend.append(" More", style="bold #8b949e")
+    return Group(
+        Text(f"Contribution Graph ({year})", style="bold #c9d1d9"),
+        *lines,
+        legend,
     )
-    def select_language(_main_clicks: list[int | None], _sidebar_clicks: list[int | None]):
-        ctx = dash.callback_context
-        if not ctx.triggered:
-            return dash.no_update, dash.no_update
-        trigger = ctx.triggered[0]["prop_id"].split(".")[0]
-        try:
-            payload = json.loads(trigger)
-            language = payload["index"]
-        except Exception:
-            return dash.no_update, dash.no_update
-        return language, "languages"
 
-    @app.callback(
-        Output("selected-language-label", "children"),
-        Input("selected-language-store", "data"),
+
+def build_stats_text(branch: str, year: int, commits: list[CommitRecord]) -> Text:
+    counts: collections.Counter[dt.date] = collections.Counter(
+        commit.authored_date for commit in commits
     )
-    def show_selected_language(language: str | None):
-        if not language:
-            return "Click a language to inspect files and activity."
-        return f"Selected language: {language}"
+    active_days = len(counts)
+    current_streak, longest_streak = calc_streaks(counts)
+    avg_per_day = len(commits) / active_days if active_days else 0.0
+    latest = commits[0].authored_at if commits else None
+    latest_text = rel_time(latest, dt.datetime.utcnow()) if latest else "n/a"
 
-    @app.callback(
-        Output("year-dropdown", "options"),
-        Output("year-dropdown", "value"),
-        Input("branch-dropdown", "value"),
-        Input("range-dropdown", "value"),
-        State("year-dropdown", "value"),
+    text = Text()
+    text.append(f"Branch: {branch}\n", style="bold #c9d1d9")
+    text.append(f"Year: {year}\n")
+    text.append(f"Commits: {len(commits)}\n")
+    text.append(f"Active days: {active_days}\n")
+    text.append(f"Avg/day: {avg_per_day:.2f}\n")
+    text.append(f"Current streak: {current_streak}d\n")
+    text.append(f"Longest streak: {longest_streak}d\n")
+    text.append(f"Last commit: {latest_text}")
+    return text
+
+
+def build_summary_text(
+    project_name: str, branch: str, year: int, commits: list[CommitRecord], language_stats: list[dict[str, Any]]
+) -> Text:
+    counts: collections.Counter[dt.date] = collections.Counter(commit.authored_date for commit in commits)
+    top_language = language_stats[0]["language"] if language_stats else "Other"
+    text = Text()
+    text.append(project_name, style="bold #c9d1d9")
+    text.append("  |  ", style="#8b949e")
+    text.append(f"branch {branch}", style="#8b949e")
+    text.append("  |  ", style="#8b949e")
+    text.append(f"year {year}", style="#8b949e")
+    text.append("  |  ", style="#8b949e")
+    text.append(f"{len(commits)} commits", style="#8b949e")
+    text.append("  |  ", style="#8b949e")
+    text.append(f"{len(counts)} active days", style="#8b949e")
+    text.append("  |  ", style="#8b949e")
+    text.append(f"top language {top_language}", style="#8b949e")
+    return text
+
+
+def build_control_text(branch: str, range_value: str, year: int, language: str) -> Text:
+    range_label = dict(RANGE_PRESETS).get(range_value, range_value)
+    text = Text()
+    text.append("Branch ", style="#8b949e")
+    text.append(f"[b] {branch}", style="bold #c9d1d9")
+    text.append("   ", style="#8b949e")
+    text.append("Range ", style="#8b949e")
+    text.append(f"[r] {range_label}", style="bold #c9d1d9")
+    text.append("   ", style="#8b949e")
+    text.append("Year ", style="#8b949e")
+    text.append(f"[[ / ]] {year}", style="bold #c9d1d9")
+    text.append("   ", style="#8b949e")
+    text.append("Language ", style="#8b949e")
+    text.append(f"[n/p] {language}", style="bold #c9d1d9")
+    return text
+
+
+def build_language_summary(
+    language_stats: list[dict[str, Any]], selected_language: str
+) -> Group:
+    bar = Text()
+    for item in language_stats[:8]:
+        width = max(1, int(round(item["percentage"] / 5)))
+        marker = "█" * min(width, 20)
+        style = item["color"]
+        if item["language"] == selected_language:
+            style = f"bold {style}"
+        bar.append(marker, style=style)
+
+    legend_lines: list[Text] = []
+    for item in language_stats[:6]:
+        line = Text()
+        prefix = ">" if item["language"] == selected_language else " "
+        line.append(prefix + " ", style="#8b949e")
+        line.append("● ", style=item["color"])
+        label_style = "bold #c9d1d9" if item["language"] == selected_language else "#c9d1d9"
+        line.append(item["language"], style=label_style)
+        line.append(f" {item['percentage']:.1f}%", style="#8b949e")
+        legend_lines.append(line)
+
+    return Group(
+        Text("Languages", style="bold #c9d1d9"),
+        bar,
+        *legend_lines,
     )
-    def update_year_dropdown(branch: str, range_value: str, current_year: int | None):
-        data = service.get_branch_data(branch)
-        commits = filter_commits(data.commits, range_value, None)
-        years = sorted({c.authored_date.year for c in commits})
-        if not years:
-            years = data.years
-        options = [{"label": str(y), "value": y} for y in years]
-        if current_year in years:
-            return options, current_year
-        if not years:
-            return options, None
-        return options, max(years)
-
-    @app.callback(
-        Output("year-dropdown", "value", allow_duplicate=True),
-        Input("year-prev", "n_clicks"),
-        Input("year-next", "n_clicks"),
-        State("year-dropdown", "options"),
-        State("year-dropdown", "value"),
-        prevent_initial_call=True,
-    )
-    def shift_year(prev_clicks: int, next_clicks: int, options: list[dict[str, Any]], year_value: int | None):
-        ctx = dash.callback_context
-        if not options or year_value is None or not ctx.triggered:
-            return dash.no_update
-        years = [int(item["value"]) for item in options]
-        if year_value not in years:
-            return dash.no_update
-        idx = years.index(year_value)
-        button_id = ctx.triggered[0]["prop_id"].split(".")[0]
-        if button_id == "year-prev" and idx > 0:
-            return years[idx - 1]
-        if button_id == "year-next" and idx < len(years) - 1:
-            return years[idx + 1]
-        return year_value
-
-    @app.callback(
-        Output("overview-graph", "figure"),
-        Output("day-details-store", "data"),
-        Output("repo-stats", "children"),
-        Output("contributors-list", "children"),
-        Output("commit-table", "children"),
-        Output("file-activity-panel", "children"),
-        Input("branch-dropdown", "value"),
-        Input("range-dropdown", "value"),
-        Input("year-dropdown", "value"),
-        Input("theme-dropdown", "value"),
-    )
-    def update_dashboard(branch: str, range_value: str, selected_year: int | None, theme: str):
-        palette = THEME_CONFIG.get(theme, THEME_CONFIG["dark"])
-        branch_data = service.get_branch_data(branch)
-        base_commits = filter_commits(branch_data.commits, range_value, None)
-        effective_year = selected_year if selected_year is not None else (max(branch_data.years) if branch_data.years else None)
-        year_commits = filter_commits(base_commits, "all", effective_year)
-
-        if effective_year is None:
-            empty_fig = go.Figure()
-            empty_fig.update_layout(paper_bgcolor=palette["bg"], plot_bgcolor=palette["bg"])
-            return empty_fig, {}, "No commits", "No contributors", "", ""
-
-        counts, details = build_counts_and_details(year_commits)
-        grid, customdata, num_weeks, tickvals, ticktext = build_year_grid(counts, effective_year)
-
-        overview_fig = build_heatmap(
-            grid,
-            customdata,
-            num_weeks,
-            tickvals,
-            ticktext,
-            title=f"Contribution Graph ({effective_year})",
-            height=250,
-            theme_name=theme,
-        )
-        total_commits = len(year_commits)
-        active_days = len([v for v in counts.values() if v > 0])
-        avg_per_day = (total_commits / active_days) if active_days else 0.0
-        current_streak, longest_streak = calc_streaks(counts)
-
-        now = dt.datetime.utcnow()
-        latest_commit = year_commits[0].authored_at if year_commits else None
-        latest_text = rel_time(latest_commit, now) if latest_commit else "n/a"
-
-        stats = html.Div(
-            [
-                html.Div(f"Branch: {branch}", style={"padding": "2px 0"}),
-                html.Div(f"Year: {effective_year}", style={"padding": "2px 0"}),
-                html.Div(f"Commits: {total_commits}", style={"padding": "2px 0"}),
-                html.Div(f"Active days: {active_days}", style={"padding": "2px 0"}),
-                html.Div(f"Avg/day: {avg_per_day:.2f}", style={"padding": "2px 0"}),
-                html.Div(f"Current streak: {current_streak}d", style={"padding": "2px 0"}),
-                html.Div(f"Longest streak: {longest_streak}d", style={"padding": "2px 0"}),
-                html.Div(f"Last commit: {latest_text}", style={"padding": "2px 0"}),
-            ],
-            className="mono",
-            style={"fontSize": "12px", "color": TEXT},
-        )
-
-        contributor_counts = collections.Counter(c.author_name for c in year_commits)
-        contributors = html.Div(
-            [
-                html.Div(
-                    f"{name}: {count}",
-                    style={"padding": "2px 0", "borderTop": f"1px solid {BORDER}"},
-                )
-                for name, count in contributor_counts.most_common(12)
-            ]
-            or [html.Div("No contributors", style={"color": SUBTLE})]
-        )
-
-        commit_table = render_commit_table(year_commits)
-        file_panel = build_file_activity_panel(aggregate_file_activity(year_commits))
-
-        return overview_fig, details, stats, contributors, commit_table, file_panel
-
-    @app.callback(
-        Output("selected-day-summary", "children"),
-        Output("day-commit-dropdown", "options"),
-        Output("day-commit-dropdown", "value"),
-        Output("current-day-store", "data"),
-        Input("overview-graph", "clickData"),
-        State("day-details-store", "data"),
-    )
-    def select_day(click_data: dict[str, Any] | None, day_details: dict[str, Any] | None):
-        if not click_data or not day_details:
-            return "Click a day in the graph to inspect commits.", [], None, None
-
-        try:
-            day_key = click_data["points"][0]["customdata"]
-        except (KeyError, IndexError, TypeError):
-            return "Unable to parse selected day.", [], None, None
-
-        commits = day_details.get(day_key, [])
-        if not commits:
-            return f"{day_key}: no commits", [], None, day_key
-
-        options = [
-            {
-                "label": f"{item['hash'][:7]} {item['author']} - {item['message'][:70]}",
-                "value": item["hash"],
-            }
-            for item in commits
-        ]
-        summary = f"{day_key}: {len(commits)} commit(s)"
-        return summary, options, options[0]["value"], day_key
-
-    @app.callback(
-        Output("commit-drawer", "children"),
-        Input("day-commit-dropdown", "value"),
-        Input("branch-dropdown", "value"),
-        State("current-day-store", "data"),
-        State("day-details-store", "data"),
-    )
-    def show_commit_details(commit_hash: str | None, branch: str, day_key: str | None, day_details: dict[str, Any] | None):
-        if not commit_hash or not day_key or not day_details:
-            return html.Div("Pick a commit to view details.", style={"color": SUBTLE})
-
-        candidates = day_details.get(day_key, [])
-        selected = next((item for item in candidates if item["hash"] == commit_hash), None)
-        if not selected:
-            return html.Div("Selected commit not found.", style={"color": SUBTLE})
-
-        branch_data = service.get_branch_data(branch)
-        commit_obj = next((c for c in branch_data.commits if c.commit_hash == commit_hash), None)
-        if not commit_obj:
-            return html.Div("Commit data unavailable.", style={"color": SUBTLE})
-
-        file_list = list(commit_obj.changed_files)
-        return html.Div(
-            [
-                html.Div(commit_hash, className="mono", style={"color": LINK, "marginBottom": "4px"}),
-                html.Div(selected["message"], style={"marginBottom": "6px"}),
-                html.Div(f"Author: {selected['author']} ({selected['email']})", style={"fontSize": "12px", "color": SUBTLE}),
-                html.Div(f"Changed files: {len(file_list)}", style={"fontSize": "12px", "color": SUBTLE, "marginTop": "6px"}),
-                html.Ul(
-                    [html.Li(path, className="mono", style={"fontSize": "12px", "color": TEXT}) for path in file_list[:200]]
-                    or [html.Li("None", style={"color": SUBTLE})],
-                    style={"maxHeight": "220px", "overflowY": "auto", "paddingLeft": "18px"},
-                ),
-            ]
-        )
-
-    @app.callback(
-        Output("language-files", "children"),
-        Input("selected-language-store", "data"),
-        Input("branch-dropdown", "value"),
-        Input("range-dropdown", "value"),
-        Input("year-dropdown", "value"),
-    )
-    def show_language_files(language: str | None, branch: str, range_value: str, selected_year: int | None):
-        if not language:
-            return html.Div("Choose a language from the legend to view matching files.", style={"color": SUBTLE})
-
-        files = context.files_by_language.get(language, [])
-        if not files:
-            return html.Div(f"No files found for {language}.", style={"color": SUBTLE})
-
-        branch_data = service.get_branch_data(branch)
-        filtered = filter_commits(branch_data.commits, range_value, selected_year)
-        activity = aggregate_file_activity(filtered)
-
-        rows = []
-        now = dt.datetime.utcnow()
-        for path in files:
-            info = activity.get(path)
-            if not info:
-                continue
-            top_author = info["authors"].most_common(1)[0][0] if info["authors"] else "-"
-            rows.append(
-                html.Tr(
-                    [
-                        html.Td(path, className="mono"),
-                        html.Td(str(info["commits"]), style={"textAlign": "right"}),
-                        html.Td(top_author),
-                        html.Td(rel_time(info["last_modified"], now), style={"color": SUBTLE}),
-                    ]
-                )
-            )
-
-        if not rows:
-            return html.Div(f"No activity in selection for {language} files.", style={"color": SUBTLE})
-
-        return html.Div(
-            [
-                html.Div(
-                    f"{language} files in current selection ({len(rows)})",
-                    style={"marginBottom": "6px", "fontWeight": "600"},
-                ),
-                html.Table(
-                    [
-                        html.Thead(
-                            html.Tr(
-                                [
-                                    html.Th("File", style={"textAlign": "left"}),
-                                    html.Th("Commits", style={"textAlign": "right"}),
-                                    html.Th("Top author", style={"textAlign": "left"}),
-                                    html.Th("Last changed", style={"textAlign": "left"}),
-                                ]
-                            )
-                        ),
-                        html.Tbody(rows[:250]),
-                    ],
-                    style={"width": "100%", "fontSize": "12px", "borderCollapse": "collapse"},
-                ),
-            ]
-        )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run a local GitHub-style analytics dashboard for any git repository."
+        description="Run a terminal-based local git repository viewer with Textual."
     )
     parser.add_argument("repo_dir", help="Path to local git repository")
     parser.add_argument(
@@ -1493,16 +688,476 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Comma-separated additional directory names to ignore in language scanning",
     )
-    parser.add_argument("--host", default="127.0.0.1", help="Host for Dash server")
-    parser.add_argument("--port", type=int, default=8050, help="Port for Dash server")
-    parser.add_argument("--debug", action="store_true", help="Enable Dash debug mode")
     return parser.parse_args()
+
+
+class GitViewerTUI(App[None]):
+    CSS = """
+    Screen {
+        background: #0d1117;
+        color: #c9d1d9;
+    }
+
+    #controls {
+        height: 3;
+        margin: 0 1 0 1;
+        padding: 0 1;
+        border: solid #30363d;
+        background: #161b22;
+        content-align: left middle;
+    }
+
+    #summary-bar {
+        display: none;
+        padding: 0 1;
+        border: solid #30363d;
+        background: #11161d;
+    }
+
+    #body {
+        layout: horizontal;
+        height: 1fr;
+        margin: 0 1 1 1;
+    }
+
+    #left-pane {
+        width: 2fr;
+        margin-right: 1;
+    }
+
+    #right-pane {
+        width: 1fr;
+    }
+
+    .panel {
+        border: solid #30363d;
+        background: #161b22;
+        margin-bottom: 1;
+        padding: 1;
+    }
+
+    .panel-title {
+        color: #8b949e;
+        text-style: bold;
+        margin-bottom: 0;
+    }
+
+    #graph-panel {
+        height: 11;
+    }
+
+    #commits-panel {
+        height: 1fr;
+    }
+
+    #details-panel {
+        height: 12;
+    }
+
+    #languages-panel {
+        height: 1fr;
+    }
+
+    #control-content, #language-summary {
+        color: #c9d1d9;
+    }
+
+    DataTable {
+        height: 1fr;
+    }
+    """
+
+    BINDINGS = [
+        ("q", "quit", "Quit"),
+        ("b", "cycle_branch", "Cycle Branch"),
+        ("[", "prev_year", "Prev Year"),
+        ("]", "next_year", "Next Year"),
+        ("r", "cycle_range", "Cycle Range"),
+        ("j", "day_down", "Next Day"),
+        ("k", "day_up", "Prev Day"),
+        ("n", "next_language", "Next Language"),
+        ("p", "prev_language", "Prev Language"),
+    ]
+
+    selected_branch: reactive[str]
+    selected_range: reactive[str]
+    selected_year: reactive[int]
+    selected_day: reactive[dt.date | None]
+    selected_language: reactive[str]
+    selected_commit_hash: reactive[str | None]
+
+    def __init__(self, context: RepoContext, service: RepoService) -> None:
+        super().__init__()
+        self.context = context
+        self.service = service
+        self.selected_branch = context.current_branch
+        self.selected_range = "all"
+        initial_branch = service.get_branch_data(context.current_branch)
+        self.selected_year = max(initial_branch.years) if initial_branch.years else dt.date.today().year
+        self.selected_day = None
+        self.selected_language = (
+            context.language_stats[0]["language"] if context.language_stats else "Other"
+        )
+        self.selected_commit_hash = None
+        self._day_keys: list[dt.date] = []
+        self._language_keys: list[str] = [item["language"] for item in context.language_stats]
+        self._suspend_table_events = False
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=True)
+        with Static(id="controls"):
+            yield Static(id="control-content")
+
+        with Static(id="summary-bar"):
+            yield Static(id="summary-content")
+
+        with Horizontal(id="body"):
+            with Vertical(id="left-pane"):
+                with Vertical(id="graph-panel", classes="panel"):
+                    yield Static("Contribution Activity", classes="panel-title")
+                    yield Static(id="graph-content")
+                with Vertical(id="commits-panel", classes="panel"):
+                    yield Static("Year Commits", classes="panel-title")
+                    yield DataTable(id="commits-table")
+            with Vertical(id="right-pane"):
+                with Vertical(id="details-panel", classes="panel"):
+                    yield Static("Selected Day / Commit", classes="panel-title")
+                    yield DataTable(id="days-table")
+                    yield Static(id="day-details")
+                with Vertical(id="languages-panel", classes="panel"):
+                    yield Static("Languages / Files", classes="panel-title")
+                    yield Static(id="language-summary")
+                    yield Static(id="language-files")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.title = f"{self.context.project_name} - TUI"
+        print(f"\033]0;{self.context.project_name} - Git Viewer\007", end="", flush=True)
+        self.query_one("#commits-table", DataTable).cursor_type = "row"
+        self.query_one("#days-table", DataTable).cursor_type = "row"
+
+        commits_table = self.query_one("#commits-table", DataTable)
+        commits_table.show_horizontal_scrollbar = False
+        commits_table.add_column("Hash", width=8)
+        commits_table.add_column("Message", width=28)
+        commits_table.add_column("Author", width=12)
+        commits_table.add_column("When", width=7)
+        commits_table.add_column("Files", width=5)
+
+        days_table = self.query_one("#days-table", DataTable)
+        days_table.add_column("Date", width=12)
+        days_table.add_column("Commits", width=7)
+
+        self._refresh_year_options()
+        self.refresh_view()
+
+    def _refresh_year_options(self) -> None:
+        branch_data = self.service.get_branch_data(self.selected_branch)
+        commits = filter_commits(branch_data.commits, self.selected_range, None)
+        years = sorted({commit.authored_date.year for commit in commits}) or branch_data.years
+        if self.selected_year not in years and years:
+            self.selected_year = max(years)
+
+    def _filtered_branch_data(self) -> tuple[BranchData, list[CommitRecord]]:
+        branch_data = self.service.get_branch_data(self.selected_branch)
+        commits = filter_commits(branch_data.commits, self.selected_range, self.selected_year)
+        return branch_data, commits
+
+    def refresh_view(self) -> None:
+        self._suspend_table_events = True
+        branch_data, commits = self._filtered_branch_data()
+        counts: collections.Counter[dt.date] = collections.Counter(
+            commit.authored_date for commit in commits
+        )
+
+        if self.selected_day is None or self.selected_day not in counts:
+            self.selected_day = max(counts) if counts else None
+        if self.selected_commit_hash not in {commit.commit_hash for commit in commits}:
+            day_commits = [
+                commit for commit in commits if self.selected_day and commit.authored_date == self.selected_day
+            ]
+            self.selected_commit_hash = day_commits[0].commit_hash if day_commits else (commits[0].commit_hash if commits else None)
+
+        self.query_one("#control-content", Static).update(
+            build_control_text(
+                self.selected_branch,
+                self.selected_range,
+                self.selected_year,
+                self.selected_language,
+            )
+        )
+        self.query_one("#summary-content", Static).update(
+            build_summary_text(
+                self.context.project_name,
+                self.selected_branch,
+                self.selected_year,
+                commits,
+                self.context.language_stats,
+            )
+        )
+        self._update_commits_table(commits)
+        self._update_days_table(counts)
+        self._update_selection_views(commits, counts)
+        self.query_one("#language-summary", Static).update(
+            build_language_summary(self.context.language_stats, self.selected_language)
+        )
+        self._update_language_files(commits)
+        self._suspend_table_events = False
+
+    def _update_selection_views(
+        self,
+        commits: list[CommitRecord],
+        counts: collections.Counter[dt.date],
+    ) -> None:
+        self.query_one("#graph-content", Static).update(
+            render_contribution_graph(counts, self.selected_year, self.selected_day)
+        )
+        self._update_day_details(commits)
+
+    def _update_commits_table(self, commits: list[CommitRecord]) -> None:
+        table = self.query_one("#commits-table", DataTable)
+        table.scroll_home(immediate=True, x_axis=True, y_axis=True)
+        table.clear(columns=False)
+        now = dt.datetime.utcnow()
+        for commit in commits[:30]:
+            table.add_row(
+                commit.commit_hash[:7],
+                truncate_middle(commit.message, 28),
+                truncate_middle(commit.author_name, 12),
+                rel_time(commit.authored_at, now),
+                str(len(commit.changed_files)),
+                key=commit.commit_hash,
+            )
+        if self.selected_commit_hash in {commit.commit_hash for commit in commits[:30]}:
+            try:
+                row_index = [commit.commit_hash for commit in commits[:30]].index(self.selected_commit_hash)
+                table.move_cursor(row=row_index, animate=False, scroll=True)
+            except Exception:
+                pass
+
+    def _update_days_table(self, counts: collections.Counter[dt.date]) -> None:
+        table = self.query_one("#days-table", DataTable)
+        table.clear(columns=False)
+        self._day_keys = sorted(counts.keys(), reverse=True)
+        for day in self._day_keys[:20]:
+            table.add_row(day.isoformat(), str(counts[day]), key=day.isoformat())
+        self._sync_days_cursor()
+
+    def _update_day_details(self, commits: list[CommitRecord]) -> None:
+        details = Text()
+        if self.selected_day is None:
+            details.append("No active day in current selection.", style="bold #8b949e")
+            self.query_one("#day-details", Static).update(details)
+            return
+
+        day_commits = [commit for commit in commits if commit.authored_date == self.selected_day]
+        details.append(
+            f"{self.selected_day.isoformat()}  {len(day_commits)} commit(s)\n",
+            style="bold #c9d1d9",
+        )
+        selected_commit = next(
+            (commit for commit in day_commits if commit.commit_hash == self.selected_commit_hash),
+            day_commits[0] if day_commits else None,
+        )
+        if selected_commit is None:
+            details.append("No commit selected.", style="#8b949e")
+            self.query_one("#day-details", Static).update(details)
+            return
+
+        details.append(f"{selected_commit.commit_hash[:7]} ", style="bold #58a6ff")
+        details.append(f"{selected_commit.author_name}  {selected_commit.message}\n")
+        for path in selected_commit.changed_files[:6]:
+            details.append(f"  - {truncate_middle(path, 44)}\n", style="#8b949e")
+        if len(selected_commit.changed_files) > 6:
+            details.append(
+                f"  ... {len(selected_commit.changed_files) - 6} more files\n",
+                style="#8b949e",
+            )
+        self.query_one("#day-details", Static).update(details)
+
+    def _update_language_files(self, commits: list[CommitRecord]) -> None:
+        activity = aggregate_file_activity(commits)
+        files = self.context.files_by_language.get(self.selected_language, [])
+        now = dt.datetime.utcnow()
+
+        lines = Text()
+        lines.append(
+            f"{self.selected_language}  ({len(files)} files in repo)\n",
+            style="bold #c9d1d9",
+        )
+        for path in files[:14]:
+            info = activity.get(path)
+            if info:
+                top_author = info["authors"].most_common(1)[0][0] if info["authors"] else "-"
+                lines.append(
+                    f"{truncate_middle(path, 22)} | {info['commits']} | {truncate_middle(top_author, 10)} | {rel_time(info['last_modified'], now)}\n",
+                    style="#8b949e",
+                )
+            else:
+                lines.append(
+                    f"{truncate_middle(path, 22)} | no activity in selection\n",
+                    style="#8b949e",
+                )
+        if len(files) > 14:
+            lines.append(f"... {len(files) - 14} more files", style="#8b949e")
+        self.query_one("#language-files", Static).update(lines)
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        if self._suspend_table_events:
+            return
+        if event.data_table.id == "days-table":
+            row_key = event.row_key.value if event.row_key else None
+            if row_key:
+                self.selected_day = dt.date.fromisoformat(str(row_key))
+                branch_data, commits = self._filtered_branch_data()
+                day_commits = [
+                    commit for commit in commits if commit.authored_date == self.selected_day
+                ]
+                self.selected_commit_hash = day_commits[0].commit_hash if day_commits else None
+                counts: collections.Counter[dt.date] = collections.Counter(
+                    commit.authored_date for commit in commits
+                )
+                self._update_selection_views(commits, counts)
+        elif event.data_table.id == "commits-table":
+            row_key = event.row_key.value if event.row_key else None
+            if row_key:
+                self.selected_commit_hash = str(row_key)
+                _branch_data, commits = self._filtered_branch_data()
+                selected = next(
+                    (commit for commit in commits if commit.commit_hash == self.selected_commit_hash),
+                    None,
+                )
+                if selected is not None:
+                    self.selected_day = selected.authored_date
+                counts: collections.Counter[dt.date] = collections.Counter(
+                    commit.authored_date for commit in commits
+                )
+                self._sync_days_cursor()
+                self._update_selection_views(commits, counts)
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        if self._suspend_table_events:
+            return
+        if event.data_table.id == "days-table":
+            row_key = event.row_key.value if event.row_key else None
+            if row_key:
+                next_day = dt.date.fromisoformat(str(row_key))
+                if next_day != self.selected_day:
+                    self.selected_day = next_day
+                    _branch_data, commits = self._filtered_branch_data()
+                    day_commits = [
+                        commit for commit in commits if commit.authored_date == self.selected_day
+                    ]
+                    self.selected_commit_hash = day_commits[0].commit_hash if day_commits else None
+                    counts: collections.Counter[dt.date] = collections.Counter(
+                        commit.authored_date for commit in commits
+                    )
+                    self._update_selection_views(commits, counts)
+        elif event.data_table.id == "commits-table":
+            row_key = event.row_key.value if event.row_key else None
+            if row_key and str(row_key) != self.selected_commit_hash:
+                self.selected_commit_hash = str(row_key)
+                _branch_data, commits = self._filtered_branch_data()
+                selected = next(
+                    (commit for commit in commits if commit.commit_hash == self.selected_commit_hash),
+                    None,
+                )
+                if selected is not None:
+                    self.selected_day = selected.authored_date
+                counts: collections.Counter[dt.date] = collections.Counter(
+                    commit.authored_date for commit in commits
+                )
+                self._sync_days_cursor()
+                self._update_selection_views(commits, counts)
+
+    def action_prev_year(self) -> None:
+        branch_data = self.service.get_branch_data(self.selected_branch)
+        years = sorted(branch_data.years)
+        if self.selected_year in years:
+            idx = years.index(self.selected_year)
+            if idx > 0:
+                self.selected_year = years[idx - 1]
+                self.refresh_view()
+
+    def action_next_year(self) -> None:
+        branch_data = self.service.get_branch_data(self.selected_branch)
+        years = sorted(branch_data.years)
+        if self.selected_year in years:
+            idx = years.index(self.selected_year)
+            if idx < len(years) - 1:
+                self.selected_year = years[idx + 1]
+                self.refresh_view()
+
+    def action_cycle_range(self) -> None:
+        values = [value for _label, value in RANGE_PRESETS]
+        idx = values.index(self.selected_range)
+        self.selected_range = values[(idx + 1) % len(values)]
+        self._refresh_year_options()
+        self.refresh_view()
+
+    def action_cycle_branch(self) -> None:
+        branches = self.context.branches
+        idx = branches.index(self.selected_branch)
+        self.selected_branch = branches[(idx + 1) % len(branches)]
+        self._refresh_year_options()
+        self.refresh_view()
+
+    def action_day_down(self) -> None:
+        if not self._day_keys:
+            return
+        if self.selected_day not in self._day_keys:
+            self.selected_day = self._day_keys[0]
+        else:
+            idx = self._day_keys.index(self.selected_day)
+            if idx < len(self._day_keys) - 1:
+                self.selected_day = self._day_keys[idx + 1]
+        self._sync_days_cursor()
+        self.refresh_view()
+
+    def action_day_up(self) -> None:
+        if not self._day_keys:
+            return
+        if self.selected_day not in self._day_keys:
+            self.selected_day = self._day_keys[0]
+        else:
+            idx = self._day_keys.index(self.selected_day)
+            if idx > 0:
+                self.selected_day = self._day_keys[idx - 1]
+        self._sync_days_cursor()
+        self.refresh_view()
+
+    def _sync_days_cursor(self) -> None:
+        if self.selected_day not in self._day_keys:
+            return
+        table = self.query_one("#days-table", DataTable)
+        row_index = self._day_keys.index(self.selected_day)
+        try:
+            table.move_cursor(row=row_index)
+        except Exception:
+            pass
+
+    def action_next_language(self) -> None:
+        if not self._language_keys:
+            self._language_keys = [item["language"] for item in self.context.language_stats]
+        if not self._language_keys:
+            return
+        idx = self._language_keys.index(self.selected_language)
+        self.selected_language = self._language_keys[(idx + 1) % len(self._language_keys)]
+        self.refresh_view()
+
+    def action_prev_language(self) -> None:
+        if not self._language_keys:
+            self._language_keys = [item["language"] for item in self.context.language_stats]
+        if not self._language_keys:
+            return
+        idx = self._language_keys.index(self.selected_language)
+        self.selected_language = self._language_keys[(idx - 1) % len(self._language_keys)]
+        self.refresh_view()
 
 
 def main() -> None:
     args = parse_args()
     repo_dir = os.path.abspath(args.repo_dir)
-
     if not os.path.isdir(repo_dir):
         print(f"Error: directory does not exist: {repo_dir}")
         sys.exit(1)
@@ -1520,135 +1175,11 @@ def main() -> None:
             exclude_languages=exclude_languages,
             extra_ignored_dirs=ignore_dirs,
         )
-        # Warm current branch cache for faster first render.
-        service.get_branch_data(context.current_branch)
     except RuntimeError as exc:
         print(f"Error: {exc}")
         sys.exit(1)
 
-    app = dash.Dash(__name__)
-    app.title = f"Git Viewer - {context.project_name}"
-    app.index_string = """
-    <!DOCTYPE html>
-    <html>
-        <head>
-            {%metas%}
-            <title>{%title%}</title>
-            {%favicon%}
-            {%css%}
-            <style>
-                html, body {
-                    margin: 0;
-                    padding: 0;
-                    background: var(--bg);
-                    overflow: hidden;
-                }
-                .theme-dark {
-                    --bg: #0d1117;
-                    --panel: #161b22;
-                    --border: #30363d;
-                    --text: #c9d1d9;
-                    --subtle: #8b949e;
-                    --link: #58a6ff;
-                    --good: #3fb950;
-                    --heat0: #161b22;
-                    --heat1: #0e4429;
-                    --heat2: #006d32;
-                    --heat3: #26a641;
-                    --heat4: #39d353;
-                    color-scheme: dark;
-                }
-                .theme-light {
-                    --bg: #f6f8fa;
-                    --panel: #ffffff;
-                    --border: #d0d7de;
-                    --text: #24292f;
-                    --subtle: #57606a;
-                    --link: #0969da;
-                    --good: #1f883d;
-                    --heat0: #ebedf0;
-                    --heat1: #9be9a8;
-                    --heat2: #40c463;
-                    --heat3: #30a14e;
-                    --heat4: #216e39;
-                    color-scheme: light;
-                }
-                .Select-control, .Select-menu-outer, .Select-menu, .Select-value-label,
-                .Select-placeholder, .Select-input > input {
-                    background-color: var(--bg) !important;
-                    color: var(--text) !important;
-                    border-color: var(--border) !important;
-                }
-                .themed-dropdown > div,
-                .themed-dropdown [class*="control"],
-                .themed-dropdown [class*="menu"] {
-                    background-color: var(--bg) !important;
-                    border-color: var(--border) !important;
-                    color: var(--text) !important;
-                }
-                .themed-dropdown [class*="singleValue"],
-                .themed-dropdown [class*="placeholder"],
-                .themed-dropdown [class*="option"],
-                .themed-dropdown input {
-                    color: var(--text) !important;
-                }
-                .theme-dark .themed-dropdown select,
-                .theme-dark .themed-dropdown option {
-                    background-color: #0d1117 !important;
-                    color: #c9d1d9 !important;
-                    border-color: #30363d !important;
-                }
-                .theme-light .themed-dropdown select,
-                .theme-light .themed-dropdown option {
-                    background-color: #f6f8fa !important;
-                    color: #24292f !important;
-                    border-color: #d0d7de !important;
-                }
-                .VirtualizedSelectOption { background-color: var(--bg) !important; color: var(--text) !important; }
-                .VirtualizedSelectFocusedOption { background-color: var(--panel) !important; color: var(--text) !important; }
-                button {
-                    background: var(--panel);
-                    color: var(--text);
-                    border: 1px solid var(--border);
-                    border-radius: 6px;
-                    padding: 5px 10px;
-                    cursor: pointer;
-                }
-                button:hover { filter: brightness(1.08); }
-                .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace; }
-                .tabs-shell {
-                    background: transparent !important;
-                    border: none !important;
-                }
-                .tabs-shell .tab {
-                    background: transparent !important;
-                    border: none !important;
-                    color: var(--subtle) !important;
-                    padding: 6px 10px !important;
-                }
-                .tabs-shell .tab--selected {
-                    color: var(--text) !important;
-                    border-bottom: 2px solid var(--good) !important;
-                }
-            </style>
-        </head>
-        <body>
-            {%app_entry%}
-            <footer>
-                {%config%}
-                {%scripts%}
-                {%renderer%}
-            </footer>
-        </body>
-    </html>
-    """
-    app.layout = build_layout(context)
-    register_callbacks(app, context, service)
-
-    print(f"Repository: {context.project_name}")
-    print(f"Current branch: {context.current_branch}")
-    print(f"Serving at: http://{args.host}:{args.port}")
-    app.run(host=args.host, port=args.port, debug=args.debug)
+    GitViewerTUI(context, service).run()
 
 
 if __name__ == "__main__":
