@@ -698,8 +698,7 @@ class BranchPickerScreen(ModalScreen[str | None]):
     }
 
     #branch-picker-subtitle {
-        color: #8b949e;
-        margin: 0 1 0 1;
+        display: none;
     }
 
     #branch-picker-help {
@@ -717,7 +716,7 @@ class BranchPickerScreen(ModalScreen[str | None]):
     }
 
     #branch-picker-list {
-        height: 3;
+        height: 4;
         margin: 0 1;
         background: #0d1117;
         color: #c9d1d9;
@@ -741,7 +740,7 @@ class BranchPickerScreen(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="branch-picker"):
-            yield Static("Select Branch", id="branch-picker-title")
+            yield Static("Select Branch  /  type to filter", id="branch-picker-title")
             yield Static("Type to filter. Up/Down move the selection.", id="branch-picker-subtitle")
             yield Input(placeholder="Filter branches", id="branch-picker-filter")
             yield Static(id="branch-picker-list")
@@ -753,37 +752,37 @@ class BranchPickerScreen(ModalScreen[str | None]):
 
     def _refresh_branch_list(self) -> None:
         widget = self.query_one("#branch-picker-list", Static)
+        row_width = max(24, (widget.size.width - 2) if widget.size.width > 2 else 40)
+        lines = Text()
+        lines.append("Branch".ljust(row_width), style="bold")
+        lines.append("\n")
         if not self.filtered_branches:
             self.highlighted_branch = ""
-            widget.update(Text("No matching branches", style="#8b949e"))
+            lines.append("No matching branches".ljust(row_width), style="dim")
+            widget.update(lines)
             return
         if self.highlighted_branch not in self.filtered_branches:
             self.highlighted_branch = self.filtered_branches[0]
-        lines = Text()
-        max_visible = 3
-        row_width = 36
+        max_visible = 2
         selected_index = self.filtered_branches.index(self.highlighted_branch)
         start = max(0, selected_index - (max_visible // 2))
         end = min(len(self.filtered_branches), start + max_visible)
         start = max(0, end - max_visible)
 
         if start > 0:
-            lines.append(f"... {start} more\n", style="#8b949e")
+            lines.append(f"... {start} more\n", style="dim")
         for branch in self.filtered_branches[start:end]:
             is_current = branch == self.current_branch
             is_highlighted = branch == self.highlighted_branch
-            prefix = ">" if is_highlighted else " "
             style = "bold reverse" if is_highlighted else ""
-            branch_text = truncate_middle(branch, 22)
-            label = f"{prefix} {branch_text}"
+            prefix = "* " if is_current else "  "
+            branch_text = truncate_middle(branch, max(8, row_width - len(prefix)))
+            label = f"{prefix}{branch_text}"
             suffix = "\n" if branch != self.filtered_branches[end - 1] or end < len(self.filtered_branches) else ""
             lines.append(label.ljust(row_width), style=style)
-            if is_current:
-                current_style = "reverse dim" if is_highlighted else "dim"
-                lines.append(" current", style=current_style)
             lines.append(suffix)
         if end < len(self.filtered_branches):
-            lines.append(f"\n... {len(self.filtered_branches) - end} more", style="#8b949e")
+            lines.append(f"\n... {len(self.filtered_branches) - end} more", style="dim")
         widget.update(lines)
 
     def _move_highlight(self, direction: int) -> None:
