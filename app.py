@@ -1035,11 +1035,14 @@ class GitViewerTUI(App[None]):
 
     .body-row {
         layout: horizontal;
-        height: 1fr;
     }
 
     .body-row.top {
         margin-bottom: 1;
+    }
+
+    .body-row.bottom {
+        height: 1fr;
     }
 
     .left-column {
@@ -1052,13 +1055,20 @@ class GitViewerTUI(App[None]):
     }
 
     .panel {
-        margin-bottom: 1;
+        margin-bottom: 0;
         padding: 1 1;
     }
 
     .panel-title {
         text-style: bold;
         margin-bottom: 0;
+    }
+
+    #graph-panel,
+    #details-panel,
+    #commits-panel,
+    #languages-panel {
+        height: 1fr;
     }
 
     #day-details-scroll {
@@ -1135,7 +1145,7 @@ class GitViewerTUI(App[None]):
             yield Static(id="summary-content")
 
         with Vertical(id="body"):
-            with Horizontal(classes="body-row top"):
+            with Horizontal(id="top-row", classes="body-row top"):
                 with Vertical(classes="left-column"):
                     with Vertical(id="graph-panel", classes="panel"):
                         yield Static("Contribution Activity", id="graph-title", classes="panel-title")
@@ -1146,7 +1156,7 @@ class GitViewerTUI(App[None]):
                         with VerticalScroll(id="day-details-scroll"):
                             yield Static(id="day-details")
                         yield Static(id="day-scroll-hint")
-            with Horizontal(classes="body-row bottom"):
+            with Horizontal(id="bottom-row", classes="body-row bottom"):
                 with Vertical(classes="left-column"):
                     with Vertical(id="commits-panel", classes="panel"):
                         yield Static("Year Commits", classes="panel-title")
@@ -1173,11 +1183,16 @@ class GitViewerTUI(App[None]):
         commits_table.add_column("Files", width=5)
 
         self._apply_theme()
+        self._apply_row_heights()
         self._refresh_year_options()
         self.refresh_view()
 
     def on_theme_change(self, old_value: str, new_value: str) -> None:
         self._apply_theme()
+        self.refresh_view()
+
+    def on_resize(self) -> None:
+        self._apply_row_heights()
         self.refresh_view()
 
     def _apply_theme(self) -> None:
@@ -1196,6 +1211,20 @@ class GitViewerTUI(App[None]):
             title.styles.color = palette.muted
 
         self.query_one("#day-scroll-hint", Static).styles.color = palette.muted
+
+    def _apply_row_heights(self) -> None:
+        total_height = self.size.height
+        if total_height <= 26:
+            top_height = 12
+        elif total_height <= 34:
+            top_height = 13
+        elif total_height <= 42:
+            top_height = 16
+        else:
+            top_height = 18
+
+        self.query_one("#top-row", Horizontal).styles.height = top_height
+        self.query_one("#bottom-row", Horizontal).styles.height = "1fr"
 
     def _refresh_year_options(self) -> None:
         branch_data = self.service.get_branch_data(self.selected_branch)
@@ -1393,7 +1422,11 @@ class GitViewerTUI(App[None]):
                     style=make_style(palette.foreground),
                 )
                 lines.append(
-                    f"  {info['commits']} commits  {truncate_middle(top_author, 10)}  {rel_time(info['last_modified'], now)}\n",
+                    f"  {info['commits']} commits\n",
+                    style=make_style(palette.muted),
+                )
+                lines.append(
+                    f"  {truncate_middle(top_author, 12)}  {rel_time(info['last_modified'], now)}\n",
                     style=make_style(palette.muted),
                 )
             else:
