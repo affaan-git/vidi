@@ -685,7 +685,7 @@ class BranchPickerScreen(ModalScreen[str | None]):
 
     #branch-picker {
         width: 52;
-        height: 14;
+        height: 16;
         border: solid #30363d;
         background: #161b22;
         padding: 1 1;
@@ -694,13 +694,19 @@ class BranchPickerScreen(ModalScreen[str | None]):
     #branch-picker-title {
         color: #c9d1d9;
         text-style: bold;
-        margin: 0 1 1 1;
+        margin: 0 1;
+    }
+
+    #branch-picker-subtitle {
+        color: #8b949e;
+        margin: 0 1 0 1;
     }
 
     #branch-picker-help {
         color: #8b949e;
         margin: 1 1 0 1;
         content-align: right middle;
+        height: 1;
     }
 
     #branch-picker-filter {
@@ -711,7 +717,7 @@ class BranchPickerScreen(ModalScreen[str | None]):
     }
 
     #branch-picker-list {
-        height: 5;
+        height: 3;
         margin: 0 1;
         background: #0d1117;
         color: #c9d1d9;
@@ -735,7 +741,8 @@ class BranchPickerScreen(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="branch-picker"):
-            yield Static("Select Branch  /  type to filter", id="branch-picker-title")
+            yield Static("Select Branch", id="branch-picker-title")
+            yield Static("Type to filter. Up/Down move the selection.", id="branch-picker-subtitle")
             yield Input(placeholder="Filter branches", id="branch-picker-filter")
             yield Static(id="branch-picker-list")
             yield Static("Enter choose   Esc cancel", id="branch-picker-help")
@@ -753,7 +760,8 @@ class BranchPickerScreen(ModalScreen[str | None]):
         if self.highlighted_branch not in self.filtered_branches:
             self.highlighted_branch = self.filtered_branches[0]
         lines = Text()
-        max_visible = 4
+        max_visible = 3
+        row_width = 36
         selected_index = self.filtered_branches.index(self.highlighted_branch)
         start = max(0, selected_index - (max_visible // 2))
         end = min(len(self.filtered_branches), start + max_visible)
@@ -765,10 +773,15 @@ class BranchPickerScreen(ModalScreen[str | None]):
             is_current = branch == self.current_branch
             is_highlighted = branch == self.highlighted_branch
             prefix = ">" if is_highlighted else " "
-            marker = "*" if is_current else " "
-            style = "bold #ffffff on #1f6feb" if is_highlighted else "#c9d1d9"
+            style = "bold reverse" if is_highlighted else ""
+            branch_text = truncate_middle(branch, 22)
+            label = f"{prefix} {branch_text}"
             suffix = "\n" if branch != self.filtered_branches[end - 1] or end < len(self.filtered_branches) else ""
-            lines.append(f"{prefix} {marker} {truncate_middle(branch, 34)}{suffix}", style=style)
+            lines.append(label.ljust(row_width), style=style)
+            if is_current:
+                current_style = "reverse dim" if is_highlighted else "dim"
+                lines.append(" current", style=current_style)
+            lines.append(suffix)
         if end < len(self.filtered_branches):
             lines.append(f"\n... {len(self.filtered_branches) - end} more", style="#8b949e")
         widget.update(lines)
