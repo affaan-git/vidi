@@ -634,7 +634,7 @@ def render_contribution_graph(
                 month_line[pos] = char
         last_end = index + len(short) + 1
 
-    header = Text("    " + "".join(month_line))
+    header = Text("    " + "".join(month_line), style=make_style(palette.muted))
 
     lines: list[Text] = [header]
     day_labels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
@@ -643,9 +643,11 @@ def render_contribution_graph(
         palette.foreground, 0.10 if palette.background.brightness < 0.5 else 0.06
     ).hex6
     heatmap_styles = [inactive_style, *HEATMAP_STYLES]
+    cell_char = "■"
+    selected_char = "▣"
 
     for row_index, day_name in enumerate(day_labels):
-        line = Text(f"{day_name} ")
+        line = Text(f"{day_name} ", style=make_style(palette.muted))
         for col_index, value in enumerate(grid[row_index]):
             if value <= 0:
                 style = heatmap_styles[0]
@@ -657,14 +659,14 @@ def render_contribution_graph(
                 style = heatmap_styles[bucket]
             cell_day = first_sunday + dt.timedelta(days=col_index * 7 + row_index)
             if selected_day == cell_day:
-                line.append("▣", style=f"bold {style}")
+                line.append(selected_char, style=f"bold {style}")
             else:
-                line.append("▪", style=style)
+                line.append(cell_char, style=style)
         lines.append(line)
 
     legend = Text("Less ", style=make_style(palette.muted, bold=True))
     for style in heatmap_styles:
-        legend.append("▪", style=style)
+        legend.append(cell_char, style=style)
     legend.append(" More", style=make_style(palette.muted, bold=True))
     return Group(*lines, legend)
 
@@ -720,14 +722,20 @@ def build_summary_text(
 
 def build_graph_title(branch: str, range_value: str, year: int, palette: ThemePalette) -> Text:
     range_label = dict(RANGE_PRESETS).get(range_value, range_value)
-    title = Text()
-    title.append("Contribution Activity", style=make_style(palette.muted, bold=True))
-    title.append("  ", style=make_style(palette.muted))
-    title.append(branch, style=make_style(palette.foreground))
-    title.append(" · ", style=make_style(palette.muted))
-    title.append(range_label, style=make_style(palette.foreground))
-    title.append(" · ", style=make_style(palette.muted))
-    title.append(str(year), style=make_style(palette.foreground, bold=True))
+    status = Text()
+    status.append(branch, style=make_style(palette.foreground))
+    status.append(" · ", style=make_style(palette.muted))
+    status.append(range_label, style=make_style(palette.foreground))
+    status.append(" · ", style=make_style(palette.muted))
+    status.append(str(year), style=make_style(palette.foreground, bold=True))
+
+    title = Table.grid(expand=True)
+    title.add_column(ratio=1)
+    title.add_column(justify="right")
+    title.add_row(
+        Text("Contribution Activity", style=make_style(palette.muted, bold=True)),
+        status,
+    )
     return title
 
 
@@ -1020,40 +1028,37 @@ class GitViewerTUI(App[None]):
     }
 
     #body {
-        layout: horizontal;
+        layout: vertical;
         height: 1fr;
         margin: 1 1 1 1;
     }
 
-    #left-pane {
+    .body-row {
+        layout: horizontal;
+        height: 1fr;
+    }
+
+    .body-row.top {
+        margin-bottom: 1;
+    }
+
+    .left-column {
         width: 2fr;
         margin-right: 1;
     }
 
-    #right-pane {
+    .right-column {
         width: 1fr;
     }
 
     .panel {
         margin-bottom: 1;
-        padding: 1 2;
+        padding: 1 1;
     }
 
     .panel-title {
         text-style: bold;
         margin-bottom: 0;
-    }
-
-    #graph-panel {
-        height: 11;
-    }
-
-    #commits-panel {
-        height: 1fr;
-    }
-
-    #details-panel {
-        height: 12;
     }
 
     #day-details-scroll {
@@ -1129,24 +1134,28 @@ class GitViewerTUI(App[None]):
         with Static(id="summary-bar"):
             yield Static(id="summary-content")
 
-        with Horizontal(id="body"):
-            with Vertical(id="left-pane"):
-                with Vertical(id="graph-panel", classes="panel"):
-                    yield Static("Contribution Activity", id="graph-title", classes="panel-title")
-                    yield Static(id="graph-content")
-                with Vertical(id="commits-panel", classes="panel"):
-                    yield Static("Year Commits", classes="panel-title")
-                    yield DataTable(id="commits-table")
-            with Vertical(id="right-pane"):
-                with Vertical(id="details-panel", classes="panel"):
-                    yield Static("Commit Details", id="details-title", classes="panel-title")
-                    with VerticalScroll(id="day-details-scroll"):
-                        yield Static(id="day-details")
-                    yield Static(id="day-scroll-hint")
-                with Vertical(id="languages-panel", classes="panel"):
-                    yield Static("Languages / Files", classes="panel-title")
-                    yield Static(id="language-summary")
-                    yield Static(id="language-files")
+        with Vertical(id="body"):
+            with Horizontal(classes="body-row top"):
+                with Vertical(classes="left-column"):
+                    with Vertical(id="graph-panel", classes="panel"):
+                        yield Static("Contribution Activity", id="graph-title", classes="panel-title")
+                        yield Static(id="graph-content")
+                with Vertical(classes="right-column"):
+                    with Vertical(id="details-panel", classes="panel"):
+                        yield Static("Commit Details", id="details-title", classes="panel-title")
+                        with VerticalScroll(id="day-details-scroll"):
+                            yield Static(id="day-details")
+                        yield Static(id="day-scroll-hint")
+            with Horizontal(classes="body-row bottom"):
+                with Vertical(classes="left-column"):
+                    with Vertical(id="commits-panel", classes="panel"):
+                        yield Static("Year Commits", classes="panel-title")
+                        yield DataTable(id="commits-table")
+                with Vertical(classes="right-column"):
+                    with Vertical(id="languages-panel", classes="panel"):
+                        yield Static("Languages / Files", classes="panel-title")
+                        yield Static(id="language-summary")
+                        yield Static(id="language-files")
         yield Footer()
 
     def on_mount(self) -> None:
