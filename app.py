@@ -1060,6 +1060,16 @@ class GitViewerTUI(App[None]):
         margin-bottom: 1;
     }
 
+    #graph-panel {
+        height: auto;
+        min-height: 12;
+    }
+
+    #details-panel {
+        height: 2fr;
+        min-height: 10;
+    }
+
     #day-details-scroll {
         height: 1fr;
         overflow-y: auto;
@@ -1071,20 +1081,25 @@ class GitViewerTUI(App[None]):
         content-align: right middle;
     }
 
-    #commits-panel,
-    #languages-panel {
+    #commits-panel {
         height: 1fr;
+        min-height: 10;
     }
 
-    #language-summary {
+    #languages-panel {
+        height: 1fr;
+        min-height: 8;
+    }
+
+    #graph-content,
+    #language-summary,
+    #language-files {
+        height: auto;
     }
 
     #day-details {
         height: auto;
         min-height: 1;
-    }
-
-    #language-files {
     }
 
     DataTable {
@@ -1170,7 +1185,6 @@ class GitViewerTUI(App[None]):
         commits_table.add_column("Files", width=5)
 
         self._apply_theme()
-        self._apply_panel_heights(self.size.height)
         self._refresh_year_options()
         self.refresh_view()
         self._mounted = True
@@ -1182,7 +1196,6 @@ class GitViewerTUI(App[None]):
     def on_resize(self, event: events.Resize) -> None:
         if not self._mounted:
             return
-        self._apply_panel_heights(event.size.height)
         self.refresh_view()
 
     def _apply_theme(self) -> None:
@@ -1201,24 +1214,6 @@ class GitViewerTUI(App[None]):
             title.styles.color = palette.muted
 
         self.query_one("#day-scroll-hint", Static).styles.color = palette.muted
-
-    def _apply_panel_heights(self, total_height: int) -> None:
-        graph_height = 14
-        if total_height <= 24:
-            details_height = 13
-        elif total_height <= 30:
-            details_height = 14
-        elif total_height <= 38:
-            details_height = 15
-        elif total_height <= 46:
-            details_height = 17
-        else:
-            details_height = 19
-
-        self.query_one("#graph-panel", Vertical).styles.height = graph_height
-        self.query_one("#commits-panel", Vertical).styles.height = "1fr"
-        self.query_one("#details-panel", Vertical).styles.height = details_height
-        self.query_one("#languages-panel", Vertical).styles.height = "1fr"
 
     def _refresh_year_options(self) -> None:
         branch_data = self.service.get_branch_data(self.selected_branch)
