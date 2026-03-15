@@ -682,19 +682,15 @@ class BranchPickerScreen(ModalScreen[str | None]):
     CSS = """
     BranchPickerScreen {
         align: center middle;
-        background: rgba(1, 4, 9, 0.7);
     }
 
     #branch-picker {
         width: 52;
-        height: 16;
-        border: solid #30363d;
-        background: #161b22;
+        height: 17;
         padding: 1 1;
     }
 
     #branch-picker-title {
-        color: #c9d1d9;
         text-style: bold;
         margin: 0 1;
     }
@@ -704,7 +700,6 @@ class BranchPickerScreen(ModalScreen[str | None]):
     }
 
     #branch-picker-help {
-        color: #8b949e;
         margin: 1 1 0 1;
         content-align: right middle;
         height: 1;
@@ -712,17 +707,11 @@ class BranchPickerScreen(ModalScreen[str | None]):
 
     #branch-picker-filter {
         margin: 0 1 1 1;
-        background: #0d1117;
-        border: solid #30363d;
-        color: #c9d1d9;
     }
 
     #branch-picker-list {
         height: 3;
         margin: 0 1;
-        background: #0d1117;
-        color: #c9d1d9;
-        border: solid #30363d;
         padding: 0 1;
     }
     """
@@ -744,6 +733,7 @@ class BranchPickerScreen(ModalScreen[str | None]):
         self._muted_style = Style(dim=True)
         self._current_tag_style = Style(bold=True)
         self._selected_current_tag_style = Style(reverse=True, bold=True)
+        self._max_visible_rows = 4
 
     def compose(self) -> ComposeResult:
         with Vertical(id="branch-picker"):
@@ -822,7 +812,6 @@ class BranchPickerScreen(ModalScreen[str | None]):
     def _refresh_branch_list(self) -> None:
         widget = self.query_one("#branch-picker-list", Static)
         row_width = max(24, (widget.size.width - 2) if widget.size.width > 2 else 40)
-        max_visible = 3
         lines = Text()
         if not self.filtered_branches:
             self.highlighted_branch = ""
@@ -832,15 +821,15 @@ class BranchPickerScreen(ModalScreen[str | None]):
             return
         if self.highlighted_branch not in self.filtered_branches:
             self.highlighted_branch = self.filtered_branches[0]
-        visible_rows = min(max_visible, len(self.filtered_branches))
-        widget.styles.height = visible_rows + 2
+        total = len(self.filtered_branches)
         selected_index = self.filtered_branches.index(self.highlighted_branch)
-        start = max(0, selected_index - (visible_rows // 2))
-        end = min(len(self.filtered_branches), start + visible_rows)
-        start = max(0, end - visible_rows)
+        content_rows = min(self._max_visible_rows, total)
+        widget.styles.height = max(3, content_rows + 2)
 
-        if start > 0:
-            lines.append(f"... {start} more\n", style=self._muted_style)
+        start = max(0, selected_index - (content_rows // 2))
+        end = min(total, start + content_rows)
+        start = max(0, end - content_rows)
+
         for branch in self.filtered_branches[start:end]:
             is_current = branch == self.current_branch
             is_highlighted = branch == self.highlighted_branch
@@ -857,8 +846,6 @@ class BranchPickerScreen(ModalScreen[str | None]):
                 )
                 lines.append(current_label, style=current_style)
             lines.append(suffix)
-        if end < len(self.filtered_branches):
-            lines.append(f"\n... {len(self.filtered_branches) - end} more", style=self._muted_style)
         widget.update(lines)
 
     def _move_highlight(self, direction: int) -> None:
