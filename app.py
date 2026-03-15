@@ -710,9 +710,20 @@ class BranchPickerScreen(ModalScreen[str | None]):
         color: #c9d1d9;
     }
 
-    #branch-picker-table {
+    #branch-picker-list {
         height: 1fr;
         margin: 0 1;
+        background: #0d1117;
+        color: #c9d1d9;
+        border: solid #30363d;
+        overflow-y: auto;
+    }
+
+    #branch-picker-list-content {
+        height: auto;
+        min-height: 1;
+        width: 100%;
+        color: #c9d1d9;
     }
     """
 
@@ -733,25 +744,18 @@ class BranchPickerScreen(ModalScreen[str | None]):
         with Vertical(id="branch-picker"):
             yield Static("Select Branch  /  type to filter", id="branch-picker-title")
             yield Input(placeholder="Filter branches", id="branch-picker-filter")
-            yield DataTable(id="branch-picker-table")
+            with VerticalScroll(id="branch-picker-list"):
+                yield Static(id="branch-picker-list-content")
             yield Static("Enter choose   Esc cancel", id="branch-picker-help")
 
     def on_mount(self) -> None:
-        table = self.query_one("#branch-picker-table", DataTable)
-        table.cursor_type = "row"
-        table.show_horizontal_scrollbar = False
-        table.add_column("Branch", width=42)
-        self._refresh_branch_table()
+        self._refresh_branch_list()
         self.query_one("#branch-picker-filter", Input).focus()
 
-    def _refresh_branch_table(self) -> None:
-        table = self.query_one("#branch-picker-table", DataTable)
-        table.clear(columns=False)
-        for branch in self.filtered_branches:
-            label = f"* {branch}" if branch == self.current_branch else f"  {branch}"
-            table.add_row(truncate_middle(label, 42), key=branch)
+    def _refresh_branch_list(self) -> None:
         if not self.filtered_branches:
             self.highlighted_branch = ""
+            self.query_one("#branch-picker-list-content", Static).update("")
             return
         if self.highlighted_branch not in self.filtered_branches:
             self.highlighted_branch = (
@@ -759,11 +763,15 @@ class BranchPickerScreen(ModalScreen[str | None]):
                 if self.current_branch in self.filtered_branches
                 else self.filtered_branches[0]
             )
-        row_index = self.filtered_branches.index(self.highlighted_branch)
-        try:
-            table.move_cursor(row=row_index, animate=False, scroll=True)
-        except Exception:
-            pass
+        lines = Text()
+        for branch in self.filtered_branches:
+            is_current = branch == self.current_branch
+            is_highlighted = branch == self.highlighted_branch
+            prefix = ">" if is_highlighted else " "
+            marker = "*" if is_current else " "
+            style = "bold #ffffff on #1f6feb" if is_highlighted else "#c9d1d9"
+            lines.append(f"{prefix} {marker} {truncate_middle(branch, 36)}\n", style=style)
+        self.query_one("#branch-picker-list-content", Static).update(lines)
 
     def _move_highlight(self, direction: int) -> None:
         if not self.filtered_branches:
@@ -775,7 +783,7 @@ class BranchPickerScreen(ModalScreen[str | None]):
             idx = self.filtered_branches.index(self.highlighted_branch)
             idx = max(0, min(len(self.filtered_branches) - 1, idx + direction))
             self.highlighted_branch = self.filtered_branches[idx]
-        self._refresh_branch_table()
+        self._refresh_branch_list()
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id != "branch-picker-filter":
@@ -797,26 +805,13 @@ class BranchPickerScreen(ModalScreen[str | None]):
             self.highlighted_branch = exact or self.filtered_branches[0]
         else:
             self.highlighted_branch = ""
-        self._refresh_branch_table()
+        self._refresh_branch_list()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id != "branch-picker-filter":
             return
         if self.filtered_branches and self.highlighted_branch in self.filtered_branches:
             self.dismiss(self.highlighted_branch)
-
-    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
-        if event.data_table.id != "branch-picker-table":
-            return
-        row_key = event.row_key.value if event.row_key else None
-        if row_key:
-            self.highlighted_branch = str(row_key)
-
-    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        if event.data_table.id != "branch-picker-table":
-            return
-        row_key = event.row_key.value if event.row_key else None
-        self.dismiss(str(row_key) if row_key else self.highlighted_branch)
 
     def action_cursor_up(self) -> None:
         if self.query_one("#branch-picker-filter", Input).has_focus:
