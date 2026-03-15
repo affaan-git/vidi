@@ -22,6 +22,7 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.color import Color
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual import events
 from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.theme import Theme
@@ -1138,6 +1139,7 @@ class GitViewerTUI(App[None]):
         self._day_keys: list[dt.date] = []
         self._language_keys: list[str] = [item["language"] for item in context.language_stats]
         self._suspend_table_events = False
+        self._mounted = False
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -1186,12 +1188,15 @@ class GitViewerTUI(App[None]):
         self._apply_row_heights()
         self._refresh_year_options()
         self.refresh_view()
+        self._mounted = True
 
     def on_theme_change(self, old_value: str, new_value: str) -> None:
         self._apply_theme()
         self.refresh_view()
 
-    def on_resize(self) -> None:
+    def on_resize(self, event: events.Resize) -> None:
+        if not self._mounted:
+            return
         self._apply_row_heights()
         self.refresh_view()
 
@@ -1215,9 +1220,9 @@ class GitViewerTUI(App[None]):
     def _apply_row_heights(self) -> None:
         total_height = self.size.height
         if total_height <= 26:
-            top_height = 12
-        elif total_height <= 34:
             top_height = 13
+        elif total_height <= 34:
+            top_height = 14
         elif total_height <= 42:
             top_height = 16
         else:
