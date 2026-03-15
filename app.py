@@ -718,7 +718,8 @@ class BranchPickerScreen(ModalScreen[str | None]):
 
     BINDINGS = [
         ("escape", "cancel", "Cancel"),
-        ("enter", "choose", "Choose"),
+        ("up", "cursor_up", "Up"),
+        ("down", "cursor_down", "Down"),
     ]
 
     def __init__(self, branches: list[str], current_branch: str) -> None:
@@ -750,7 +751,7 @@ class BranchPickerScreen(ModalScreen[str | None]):
             label = f"* {branch}" if branch == self.current_branch else f"  {branch}"
             table.add_row(truncate_middle(label, 42), key=branch)
         if not self.filtered_branches:
-            self.highlighted_branch = self.current_branch
+            self.highlighted_branch = ""
             return
         if self.highlighted_branch not in self.filtered_branches:
             self.highlighted_branch = (
@@ -764,6 +765,18 @@ class BranchPickerScreen(ModalScreen[str | None]):
         except Exception:
             pass
 
+    def _move_highlight(self, direction: int) -> None:
+        if not self.filtered_branches:
+            self.highlighted_branch = ""
+            return
+        if self.highlighted_branch not in self.filtered_branches:
+            self.highlighted_branch = self.filtered_branches[0]
+        else:
+            idx = self.filtered_branches.index(self.highlighted_branch)
+            idx = max(0, min(len(self.filtered_branches) - 1, idx + direction))
+            self.highlighted_branch = self.filtered_branches[idx]
+        self._refresh_branch_table()
+
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id != "branch-picker-filter":
             return
@@ -776,27 +789,21 @@ class BranchPickerScreen(ModalScreen[str | None]):
         ranked.sort(key=lambda item: (item[0], item[1]))
         self.filtered_branches = [branch for _score, branch in ranked]
         stripped = query.strip().lower()
-        if stripped:
+        if self.filtered_branches:
             exact = next(
                 (branch for branch in self.filtered_branches if branch.lower() == stripped),
                 None,
-            )
-            if exact is not None:
-                self.highlighted_branch = exact
+            ) if stripped else None
+            self.highlighted_branch = exact or self.filtered_branches[0]
+        else:
+            self.highlighted_branch = ""
         self._refresh_branch_table()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id != "branch-picker-filter":
             return
-        query = event.value.strip().lower()
-        if not query:
-            self.dismiss(self.highlighted_branch if self.filtered_branches else None)
-            return
-        exact = next(
-            (branch for branch in self.filtered_branches if branch.lower() == query),
-            None,
-        )
-        self.dismiss(exact)
+        if self.filtered_branches and self.highlighted_branch in self.filtered_branches:
+            self.dismiss(self.highlighted_branch)
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         if event.data_table.id != "branch-picker-table":
@@ -811,8 +818,13 @@ class BranchPickerScreen(ModalScreen[str | None]):
         row_key = event.row_key.value if event.row_key else None
         self.dismiss(str(row_key) if row_key else self.highlighted_branch)
 
-    def action_choose(self) -> None:
-        self.dismiss(self.highlighted_branch)
+    def action_cursor_up(self) -> None:
+        if self.query_one("#branch-picker-filter", Input).has_focus:
+            self._move_highlight(-1)
+
+    def action_cursor_down(self) -> None:
+        if self.query_one("#branch-picker-filter", Input).has_focus:
+            self._move_highlight(1)
 
     def action_cancel(self) -> None:
         self.dismiss(None)
