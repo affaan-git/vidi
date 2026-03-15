@@ -711,19 +711,12 @@ class BranchPickerScreen(ModalScreen[str | None]):
     }
 
     #branch-picker-list {
-        height: 1fr;
+        height: 5;
         margin: 0 1;
         background: #0d1117;
         color: #c9d1d9;
         border: solid #30363d;
-        overflow-y: auto;
-    }
-
-    #branch-picker-list-content {
-        height: auto;
-        min-height: 1;
-        width: 100%;
-        color: #c9d1d9;
+        padding: 0 1;
     }
     """
 
@@ -744,8 +737,7 @@ class BranchPickerScreen(ModalScreen[str | None]):
         with Vertical(id="branch-picker"):
             yield Static("Select Branch  /  type to filter", id="branch-picker-title")
             yield Input(placeholder="Filter branches", id="branch-picker-filter")
-            with VerticalScroll(id="branch-picker-list"):
-                yield Static(id="branch-picker-list-content")
+            yield Static(id="branch-picker-list")
             yield Static("Enter choose   Esc cancel", id="branch-picker-help")
 
     def on_mount(self) -> None:
@@ -753,25 +745,33 @@ class BranchPickerScreen(ModalScreen[str | None]):
         self.query_one("#branch-picker-filter", Input).focus()
 
     def _refresh_branch_list(self) -> None:
+        widget = self.query_one("#branch-picker-list", Static)
         if not self.filtered_branches:
             self.highlighted_branch = ""
-            self.query_one("#branch-picker-list-content", Static).update("")
+            widget.update(Text("No matching branches", style="#8b949e"))
             return
         if self.highlighted_branch not in self.filtered_branches:
-            self.highlighted_branch = (
-                self.current_branch
-                if self.current_branch in self.filtered_branches
-                else self.filtered_branches[0]
-            )
+            self.highlighted_branch = self.filtered_branches[0]
         lines = Text()
-        for branch in self.filtered_branches:
+        max_visible = 4
+        selected_index = self.filtered_branches.index(self.highlighted_branch)
+        start = max(0, selected_index - (max_visible // 2))
+        end = min(len(self.filtered_branches), start + max_visible)
+        start = max(0, end - max_visible)
+
+        if start > 0:
+            lines.append(f"... {start} more\n", style="#8b949e")
+        for branch in self.filtered_branches[start:end]:
             is_current = branch == self.current_branch
             is_highlighted = branch == self.highlighted_branch
             prefix = ">" if is_highlighted else " "
             marker = "*" if is_current else " "
             style = "bold #ffffff on #1f6feb" if is_highlighted else "#c9d1d9"
-            lines.append(f"{prefix} {marker} {truncate_middle(branch, 36)}\n", style=style)
-        self.query_one("#branch-picker-list-content", Static).update(lines)
+            suffix = "\n" if branch != self.filtered_branches[end - 1] or end < len(self.filtered_branches) else ""
+            lines.append(f"{prefix} {marker} {truncate_middle(branch, 34)}{suffix}", style=style)
+        if end < len(self.filtered_branches):
+            lines.append(f"\n... {len(self.filtered_branches) - end} more", style="#8b949e")
+        widget.update(lines)
 
     def _move_highlight(self, direction: int) -> None:
         if not self.filtered_branches:
@@ -796,15 +796,7 @@ class BranchPickerScreen(ModalScreen[str | None]):
                 ranked.append((score, branch))
         ranked.sort(key=lambda item: (item[0], item[1]))
         self.filtered_branches = [branch for _score, branch in ranked]
-        stripped = query.strip().lower()
-        if self.filtered_branches:
-            exact = next(
-                (branch for branch in self.filtered_branches if branch.lower() == stripped),
-                None,
-            ) if stripped else None
-            self.highlighted_branch = exact or self.filtered_branches[0]
-        else:
-            self.highlighted_branch = ""
+        self.highlighted_branch = self.filtered_branches[0] if self.filtered_branches else ""
         self._refresh_branch_list()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
