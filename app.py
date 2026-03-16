@@ -619,23 +619,30 @@ def render_contribution_graph(
     year: int,
     selected_day: dt.date | None,
     palette: ThemePalette,
+    available_width: int | None = None,
 ) -> Group:
     grid, months, first_sunday = build_year_grid(commit_counts, year)
-    month_line = [" "] * len(months)
+    label_width = 4
+    week_count = len(months)
+    usable_width = max(week_count, (available_width or week_count + label_width) - label_width)
+    cell_width = max(1, min(3, usable_width // week_count))
+
+    month_line = [" "] * (week_count * cell_width)
     last_end = -4
     for index, label in enumerate(months):
         if not label.strip():
             continue
         short = label[:3]
-        if index < last_end:
+        start = index * cell_width
+        if start < last_end:
             continue
         for offset, char in enumerate(short):
-            pos = index + offset
+            pos = start + offset
             if pos < len(month_line):
                 month_line[pos] = char
-        last_end = index + len(short) + 1
+        last_end = start + len(short) + 2
 
-    header = Text("    " + "".join(month_line), style=make_style(palette.muted))
+    header = Text((" " * label_width) + "".join(month_line), style=make_style(palette.muted))
 
     lines: list[Text] = [header]
     day_labels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
@@ -644,8 +651,8 @@ def render_contribution_graph(
         palette.foreground, 0.10 if palette.background.brightness < 0.5 else 0.06
     ).hex6
     heatmap_styles = [inactive_style, *HEATMAP_STYLES]
-    cell_char = "■"
-    selected_char = "▣"
+    cell_char = "■" * cell_width
+    selected_char = "▣" * cell_width
 
     for row_index, day_name in enumerate(day_labels):
         line = Text(f"{day_name} ", style=make_style(palette.muted))
@@ -1284,6 +1291,7 @@ class GitViewerTUI(App[None]):
                 self.selected_year,
                 self.selected_day,
                 self._theme_palette,
+                self.query_one("#graph-content", Static).content_region.width,
             )
         )
         self._update_day_details(commits)
