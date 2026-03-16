@@ -10,7 +10,7 @@ from pathlib import Path
 from rich.console import Console
 from textual.color import Color
 from textual.binding import Binding
-from textual.widgets import Footer
+from textual.widgets import DataTable, Footer
 from textual.widgets import Input
 
 from git_viewer_textual.app import GitViewerApp
@@ -133,6 +133,58 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
                     (binding.key, binding.action)
                     for binding in Binding.make_bindings(app.screen.BINDINGS)
                 },
+            )
+            self.assertIn(
+                ("p", "toggle_patch_scope"),
+                {
+                    (binding.key, binding.action)
+                    for binding in Binding.make_bindings(app.screen.BINDINGS)
+                },
+            )
+
+    async def test_commit_detail_full_patch_mode_reuses_files_as_outline(self) -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.press("enter")
+            await pilot.pause()
+            self.assertEqual(type(app.screen).__name__, "CommitDetailScreen")
+
+            await pilot.press("p")
+            await pilot.pause()
+
+            self.assertTrue(app.screen.show_full_patch)
+            self.assertEqual(
+                app.screen.query_one("#commit-detail-overview-panel").styles.display,
+                "none",
+            )
+            self.assertEqual(
+                app.screen.query_one("#commit-detail-files-title").render(),
+                "Patch Outline",
+            )
+            self.assertEqual(
+                app.screen.query_one("#commit-detail-files", DataTable).max_scroll_x,
+                0,
+            )
+            self.assertEqual(getattr(app.focused, "id", None), "commit-detail-scroll")
+
+            await pilot.press("shift+tab")
+            await pilot.pause()
+            self.assertEqual(getattr(app.focused, "id", None), "commit-detail-files")
+
+            await pilot.press("down")
+            await pilot.pause()
+            self.assertEqual(app.screen.selected_file_index, 1)
+
+            await pilot.press("p")
+            await pilot.pause()
+            self.assertFalse(app.screen.show_full_patch)
+            self.assertEqual(
+                app.screen.query_one("#commit-detail-overview-panel").styles.display,
+                "block",
+            )
+            self.assertEqual(
+                app.screen.query_one("#commit-detail-files-title").render(),
+                "Files Changed",
             )
 
     async def test_branch_picker_uses_builtin_footer_instead_of_help_text(self) -> None:

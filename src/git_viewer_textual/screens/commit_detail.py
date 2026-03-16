@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 
+from rich.table import Table
 from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
@@ -72,6 +73,10 @@ class CommitDetailScreen(ModalScreen[None]):
         min-height: 6;
     }
 
+    #commit-detail-files-title {
+        margin-bottom: 0;
+    }
+
     #commit-detail-files-meta {
         margin-bottom: 1;
         height: auto;
@@ -124,7 +129,7 @@ class CommitDetailScreen(ModalScreen[None]):
         Binding("pagedown", "page_down", "Page Down", priority=True, group=PAGE_GROUP),
         Binding("home", "scroll_top", "Top", priority=True, group=JUMP_GROUP),
         Binding("end", "scroll_bottom", "Bottom", priority=True, group=JUMP_GROUP),
-        ("a", "toggle_patch_scope", "Patch"),
+        Binding("p", "toggle_patch_scope", "Patch"),
     ]
 
     def __init__(self, service: RepoService, commit_hash: str) -> None:
@@ -135,6 +140,7 @@ class CommitDetailScreen(ModalScreen[None]):
         self.show_full_patch = False
         self.selected_file_index = 0
         self._suspend_file_events = False
+        self._patch_section_offsets: dict[CommitPatchSection, int] = {}
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -153,7 +159,7 @@ class CommitDetailScreen(ModalScreen[None]):
                     id="commit-detail-files-panel",
                     classes="commit-detail-panel",
                 ):
-                    yield Static("Files Changed", classes="commit-detail-panel-title")
+                    yield Static(id="commit-detail-files-title", classes="commit-detail-panel-title")
                     yield Static(id="commit-detail-files-meta")
                     yield DataTable(id="commit-detail-files")
             with Vertical(id="commit-detail-main"):
@@ -187,6 +193,11 @@ class CommitDetailScreen(ModalScreen[None]):
             self._render_detail_view()
 
     def _focus_targets(self) -> tuple[VerticalScroll | DataTable, ...]:
+        if self.show_full_patch:
+            return (
+                self.query_one("#commit-detail-files", DataTable),
+                self.query_one("#commit-detail-scroll", VerticalScroll),
+            )
         return (
             self.query_one("#commit-detail-overview-scroll", VerticalScroll),
             self.query_one("#commit-detail-files", DataTable),
@@ -199,7 +210,7 @@ class CommitDetailScreen(ModalScreen[None]):
             "commit-detail-overview-scroll": "overview",
             "commit-detail-files": "files",
             "commit-detail-scroll": "patch",
-        }.get(focused_id, "files")
+        }.get(focused_id, "patch" if self.show_full_patch else "files")
 
     def _apply_theme(self) -> None:
         palette = resolve_theme_palette(self.app.current_theme)
@@ -234,11 +245,38 @@ class CommitDetailScreen(ModalScreen[None]):
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
         self._refresh_focus_styles()
 
+    def _apply_detail_layout(self) -> None:
+        sidebar = self.query_one("#commit-detail-sidebar", Vertical)
+        overview_panel = self.query_one("#commit-detail-overview-panel", Vertical)
+        files_panel = self.query_one("#commit-detail-files-panel", Vertical)
+
+        if self.show_full_patch:
+            sidebar.styles.width = 28
+            overview_panel.styles.display = "none"
+            files_panel.styles.height = "1fr"
+        else:
+            sidebar.styles.width = 36
+            overview_panel.styles.display = "block"
+            files_panel.styles.height = "1fr"
+
+    def _ensure_valid_focus(self, *, prefer_patch: bool = False) -> None:
+        focused = self.focused
+        targets = self._focus_targets()
+        if focused in targets:
+            return
+        fallback = (
+            self.query_one("#commit-detail-scroll", VerticalScroll)
+            if prefer_patch
+            else targets[0]
+        )
+        fallback.focus()
+
     def _render_detail_view(self) -> None:
         if self.detail.file_changes and not (
             0 <= self.selected_file_index < len(self.detail.file_changes)
         ):
             self.selected_file_index = 0
+        self._apply_detail_layout()
 
         palette = resolve_theme_palette(self.app.current_theme)
         now = utc_now()
@@ -285,41 +323,85 @@ class CommitDetailScreen(ModalScreen[None]):
             )
         self.query_one("#commit-detail-overview", Static).update(overview)
 
+        self._configure_files_table()
         self._update_files_table()
         file_word = "file" if len(self.detail.file_changes) == 1 else "files"
+        files_title = (
+            "Patch Outline"
+            if self.show_full_patch
+            else "Files Changed"
+        )
+        self.query_one("#commit-detail-files-title", Static).update(files_title)
         files_meta = Text()
         files_meta.append(
             f"{len(self.detail.file_changes)} {file_word}",
             style=make_style(palette.foreground, bold=True),
         )
-        files_meta.append("  ", style=make_style(palette.muted))
-        files_meta.append(
-            f"+{total_additions}",
-            style=make_style(palette.success, bold=True),
-        )
-        files_meta.append("  ", style=make_style(palette.muted))
-        files_meta.append(
-            f"-{total_deletions}",
-            style=make_style(palette.error, bold=True),
-        )
+        if self.show_full_patch:
+            files_meta.append("  ", style=make_style(palette.muted))
+            files_meta.append(
+                "Select to jump",
+                style=make_style(palette.muted),
+            )
+        else:
+            files_meta.append("  ", style=make_style(palette.muted))
+            files_meta.append(
+                f"+{total_additions}",
+                style=make_style(palette.success, bold=True),
+            )
+            files_meta.append("  ", style=make_style(palette.muted))
+            files_meta.append(
+                f"-{total_deletions}",
+                style=make_style(palette.error, bold=True),
+            )
         self.query_one("#commit-detail-files-meta", Static).update(files_meta)
 
-        self._render_patch_panel()
+        self._render_patch_panel(refresh_content=True, follow_selection=self.show_full_patch)
+        self._ensure_valid_focus(prefer_patch=self.show_full_patch)
+        self._refresh_focus_styles()
+        self.call_after_refresh(self._refresh_files_table_after_layout)
+
+    def _refresh_files_table_after_layout(self) -> None:
+        self._configure_files_table()
+        self._update_files_table()
 
     def _files_table_layout(self) -> tuple[int, int, int]:
         table = self.query_one("#commit-detail-files", DataTable)
         width = table.size.width or table.content_region.width or 28
-        stats_width = 4
         padding = 6
+        if self.show_full_patch:
+            file_width = max(8, width - padding)
+            return file_width, 0, 0
+        stats_width = 4
         file_width = max(8, width - (stats_width * 2) - padding)
         return file_width, stats_width, stats_width
+
+    def _files_table_has_stats(self) -> bool:
+        table = self.query_one("#commit-detail-files", DataTable)
+        try:
+            table.columns["adds"]
+            table.columns["dels"]
+        except KeyError:
+            return False
+        return True
+
+    def _configure_files_table(self) -> None:
+        table = self.query_one("#commit-detail-files", DataTable)
+        has_stats = self._files_table_has_stats()
+        if self.show_full_patch and has_stats:
+            table.remove_column("adds")
+            table.remove_column("dels")
+        elif not self.show_full_patch and not has_stats:
+            table.add_column("+", width=4, key="adds")
+            table.add_column("-", width=4, key="dels")
 
     def _apply_files_table_layout(self) -> int:
         table = self.query_one("#commit-detail-files", DataTable)
         file_width, adds_width, dels_width = self._files_table_layout()
         table.columns["file"].width = file_width
-        table.columns["adds"].width = adds_width
-        table.columns["dels"].width = dels_width
+        if self._files_table_has_stats():
+            table.columns["adds"].width = adds_width
+            table.columns["dels"].width = dels_width
         return file_width
 
     def _section_for_change(
@@ -356,6 +438,53 @@ class CommitDetailScreen(ModalScreen[None]):
         section = self._section_for_change(self.selected_file_index, change)
         return (section,) if section is not None else ()
 
+    def _patch_line_count(self, text: Text) -> int:
+        if not text.plain:
+            return 0
+        return text.plain.count("\n") + 1
+
+    def _build_patch_title(self) -> Table:
+        palette = resolve_theme_palette(self.app.current_theme)
+        title = Table.grid(expand=True)
+        title.add_column(ratio=1)
+        title.add_column(no_wrap=True, justify="right")
+
+        current = Text()
+        if self.show_full_patch:
+            current.append("Full Patch", style=make_style(palette.muted, bold=True))
+            current.append("  ", style=make_style(palette.muted))
+            current.append(
+                f"{len(self.detail.patch_sections)} files",
+                style=make_style(palette.foreground),
+            )
+        else:
+            current.append("Selected Diff", style=make_style(palette.muted, bold=True))
+            if self.detail.file_changes:
+                current.append("  ", style=make_style(palette.muted))
+                current.append(
+                    self._display_label_for_file(self.selected_file_index),
+                    style=make_style(palette.foreground),
+                )
+
+        modes = Text()
+        modes.append(
+            "File Diff",
+            style=make_style(
+                palette.primary if not self.show_full_patch else palette.muted,
+                bold=not self.show_full_patch,
+            ),
+        )
+        modes.append(" · ", style=make_style(palette.muted))
+        modes.append(
+            "Full Patch",
+            style=make_style(
+                palette.primary if self.show_full_patch else palette.muted,
+                bold=self.show_full_patch,
+            ),
+        )
+        title.add_row(current, modes)
+        return title
+
     def _render_patch_text(self, patch_text: str) -> Text:
         palette = resolve_theme_palette(self.app.current_theme)
         text = Text()
@@ -384,65 +513,95 @@ class CommitDetailScreen(ModalScreen[None]):
                 text.append("\n")
         return text
 
-    def _render_patch_panel(self) -> None:
+    def _render_patch_panel(
+        self,
+        *,
+        refresh_content: bool,
+        follow_selection: bool,
+    ) -> None:
         palette = resolve_theme_palette(self.app.current_theme)
         patch_sections = self._visible_patch_sections()
-        patch_title = Text()
-        patch_title.append(
-            "Full Patch" if self.show_full_patch else "Selected Diff",
-            style=make_style(palette.muted, bold=True),
-        )
-        if not self.show_full_patch and self.detail.file_changes:
-            patch_title.append("  ", style=make_style(palette.muted))
-            patch_title.append(
-                self._display_label_for_file(self.selected_file_index),
-                style=make_style(palette.foreground),
-            )
-        self.query_one("#commit-detail-patch-title", Static).update(patch_title)
+        self.query_one("#commit-detail-patch-title", Static).update(self._build_patch_title())
 
-        content = Text()
-        if patch_sections:
-            for section_index, section in enumerate(patch_sections):
-                if self.show_full_patch:
-                    line = Text()
-                    if section.is_rename:
-                        line.append(
-                            f"{section.old_path} -> {section.new_path}",
-                            style=make_style(palette.foreground, bold=True),
-                        )
-                    else:
-                        line.append(section.path, style=make_style(palette.foreground, bold=True))
-                    if section.is_binary:
-                        line.append("  [binary]", style=make_style(palette.muted, bold=True))
-                    content.append(line)
-                    content.append("\n")
-                content.append(self._render_patch_text(section.patch))
-                if section_index < len(patch_sections) - 1:
-                    content.append("\n\n")
-        else:
-            content.append(
-                "No diff available for this selection.",
-                style=make_style(palette.muted, bold=True),
-            )
-        self.query_one("#commit-detail-content", Static).update(content)
+        if refresh_content:
+            content = Text()
+            self._patch_section_offsets = {}
+            current_line = 0
+            if patch_sections:
+                for section_index, section in enumerate(patch_sections):
+                    if self.show_full_patch:
+                        self._patch_section_offsets[section] = current_line
+                        line = Text()
+                        if section.is_rename:
+                            line.append(
+                                f"{section.old_path} -> {section.new_path}",
+                                style=make_style(palette.foreground, bold=True),
+                            )
+                        else:
+                            line.append(
+                                section.path,
+                                style=make_style(palette.foreground, bold=True),
+                            )
+                        if section.is_binary:
+                            line.append("  [binary]", style=make_style(palette.muted, bold=True))
+                        content.append(line)
+                        content.append("\n")
+                        current_line += 1
+                    rendered_patch = self._render_patch_text(section.patch)
+                    content.append(rendered_patch)
+                    current_line += self._patch_line_count(rendered_patch)
+                    if section_index < len(patch_sections) - 1:
+                        content.append("\n\n")
+                        current_line += 2
+            else:
+                content.append(
+                    "No diff available for this selection.",
+                    style=make_style(palette.muted, bold=True),
+                )
+            self.query_one("#commit-detail-content", Static).update(content)
+
+        if self.show_full_patch and follow_selection:
+            self.call_after_refresh(self._scroll_patch_to_selected)
+
+    def _scroll_patch_to_selected(self) -> None:
+        if not self.show_full_patch or not self.detail.file_changes:
+            return
+        change = self.detail.file_changes[self.selected_file_index]
+        section = self._section_for_change(self.selected_file_index, change)
+        if section is None:
+            return
+        offset = self._patch_section_offsets.get(section)
+        if offset is None:
+            return
+        self.query_one("#commit-detail-scroll", VerticalScroll).scroll_to(
+            y=max(offset - 1, 0),
+            animate=False,
+        )
 
     def _update_files_table(self) -> None:
         table = self.query_one("#commit-detail-files", DataTable)
         file_width = self._apply_files_table_layout()
+        show_stats = self._files_table_has_stats()
         table.clear(columns=False)
         self._suspend_file_events = True
         try:
             for index, change in enumerate(self.detail.file_changes):
                 section = self._section_for_change(index, change)
                 label = display_label_for_change(change, section)
-                additions = "-" if change.additions is None else str(change.additions)
-                deletions = "-" if change.deletions is None else str(change.deletions)
-                table.add_row(
-                    truncate_middle(label, file_width),
-                    additions,
-                    deletions,
-                    key=str(index),
-                )
+                if show_stats:
+                    additions = "-" if change.additions is None else str(change.additions)
+                    deletions = "-" if change.deletions is None else str(change.deletions)
+                    table.add_row(
+                        truncate_middle(label, file_width),
+                        additions,
+                        deletions,
+                        key=str(index),
+                    )
+                else:
+                    table.add_row(
+                        truncate_middle(label, file_width),
+                        key=str(index),
+                    )
             if self.detail.file_changes:
                 table.move_cursor(row=self.selected_file_index, animate=False, scroll=True)
         finally:
@@ -457,7 +616,10 @@ class CommitDetailScreen(ModalScreen[None]):
         index = int(str(row_key))
         if index != self.selected_file_index:
             self.selected_file_index = index
-            self._render_patch_panel()
+            self._render_patch_panel(
+                refresh_content=not self.show_full_patch,
+                follow_selection=self.show_full_patch,
+            )
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         if event.data_table.id != "commit-detail-files" or self._suspend_file_events:
@@ -466,8 +628,12 @@ class CommitDetailScreen(ModalScreen[None]):
         if row_key is None:
             return
         self.selected_file_index = int(str(row_key))
-        self.show_full_patch = False
-        self._render_patch_panel()
+        if self.show_full_patch:
+            self._render_patch_panel(refresh_content=False, follow_selection=True)
+            self.query_one("#commit-detail-scroll", VerticalScroll).focus()
+        else:
+            self._render_patch_panel(refresh_content=True, follow_selection=False)
+            self.query_one("#commit-detail-scroll", VerticalScroll).focus()
 
     def _scroll_target(self) -> VerticalScroll | DataTable:
         focused = self.focused
@@ -539,7 +705,8 @@ class CommitDetailScreen(ModalScreen[None]):
 
     def action_toggle_patch_scope(self) -> None:
         self.show_full_patch = not self.show_full_patch
-        self._render_patch_panel()
+        self._render_detail_view()
+        self.query_one("#commit-detail-scroll", VerticalScroll).focus()
 
     def action_close_screen(self) -> None:
         self.dismiss(None)
