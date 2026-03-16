@@ -1241,14 +1241,14 @@ class CommitDetailScreen(Screen[None]):
     BINDINGS = [
         ("escape", "close_screen", "Back"),
         ("q", "close_screen", "Back"),
-        ("tab", "focus_next_pane", "Next Pane"),
-        ("shift+tab", "focus_prev_pane", "Prev Pane"),
-        ("up", "cursor_up", "Up"),
-        ("down", "cursor_down", "Down"),
-        ("pageup", "page_up", "Page Up"),
-        ("pagedown", "page_down", "Page Down"),
-        ("home", "scroll_top", "Top"),
-        ("end", "scroll_bottom", "Bottom"),
+        Binding("tab", "focus_next_pane", "Next Pane", priority=True),
+        Binding("shift+tab", "focus_prev_pane", "Prev Pane", priority=True),
+        Binding("up", "cursor_up", "Up", priority=True),
+        Binding("down", "cursor_down", "Down", priority=True),
+        Binding("pageup", "page_up", "Page Up", priority=True),
+        Binding("pagedown", "page_down", "Page Down", priority=True),
+        Binding("home", "scroll_top", "Top", priority=True),
+        Binding("end", "scroll_bottom", "Bottom", priority=True),
         ("a", "toggle_patch_scope", "Toggle Patch Scope"),
     ]
 
@@ -1464,6 +1464,18 @@ class CommitDetailScreen(Screen[None]):
             panel = self.query_one(selector, Vertical)
             border_color = palette.primary if mode == self.focus_mode else palette.border
             panel.styles.border = ("solid", border_color)
+
+    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        widget_id = getattr(event.widget, "id", None)
+        mode_by_widget = {
+            "commit-detail-overview-scroll": "overview",
+            "commit-detail-files": "files",
+            "commit-detail-scroll": "patch",
+        }
+        mode = mode_by_widget.get(widget_id)
+        if mode is not None and mode != self.focus_mode:
+            self.focus_mode = mode
+            self._refresh_focus_styles()
 
     def action_focus_next_pane(self) -> None:
         panes = self._focusable_panes()
