@@ -185,6 +185,7 @@ class FilterTests(unittest.TestCase):
         graph_text = console.export_text()
         self.assertIn("Mar", graph_text)
         self.assertNotIn("▣", graph_text)
+        self.assertIn("Sun ■■", graph_text)
 
     def test_filter_commits_uses_current_time_window(self) -> None:
         now = dt.datetime(2026, 3, 16, 12, 0, 0)

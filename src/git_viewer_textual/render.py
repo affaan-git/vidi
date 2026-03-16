@@ -59,7 +59,7 @@ def render_contribution_graph(
         line = Text(f"{day_name:<3} ", style=make_style(palette.muted))
         for col_index, value in enumerate(grid[row_index]):
             if value is None:
-                line.append(" ")
+                line.append(cell_char, style=heatmap_styles[0])
                 continue
             if value <= 0:
                 style = heatmap_styles[0]
