@@ -9,6 +9,7 @@ from pathlib import Path
 
 from rich.console import Console
 from textual.color import Color
+from textual.widgets import Footer
 from textual.widgets import Input
 
 from git_viewer_textual.app import GitViewerApp
@@ -91,6 +92,21 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             language_title_text = language_console.export_text()
             self.assertIn("Languages", language_title_text)
             self.assertRegex(language_title_text, r"\b\d+\b")
+
+    async def test_main_footer_uses_compact_grouped_builtin_footer(self) -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            footer = app.screen.query_one(Footer)
+            self.assertFalse(footer.compact)
+            self.assertTrue(footer.show_command_palette)
+            grouped_descriptions = {
+                binding.group.description
+                for binding in app.screen.BINDINGS
+                if getattr(binding, "group", None) is not None
+            }
+            self.assertEqual(grouped_descriptions, {"Move", "Panel", "Year", "Day"})
+            footer_label = footer.query("FooterLabel").first()
+            self.assertEqual(footer_label.styles.margin.right, 1)
 
     async def test_languages_panel_uses_summary_widget_instead_of_duplicate_list(self) -> None:
         app = make_app()

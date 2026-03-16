@@ -34,6 +34,11 @@ from .commit_detail import CommitDetailScreen
 class MainScreen(Screen[None]):
     """Primary analytics screen."""
 
+    MOVE_GROUP = Binding.Group("Move", compact=True)
+    PANEL_GROUP = Binding.Group("Panel")
+    YEAR_GROUP = Binding.Group("Year", compact=True)
+    DAY_GROUP = Binding.Group("Day", compact=True)
+
     CSS = """
     #body {
         layout: horizontal;
@@ -131,19 +136,27 @@ class MainScreen(Screen[None]):
     DataTable {
         height: 1fr;
     }
+
     """
 
     BINDINGS = [
-        ("b", "open_branch_picker", "Branches"),
-        ("[", "prev_year", "Prev Year"),
-        ("]", "next_year", "Next Year"),
-        ("r", "cycle_range", "Cycle Range"),
-        Binding("tab", "focus_next_panel", "Next Panel", priority=True),
-        Binding("shift+tab", "focus_prev_panel", "Prev Panel", priority=True),
-        Binding("up", "cursor_up", "Up", priority=True),
-        Binding("down", "cursor_down", "Down", priority=True),
-        ("j", "day_down", "Next Day"),
-        ("k", "day_up", "Prev Day"),
+        Binding("up", "cursor_up", "Up", priority=True, group=MOVE_GROUP),
+        Binding("down", "cursor_down", "Down", priority=True, group=MOVE_GROUP),
+        Binding("tab", "focus_next_panel", "Next Panel", priority=True, group=PANEL_GROUP),
+        Binding(
+            "shift+tab",
+            "focus_prev_panel",
+            "Prev Panel",
+            priority=True,
+            key_display="S-Tab",
+            group=PANEL_GROUP,
+        ),
+        Binding("b", "open_branch_picker", "Branch"),
+        Binding("[", "prev_year", "Prev Year", group=YEAR_GROUP),
+        Binding("]", "next_year", "Next Year", group=YEAR_GROUP),
+        Binding("r", "cycle_range", "Range"),
+        Binding("j", "day_down", "Next Day", group=DAY_GROUP),
+        Binding("k", "day_up", "Prev Day", group=DAY_GROUP),
     ]
 
     selected_branch: reactive[str]
