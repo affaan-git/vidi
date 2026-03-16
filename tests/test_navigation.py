@@ -71,9 +71,11 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
 
             await pilot.press("tab")
             await pilot.pause()
+            await pilot.pause()
             self.assertEqual(getattr(app.focused, "id", None), "commits-table")
 
             await pilot.press("shift+tab")
+            await pilot.pause()
             await pilot.pause()
             self.assertEqual(getattr(app.focused, "id", None), "commits-table")
 
@@ -154,6 +156,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
 
             await pilot.press("p")
             await pilot.pause()
+            await pilot.pause()
 
             self.assertTrue(app.screen.show_full_patch)
             self.assertEqual(
@@ -168,13 +171,25 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
                 app.screen.query_one("#commit-detail-files", DataTable).max_scroll_x,
                 0,
             )
+            first_outline_cell = app.screen.query_one("#commit-detail-files", DataTable).get_row_at(0)[0]
+            first_outline_text = getattr(first_outline_cell, "plain", str(first_outline_cell))
+            self.assertRegex(first_outline_text, r"\+\d+")
+            self.assertRegex(first_outline_text, r"-\d+|--")
             self.assertEqual(getattr(app.focused, "id", None), "commit-detail-scroll")
+            files_meta_render = app.screen.query_one("#commit-detail-files-meta").render()
+            meta_console = Console(file=io.StringIO(), record=True, width=120)
+            meta_console.print(files_meta_render)
+            files_meta_text = meta_console.export_text()
+            self.assertRegex(files_meta_text, r"\+\d+")
+            self.assertRegex(files_meta_text, r"-\d+")
 
             await pilot.press("shift+tab")
+            await pilot.pause()
             await pilot.pause()
             self.assertEqual(getattr(app.focused, "id", None), "commit-detail-files")
 
             await pilot.press("tab")
+            await pilot.pause()
             await pilot.pause()
             self.assertEqual(getattr(app.focused, "id", None), "commit-detail-scroll")
 
@@ -188,6 +203,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
 
             await pilot.press("p")
             await pilot.pause()
+            await pilot.pause()
             self.assertFalse(app.screen.show_full_patch)
             self.assertEqual(
                 app.screen.query_one("#commit-detail-overview-panel").styles.display,
@@ -198,6 +214,59 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
                 "Files Changed",
             )
             self.assertEqual(getattr(app.focused, "id", None), "commit-detail-files")
+
+    async def test_commit_detail_skips_non_scrollable_panels_without_focus_bounce(self) -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.pause()
+            self.assertEqual(type(app.screen).__name__, "CommitDetailScreen")
+            self.assertFalse(app.screen.query_one("#commit-detail-overview-scroll").can_focus)
+            self.assertEqual(getattr(app.focused, "id", None), "commit-detail-files")
+            self.assertFalse(app.screen.query_one("#commit-detail-scroll").can_focus)
+
+            await pilot.press("tab")
+            await pilot.pause()
+            await pilot.pause()
+            self.assertEqual(getattr(app.focused, "id", None), "commit-detail-files")
+
+            await pilot.press("shift+tab")
+            await pilot.pause()
+            await pilot.pause()
+            self.assertEqual(getattr(app.focused, "id", None), "commit-detail-files")
+
+    async def test_commit_detail_restores_previous_full_patch_scroll_position(self) -> None:
+        app = make_app()
+        async with app.run_test(size=(100, 20)) as pilot:
+            await pilot.press("enter")
+            await pilot.pause()
+            self.assertEqual(type(app.screen).__name__, "CommitDetailScreen")
+
+            await pilot.press("p")
+            await pilot.pause()
+            patch_scroll = app.screen.query_one("#commit-detail-scroll")
+            patch_scroll.scroll_end(animate=False)
+            await pilot.pause()
+            saved_scroll = int(patch_scroll.scroll_y)
+            self.assertGreater(saved_scroll, 0)
+
+            await pilot.press("p")
+            await pilot.pause()
+            self.assertFalse(app.screen.show_full_patch)
+
+            await pilot.press("p")
+            await pilot.pause()
+            first_restored_scroll = int(
+                app.screen.query_one("#commit-detail-scroll").scroll_y
+            )
+            await pilot.pause()
+            second_restored_scroll = int(
+                app.screen.query_one("#commit-detail-scroll").scroll_y
+            )
+
+            self.assertGreater(first_restored_scroll, 0)
+            self.assertEqual(second_restored_scroll, first_restored_scroll)
 
     async def test_commit_detail_full_patch_scroll_updates_outline_selection(self) -> None:
         app = make_app()

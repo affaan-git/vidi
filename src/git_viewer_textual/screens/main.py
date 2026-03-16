@@ -16,7 +16,7 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Static
 
 from ..data import RANGE_PRESETS, filter_commits, resolve_graph_window
-from ..focus import focus_targets, set_scroll_focusability
+from ..focus import focus_targets, mark_scroll_focus_pending, set_scroll_focusability
 from ..models import BranchData, CommitRecord, RepoContext
 from ..render import (
     build_graph_title,
@@ -356,6 +356,10 @@ class MainScreen(Screen[None]):
         include_table: bool,
         reset_scroll: bool,
     ) -> None:
+        mark_scroll_focus_pending(
+            self.query_one("#day-details-scroll", VerticalScroll),
+            self.query_one("#language-summary-scroll", VerticalScroll),
+        )
         self.query_one("#graph-title", Static).update(
             build_graph_title(
                 self.selected_branch,

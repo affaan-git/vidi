@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from functools import partial
+
 from rich.table import Table
 from rich.text import Text
 from textual import events
@@ -12,7 +14,12 @@ from textual.screen import ModalScreen
 from textual.widgets import DataTable, Footer, Header, Static
 
 from ..data import display_label_for_change
-from ..focus import focus_targets, scroll_has_overflow, set_scroll_focusability
+from ..focus import (
+    focus_targets,
+    mark_scroll_focus_pending,
+    scroll_has_overflow,
+    set_scroll_focusability,
+)
 from ..models import CommitFileChange, CommitPatchSection
 from ..repository import RepoService
 from ..theme import make_style, resolve_theme_palette
@@ -141,6 +148,16 @@ class CommitDetailScreen(ModalScreen[None]):
         self._patch_section_offsets: dict[CommitPatchSection, int] = {}
         self._outline_offsets: list[tuple[int, int]] = []
         self._ignore_next_patch_scroll_sync = False
+        self._reconcile_revision = 0
+        self._pending_focus_target: str | None = None
+        self._pending_focus_origin_id: str | None = None
+        self._pending_patch_scroll_to_selection = False
+        self._pending_patch_restore_y: float | None = None
+        self._files_table_signature: tuple[bool, int, int, int] | None = None
+        self._full_patch_scroll_y: float | None = None
+        self._saved_full_patch_scroll_y: float | None = None
+        self._mode_transition_active = False
+        self._patch_restore_retry_budget = 0
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -183,8 +200,7 @@ class CommitDetailScreen(ModalScreen[None]):
         files_table.add_column("+", width=4, key="adds")
         files_table.add_column("-", width=4, key="dels")
         self._apply_theme()
-        self._render_detail_view()
-        files_table.focus()
+        self._render_detail_view(focus_target="files")
 
     def _on_theme_change(self, old_value: str, new_value: str) -> None:
         self._apply_theme()
@@ -205,26 +221,11 @@ class CommitDetailScreen(ModalScreen[None]):
     def _refresh_scroll_focusability(self) -> None:
         overview_scroll = self.query_one("#commit-detail-overview-scroll", VerticalScroll)
         patch_scroll = self.query_one("#commit-detail-scroll", VerticalScroll)
-        files_table = self.query_one("#commit-detail-files", DataTable)
 
         set_scroll_focusability(overview_scroll, patch_scroll)
         overview_scroll.can_focus = (
             not self.show_full_patch and scroll_has_overflow(overview_scroll)
         )
-
-        if self.focused not in self._focus_targets():
-            if self.show_full_patch and patch_scroll.can_focus:
-                patch_scroll.focus()
-            else:
-                files_table.focus()
-        self._refresh_focus_styles()
-
-    def _focus_patch_if_available(self) -> None:
-        patch_scroll = self.query_one("#commit-detail-scroll", VerticalScroll)
-        if patch_scroll.can_focus:
-            patch_scroll.focus()
-        else:
-            self.query_one("#commit-detail-files", DataTable).focus()
 
     def _current_pane(self) -> str:
         focused_id = getattr(self.focused, "id", None)
@@ -275,7 +276,7 @@ class CommitDetailScreen(ModalScreen[None]):
             sidebar.styles.width = 28
             overview_panel.styles.display = "none"
         else:
-            sidebar.styles.width = 36
+            sidebar.styles.width = 32
             overview_panel.styles.display = "block"
 
     def _ensure_valid_focus(self, *, prefer_patch: bool = False) -> None:
@@ -283,19 +284,113 @@ class CommitDetailScreen(ModalScreen[None]):
         targets = self._focus_targets()
         if focused in targets:
             return
-        fallback = (
-            self.query_one("#commit-detail-scroll", VerticalScroll)
-            if prefer_patch
-            else targets[0]
-        )
+        fallback = targets[0] if targets else self.query_one("#commit-detail-files", DataTable)
+        if prefer_patch:
+            patch_scroll = self.query_one("#commit-detail-scroll", VerticalScroll)
+            if patch_scroll in targets:
+                fallback = patch_scroll
         fallback.focus()
 
-    def _render_detail_view(self) -> None:
+    def _files_table_is_measured(self) -> bool:
+        table = self.query_one("#commit-detail-files", DataTable)
+        return bool(table.size.width or table.content_region.width)
+
+    def _refresh_files_table(self, *, force: bool = False) -> None:
+        if not self._files_table_is_measured():
+            return
+        signature = (self.show_full_patch, *self._files_table_layout())
+        table = self.query_one("#commit-detail-files", DataTable)
+        if (
+            not force
+            and signature == self._files_table_signature
+            and table.row_count == len(self.detail.file_changes)
+        ):
+            self._sync_outline_cursor(self.selected_file_index)
+            return
+        self._update_files_table()
+        self._files_table_signature = signature
+
+    def _focus_widget_for_name(self, name: str | None) -> VerticalScroll | DataTable | None:
+        if name == "overview":
+            return self.query_one("#commit-detail-overview-scroll", VerticalScroll)
+        if name == "patch":
+            return self.query_one("#commit-detail-scroll", VerticalScroll)
+        if name == "files":
+            return self.query_one("#commit-detail-files", DataTable)
+        return None
+
+    def _schedule_reconcile(
+        self,
+        *,
+        focus_target: str | None = None,
+        scroll_to_selection: bool = False,
+        restore_patch_scroll: float | None = None,
+        force_files_table_refresh: bool = False,
+    ) -> None:
+        if focus_target is not None:
+            self._pending_focus_target = focus_target
+            self._pending_focus_origin_id = getattr(self.focused, "id", None)
+        self._pending_patch_scroll_to_selection = (
+            self._pending_patch_scroll_to_selection or scroll_to_selection
+        )
+        if restore_patch_scroll is not None:
+            self._pending_patch_restore_y = restore_patch_scroll
+        if force_files_table_refresh:
+            self._files_table_signature = None
+        self._reconcile_revision += 1
+        revision = self._reconcile_revision
+        self.call_after_refresh(partial(self._reconcile_after_refresh, revision))
+
+    def _reconcile_after_refresh(self, revision: int) -> None:
+        if not self.is_mounted or revision != self._reconcile_revision:
+            return
+
+        self._configure_files_table()
+        self._refresh_files_table()
+        self._refresh_scroll_focusability()
+
+        if self._pending_patch_restore_y is not None and self.show_full_patch:
+            self._restore_patch_scroll(self._pending_patch_restore_y)
+        elif self._pending_patch_scroll_to_selection and self.show_full_patch:
+            self._scroll_patch_to_selected()
+        self._pending_patch_restore_y = None
+        self._pending_patch_scroll_to_selection = False
+
+        requested_focus = self._focus_widget_for_name(self._pending_focus_target)
+        targets = self._focus_targets()
+        if (
+            requested_focus in targets
+            and self.focused is not requested_focus
+            and (
+                self.focused not in targets
+                or getattr(self.focused, "id", None) == self._pending_focus_origin_id
+            )
+        ):
+            requested_focus.focus()
+        elif self.focused not in targets:
+            self._ensure_valid_focus(prefer_patch=self.show_full_patch)
+
+        self._pending_focus_target = None
+        self._pending_focus_origin_id = None
+        self._mode_transition_active = False
+        self._refresh_focus_styles()
+
+    def _render_detail_view(
+        self,
+        *,
+        focus_target: str | None = None,
+        scroll_to_selection: bool = False,
+        restore_patch_scroll: float | None = None,
+    ) -> None:
         if self.detail.file_changes and not (
             0 <= self.selected_file_index < len(self.detail.file_changes)
         ):
             self.selected_file_index = 0
         self._apply_detail_layout()
+        mark_scroll_focus_pending(
+            self.query_one("#commit-detail-overview-scroll", VerticalScroll),
+            self.query_one("#commit-detail-scroll", VerticalScroll),
+        )
 
         palette = resolve_theme_palette(self.app.current_theme)
         now = utc_now()
@@ -342,8 +437,12 @@ class CommitDetailScreen(ModalScreen[None]):
             )
         self.query_one("#commit-detail-overview", Static).update(overview)
 
-        self._configure_files_table()
-        self._update_files_table()
+        columns_changed = self._configure_files_table()
+        if columns_changed or not self._files_table_is_measured():
+            self.query_one("#commit-detail-files", DataTable).clear(columns=False)
+            self._files_table_signature = None
+        else:
+            self._refresh_files_table(force=columns_changed)
         file_word = "file" if len(self.detail.file_changes) == 1 else "files"
         files_title = (
             "Patch Outline"
@@ -356,34 +455,31 @@ class CommitDetailScreen(ModalScreen[None]):
             f"{len(self.detail.file_changes)} {file_word}",
             style=make_style(palette.foreground, bold=True),
         )
+        files_meta.append("  ", style=make_style(palette.muted))
+        files_meta.append(
+            f"+{total_additions}",
+            style=make_style(palette.success, bold=True),
+        )
+        files_meta.append("  ", style=make_style(palette.muted))
+        files_meta.append(
+            f"-{total_deletions}",
+            style=make_style(palette.error, bold=True),
+        )
         if self.show_full_patch:
             files_meta.append("  ", style=make_style(palette.muted))
             files_meta.append(
                 "Select to jump",
                 style=make_style(palette.muted),
             )
-        else:
-            files_meta.append("  ", style=make_style(palette.muted))
-            files_meta.append(
-                f"+{total_additions}",
-                style=make_style(palette.success, bold=True),
-            )
-            files_meta.append("  ", style=make_style(palette.muted))
-            files_meta.append(
-                f"-{total_deletions}",
-                style=make_style(palette.error, bold=True),
-            )
         self.query_one("#commit-detail-files-meta", Static).update(files_meta)
 
-        self._render_patch_panel(refresh_content=True, follow_selection=self.show_full_patch)
-        self._ensure_valid_focus(prefer_patch=self.show_full_patch)
-        self._refresh_focus_styles()
-        self.call_after_refresh(self._refresh_files_table_after_layout)
-
-    def _refresh_files_table_after_layout(self) -> None:
-        self._configure_files_table()
-        self._update_files_table()
-        self._refresh_scroll_focusability()
+        self._render_patch_panel(refresh_content=True)
+        self._schedule_reconcile(
+            focus_target=focus_target,
+            scroll_to_selection=scroll_to_selection,
+            restore_patch_scroll=restore_patch_scroll,
+            force_files_table_refresh=columns_changed,
+        )
 
     def _files_table_layout(self) -> tuple[int, int, int]:
         table = self.query_one("#commit-detail-files", DataTable)
@@ -405,15 +501,19 @@ class CommitDetailScreen(ModalScreen[None]):
             return False
         return True
 
-    def _configure_files_table(self) -> None:
+    def _configure_files_table(self) -> bool:
         table = self.query_one("#commit-detail-files", DataTable)
         has_stats = self._files_table_has_stats()
+        changed = False
         if self.show_full_patch and has_stats:
             table.remove_column("adds")
             table.remove_column("dels")
+            changed = True
         elif not self.show_full_patch and not has_stats:
             table.add_column("+", width=4, key="adds")
             table.add_column("-", width=4, key="dels")
+            changed = True
+        return changed
 
     def _apply_files_table_layout(self) -> int:
         table = self.query_one("#commit-detail-files", DataTable)
@@ -454,6 +554,39 @@ class CommitDetailScreen(ModalScreen[None]):
         change = self.detail.file_changes[index]
         section = self._section_for_change(index, change)
         return truncate_middle(display_label_for_change(change, section), 56)
+
+    def _build_outline_row_label(
+        self,
+        label: str,
+        change: CommitFileChange,
+        width: int,
+    ) -> Text:
+        palette = resolve_theme_palette(self.app.current_theme)
+        additions = "+-" if change.additions is None else f"+{change.additions}"
+        deletions = "--" if change.deletions is None else f"-{change.deletions}"
+        stats_width = len(additions) + 1 + len(deletions)
+        name_width = max(4, width - stats_width - 1)
+        display_name = truncate_middle(label, name_width)
+        gap = max(width - len(display_name) - stats_width, 1)
+
+        row = Text(display_name, style=make_style(palette.foreground))
+        row.append(" " * gap, style=make_style(palette.muted))
+        row.append(
+            additions,
+            style=make_style(
+                palette.success if change.additions is not None else palette.muted,
+                bold=change.additions is not None,
+            ),
+        )
+        row.append(" ", style=make_style(palette.muted))
+        row.append(
+            deletions,
+            style=make_style(
+                palette.error if change.deletions is not None else palette.muted,
+                bold=change.deletions is not None,
+            ),
+        )
+        return row
 
     def _visible_patch_sections(self) -> tuple[CommitPatchSection, ...]:
         if self.show_full_patch:
@@ -543,7 +676,6 @@ class CommitDetailScreen(ModalScreen[None]):
         self,
         *,
         refresh_content: bool,
-        follow_selection: bool,
     ) -> None:
         palette = resolve_theme_palette(self.app.current_theme)
         patch_sections = self._visible_patch_sections()
@@ -590,9 +722,6 @@ class CommitDetailScreen(ModalScreen[None]):
                 )
             self.query_one("#commit-detail-content", Static).update(content)
 
-        if self.show_full_patch and follow_selection:
-            self.call_after_refresh(self._scroll_patch_to_selected)
-
     def _scroll_patch_to_selected(self) -> None:
         if not self.show_full_patch or not self.detail.file_changes:
             return
@@ -613,6 +742,20 @@ class CommitDetailScreen(ModalScreen[None]):
             y=target_y,
             animate=False,
         )
+
+    def _restore_patch_scroll(self, scroll_y: float) -> None:
+        if not self.show_full_patch:
+            return
+        patch_scroll = self.query_one("#commit-detail-scroll", VerticalScroll)
+        target_y = max(min(scroll_y, patch_scroll.max_scroll_y), 0)
+        patch_scroll.scroll_to(y=target_y, animate=False)
+        self._sync_selection_from_patch_scroll(target_y)
+        if target_y < scroll_y and self._patch_restore_retry_budget > 0:
+            self._patch_restore_retry_budget -= 1
+            self._schedule_reconcile(restore_patch_scroll=scroll_y)
+            return
+        self._patch_restore_retry_budget = 0
+        self._saved_full_patch_scroll_y = target_y
 
     def _sync_outline_cursor(self, index: int) -> None:
         if not (0 <= index < len(self.detail.file_changes)):
@@ -649,6 +792,10 @@ class CommitDetailScreen(ModalScreen[None]):
         self._sync_outline_cursor(active_index)
 
     def _on_patch_scroll_y(self, old_value: float, new_value: float) -> None:
+        if self.show_full_patch:
+            self._full_patch_scroll_y = new_value
+            if not self._mode_transition_active:
+                self._saved_full_patch_scroll_y = new_value
         if self._ignore_next_patch_scroll_sync:
             self._ignore_next_patch_scroll_sync = False
             return
@@ -675,7 +822,7 @@ class CommitDetailScreen(ModalScreen[None]):
                     )
                 else:
                     table.add_row(
-                        truncate_middle(label, file_width),
+                        self._build_outline_row_label(label, change, file_width),
                         key=str(index),
                     )
             if self.detail.file_changes:
@@ -692,10 +839,15 @@ class CommitDetailScreen(ModalScreen[None]):
         index = int(str(row_key))
         if index != self.selected_file_index:
             self.selected_file_index = index
-            self._render_patch_panel(
-                refresh_content=not self.show_full_patch,
-                follow_selection=self.show_full_patch,
-            )
+            if self.show_full_patch:
+                if (
+                    not self._mode_transition_active
+                    and self._pending_patch_restore_y is None
+                ):
+                    self._schedule_reconcile(scroll_to_selection=True)
+            else:
+                self._render_patch_panel(refresh_content=True)
+                self._schedule_reconcile()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         if event.data_table.id != "commit-detail-files" or self._suspend_file_events:
@@ -705,11 +857,15 @@ class CommitDetailScreen(ModalScreen[None]):
             return
         self.selected_file_index = int(str(row_key))
         if self.show_full_patch:
-            self._render_patch_panel(refresh_content=False, follow_selection=True)
-            self.query_one("#commit-detail-scroll", VerticalScroll).focus()
+            self._schedule_reconcile(
+                focus_target="patch",
+                scroll_to_selection=True,
+            )
         else:
-            self._render_patch_panel(refresh_content=True, follow_selection=False)
-            self.query_one("#commit-detail-scroll", VerticalScroll).focus()
+            if not self._mode_transition_active:
+                self._saved_full_patch_scroll_y = None
+            self._render_patch_panel(refresh_content=True)
+            self._schedule_reconcile(focus_target="patch")
 
     def _scroll_target(self) -> VerticalScroll | DataTable:
         focused = self.focused
@@ -734,6 +890,8 @@ class CommitDetailScreen(ModalScreen[None]):
     def action_cursor_up(self) -> None:
         target = self._scroll_target()
         if isinstance(target, DataTable):
+            if not self.show_full_patch:
+                self._saved_full_patch_scroll_y = None
             target.action_cursor_up()
         else:
             target.scroll_up(animate=False)
@@ -741,6 +899,8 @@ class CommitDetailScreen(ModalScreen[None]):
     def action_cursor_down(self) -> None:
         target = self._scroll_target()
         if isinstance(target, DataTable):
+            if not self.show_full_patch:
+                self._saved_full_patch_scroll_y = None
             target.action_cursor_down()
         else:
             target.scroll_down(animate=False)
@@ -748,6 +908,8 @@ class CommitDetailScreen(ModalScreen[None]):
     def action_page_up(self) -> None:
         target = self._scroll_target()
         if isinstance(target, DataTable):
+            if not self.show_full_patch:
+                self._saved_full_patch_scroll_y = None
             target.action_page_up()
         else:
             target.scroll_page_up(animate=False)
@@ -755,6 +917,8 @@ class CommitDetailScreen(ModalScreen[None]):
     def action_page_down(self) -> None:
         target = self._scroll_target()
         if isinstance(target, DataTable):
+            if not self.show_full_patch:
+                self._saved_full_patch_scroll_y = None
             target.action_page_down()
         else:
             target.scroll_page_down(animate=False)
@@ -763,6 +927,8 @@ class CommitDetailScreen(ModalScreen[None]):
         target = self._scroll_target()
         if isinstance(target, DataTable):
             if self.detail.file_changes:
+                if not self.show_full_patch:
+                    self._saved_full_patch_scroll_y = None
                 target.move_cursor(row=0, animate=False, scroll=True)
         else:
             target.scroll_home(animate=False)
@@ -771,6 +937,8 @@ class CommitDetailScreen(ModalScreen[None]):
         target = self._scroll_target()
         if isinstance(target, DataTable):
             if self.detail.file_changes:
+                if not self.show_full_patch:
+                    self._saved_full_patch_scroll_y = None
                 target.move_cursor(
                     row=len(self.detail.file_changes) - 1,
                     animate=False,
@@ -781,12 +949,27 @@ class CommitDetailScreen(ModalScreen[None]):
 
     def action_toggle_patch_scope(self) -> None:
         was_full_patch = self.show_full_patch
-        self.show_full_patch = not self.show_full_patch
-        self._render_detail_view()
+        self._mode_transition_active = True
+        restore_patch_scroll = None if was_full_patch else self._saved_full_patch_scroll_y
+        previous_full_patch_scroll_y: float | None = None
         if was_full_patch:
-            self.query_one("#commit-detail-files", DataTable).focus()
-        else:
-            self.call_after_refresh(self._focus_patch_if_available)
+            restore_patch_scroll = None
+            previous_full_patch_scroll_y = self.query_one(
+                "#commit-detail-scroll",
+                VerticalScroll,
+            ).scroll_y
+            self._full_patch_scroll_y = previous_full_patch_scroll_y
+            self._patch_restore_retry_budget = 0
+        elif restore_patch_scroll is not None:
+            self._patch_restore_retry_budget = 2
+        self.show_full_patch = not self.show_full_patch
+        self._render_detail_view(
+            focus_target="files" if was_full_patch else "patch",
+            scroll_to_selection=not was_full_patch,
+            restore_patch_scroll=restore_patch_scroll,
+        )
+        if previous_full_patch_scroll_y is not None:
+            self._saved_full_patch_scroll_y = previous_full_patch_scroll_y
 
     def action_close_screen(self) -> None:
         self.dismiss(None)
