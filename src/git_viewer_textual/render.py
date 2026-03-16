@@ -103,6 +103,10 @@ def render_contribution_graph(
         palette.foreground,
         0.10 if palette.background.brightness < 0.5 else 0.06,
     ).hex6
+    padding_style = palette.background.blend(
+        palette.panel,
+        0.50 if palette.background.brightness < 0.5 else 0.32,
+    ).hex6
     heatmap_styles = [inactive_style, *HEATMAP_STYLES]
     cell_char = "■"
 
@@ -110,7 +114,7 @@ def render_contribution_graph(
         line = Text(f"{day_name:<3} ", style=make_style(palette.muted))
         for col_index, value in enumerate(grid[row_index]):
             if value is None:
-                line.append(cell_char, style=heatmap_styles[0])
+                line.append(cell_char, style=padding_style)
                 continue
             if value <= 0:
                 style = heatmap_styles[0]
