@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import datetime as dt
-
 from rich.table import Table
 from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.color import Color
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import DataTable, Footer, Header, Static
@@ -252,16 +249,13 @@ class CommitDetailScreen(ModalScreen[None]):
     def _apply_detail_layout(self) -> None:
         sidebar = self.query_one("#commit-detail-sidebar", Vertical)
         overview_panel = self.query_one("#commit-detail-overview-panel", Vertical)
-        files_panel = self.query_one("#commit-detail-files-panel", Vertical)
 
         if self.show_full_patch:
             sidebar.styles.width = 28
             overview_panel.styles.display = "none"
-            files_panel.styles.height = "1fr"
         else:
             sidebar.styles.width = 36
             overview_panel.styles.display = "block"
-            files_panel.styles.height = "1fr"
 
     def _ensure_valid_focus(self, *, prefer_patch: bool = False) -> None:
         focused = self.focused
