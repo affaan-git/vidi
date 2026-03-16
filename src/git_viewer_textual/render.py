@@ -24,24 +24,75 @@ def render_contribution_graph(
     selected_day: dt.date | None,
     palette: ThemePalette,
 ) -> Group:
-    grid, months, first_sunday = build_date_grid(commit_counts, start_date, end_date)
-    header_width = max(
-        len(months),
-        max((index + 3 for index, label in enumerate(months) if label.strip()), default=0),
-    )
+    grid, _months, first_sunday = build_date_grid(commit_counts, start_date, end_date)
+    num_weeks = len(grid[0]) if grid else 0
+    header_width = max(num_weeks, 3)
     month_line = [" "] * header_width
     last_end = -4
-    for index, label in enumerate(months):
-        if not label.strip():
-            continue
-        short = label[:3]
+
+    is_full_year = (
+        start_date.month == 1
+        and start_date.day == 1
+        and end_date.month == 12
+        and end_date.day == 31
+        and start_date.year == end_date.year
+    )
+    common_year_month_lengths = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    month_offsets = [0]
+    for month_length in common_year_month_lengths:
+        month_offsets.append(month_offsets[-1] + month_length)
+    total_days = max(1, (end_date - start_date).days)
+
+    def canonical_day_offset(day: dt.date) -> int:
+        offset = month_offsets[day.month - 1] + day.day - 1
+        if day.month == 2 and day.day == 29:
+            return month_offsets[2] - 1
+        return offset
+
+    month_cursor = dt.date(start_date.year, start_date.month, 1)
+    while month_cursor <= end_date:
+        next_month = (
+            dt.date(month_cursor.year + 1, 1, 1)
+            if month_cursor.month == 12
+            else dt.date(month_cursor.year, month_cursor.month + 1, 1)
+        )
+        month_end = next_month - dt.timedelta(days=1)
+        visible_start = max(month_cursor, start_date)
+        visible_end = min(month_end, end_date)
+        label = month_cursor.strftime("%b")
+        if is_full_year:
+            projected_start = round(
+                (canonical_day_offset(visible_start) / (month_offsets[-1] - 1))
+                * (header_width - 1)
+            )
+            projected_end = round(
+                (canonical_day_offset(visible_end) / (month_offsets[-1] - 1))
+                * (header_width - 1)
+            )
+        else:
+            projected_start = round(
+                ((visible_start - start_date).days / total_days) * (header_width - 1)
+            )
+            projected_end = round(
+                ((visible_end - start_date).days / total_days) * (header_width - 1)
+            )
+        span_width = max(1, projected_end - projected_start + 1)
+        if span_width >= len(label):
+            index = projected_start + (span_width - len(label)) // 2
+        else:
+            index = projected_start
+        index = max(0, min(index, header_width - len(label)))
         if index < last_end:
+            index = last_end
+        if index + len(label) > header_width:
+            month_cursor = next_month
             continue
-        for offset, char in enumerate(short):
+        for offset, char in enumerate(label):
             pos = index + offset
             if pos < len(month_line):
                 month_line[pos] = char
-        last_end = index + len(short) + 1
+        last_end = index + len(label) + 1
+        month_cursor = next_month
 
     header = Text("    " + "".join(month_line), style=make_style(palette.muted))
 

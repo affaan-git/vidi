@@ -187,6 +187,24 @@ class FilterTests(unittest.TestCase):
         self.assertNotIn("▣", graph_text)
         self.assertIn("Sun ■■", graph_text)
 
+    def test_render_contribution_graph_month_header_is_stable_across_full_year_views(self) -> None:
+        app = make_app()
+        palette = resolve_theme_palette(app.current_theme)
+        headers: dict[int, str] = {}
+        for year in (2023, 2024, 2025, 2026, 2027):
+            graph = render_contribution_graph(
+                collections.Counter(),
+                dt.date(year, 1, 1),
+                dt.date(year, 12, 31),
+                None,
+                palette,
+            )
+            console = Console(file=io.StringIO(), record=True, width=160)
+            console.print(graph)
+            headers[year] = console.export_text().splitlines()[0]
+
+        self.assertEqual(len(set(headers.values())), 1)
+
     def test_filter_commits_uses_current_time_window(self) -> None:
         now = dt.datetime(2026, 3, 16, 12, 0, 0)
         recent = CommitRecord(
