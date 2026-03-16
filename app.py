@@ -20,6 +20,7 @@ from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.color import Color
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual import events
@@ -1730,6 +1731,12 @@ class GitViewerTUI(App[None]):
         height: auto;
     }
 
+    #language-files-scroll {
+        height: 1fr;
+        overflow-y: auto;
+        scrollbar-gutter: stable;
+    }
+
     #day-details {
         height: auto;
         min-height: 1;
@@ -1746,10 +1753,12 @@ class GitViewerTUI(App[None]):
         ("[", "prev_year", "Prev Year"),
         ("]", "next_year", "Next Year"),
         ("r", "cycle_range", "Cycle Range"),
+        Binding("tab", "focus_next_panel", "Next Panel", priority=True),
+        Binding("shift+tab", "focus_prev_panel", "Prev Panel", priority=True),
+        Binding("up", "cursor_up", "Up", priority=True),
+        Binding("down", "cursor_down", "Down", priority=True),
         ("j", "day_down", "Next Day"),
         ("k", "day_up", "Prev Day"),
-        ("n", "next_language", "Next Language"),
-        ("p", "prev_language", "Prev Language"),
     ]
 
     selected_branch: reactive[str]
@@ -1758,6 +1767,7 @@ class GitViewerTUI(App[None]):
     selected_day: reactive[dt.date | None]
     selected_language: reactive[str]
     selected_commit_hash: reactive[str | None]
+    active_panel: reactive[str]
 
     def __init__(self, context: RepoContext, service: RepoService) -> None:
         super().__init__()
@@ -1773,6 +1783,7 @@ class GitViewerTUI(App[None]):
             context.language_stats[0]["language"] if context.language_stats else "Other"
         )
         self.selected_commit_hash = None
+        self.active_panel = "commits"
         self._day_keys: list[dt.date] = []
         self._language_keys: list[str] = [item["language"] for item in context.language_stats]
         self._suspend_table_events = False
@@ -1800,7 +1811,8 @@ class GitViewerTUI(App[None]):
                 with Vertical(id="languages-panel", classes="panel"):
                     yield Static("Languages / Files", classes="panel-title")
                     yield Static(id="language-summary")
-                    yield Static(id="language-files")
+                    with VerticalScroll(id="language-files-scroll"):
+                        yield Static(id="language-files")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -1820,6 +1832,7 @@ class GitViewerTUI(App[None]):
         self._apply_theme()
         self._refresh_year_options()
         self.refresh_view()
+        self._select_panel("commits")
         self._mounted = True
 
     def on_theme_change(self, old_value: str, new_value: str) -> None:
@@ -1847,6 +1860,85 @@ class GitViewerTUI(App[None]):
             title.styles.color = palette.muted
 
         self.query_one("#day-scroll-hint", Static).styles.color = palette.muted
+        self._refresh_panel_styles()
+
+    def _refresh_panel_styles(self) -> None:
+        palette = self._theme_palette
+        panel_ids = {
+            "graph": "#graph-panel",
+            "commits": "#commits-panel",
+            "details": "#details-panel",
+            "languages": "#languages-panel",
+        }
+        for panel_name, selector in panel_ids.items():
+            panel = self.query_one(selector, Vertical)
+            border_color = palette.primary if panel_name == self.active_panel else palette.border
+            panel.styles.border = ("solid", border_color)
+
+    def _set_active_panel(self, panel_name: str) -> None:
+        self.active_panel = panel_name
+        if self._mounted:
+            self._refresh_panel_styles()
+
+    def _focusable_panels(self) -> tuple[str, ...]:
+        return ("graph", "commits", "details", "languages")
+
+    def _widget_for_panel(self, panel_name: str) -> Any | None:
+        if panel_name == "commits":
+            return self.query_one("#commits-table", DataTable)
+        if panel_name == "details":
+            return self.query_one("#day-details-scroll", VerticalScroll)
+        if panel_name == "languages":
+            return self.query_one("#language-files-scroll", VerticalScroll)
+        return None
+
+    def _select_panel(self, panel_name: str) -> None:
+        if panel_name not in self._focusable_panels():
+            return
+        self._set_active_panel(panel_name)
+        widget = self._widget_for_panel(panel_name)
+        if widget is not None:
+            widget.focus()
+
+    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        widget_id = getattr(event.widget, "id", None)
+        panel_by_widget = {
+            "commits-table": "commits",
+            "day-details-scroll": "details",
+            "language-files-scroll": "languages",
+        }
+        if widget_id in panel_by_widget:
+            self._set_active_panel(panel_by_widget[widget_id])
+
+    def action_focus_next_panel(self) -> None:
+        panels = self._focusable_panels()
+        index = panels.index(self.active_panel) if self.active_panel in panels else 0
+        self._select_panel(panels[(index + 1) % len(panels)])
+
+    def action_focus_prev_panel(self) -> None:
+        panels = self._focusable_panels()
+        index = panels.index(self.active_panel) if self.active_panel in panels else 0
+        self._select_panel(panels[(index - 1) % len(panels)])
+
+    def action_cursor_up(self) -> None:
+        if self.active_panel == "commits":
+            self.query_one("#commits-table", DataTable).action_cursor_up()
+        elif self.active_panel == "details":
+            self.query_one("#day-details-scroll", VerticalScroll).scroll_up(animate=False)
+        elif self.active_panel == "languages":
+            self.action_prev_language()
+        else:
+            self.action_day_up()
+
+    def action_cursor_down(self) -> None:
+        if self.active_panel == "commits":
+            self.query_one("#commits-table", DataTable).action_cursor_down()
+        elif self.active_panel == "details":
+            self.query_one("#day-details-scroll", VerticalScroll).scroll_down(animate=False)
+        elif self.active_panel == "languages":
+            self.action_next_language()
+        else:
+            self.action_day_down()
 
     def _refresh_year_options(self) -> None:
         branch_data = self.service.get_branch_data(self.selected_branch)
@@ -1905,6 +1997,17 @@ class GitViewerTUI(App[None]):
         )
         self._update_language_files(commits)
         self._suspend_table_events = False
+
+    def _refresh_language_panel(self) -> None:
+        _branch_data, commits = self._filtered_branch_data()
+        self.query_one("#language-summary", Static).update(
+            build_language_summary(
+                self.context.language_stats,
+                self.selected_language,
+                self._theme_palette,
+            )
+        )
+        self._update_language_files(commits)
 
     def _update_selection_views(
         self,
@@ -2068,6 +2171,7 @@ class GitViewerTUI(App[None]):
         if self._suspend_table_events:
             return
         if event.data_table.id == "commits-table":
+            self._set_active_panel("commits")
             row_key = event.row_key.value if event.row_key else None
             if row_key:
                 _branch_data, commits = self._filtered_branch_data()
@@ -2079,6 +2183,7 @@ class GitViewerTUI(App[None]):
         if self._suspend_table_events:
             return
         if event.data_table.id == "commits-table":
+            self._set_active_panel("commits")
             row_key = event.row_key.value if event.row_key else None
             if row_key and str(row_key) != self.selected_commit_hash:
                 _branch_data, commits = self._filtered_branch_data()
@@ -2169,7 +2274,8 @@ class GitViewerTUI(App[None]):
             return
         idx = self._language_keys.index(self.selected_language)
         self.selected_language = self._language_keys[(idx + 1) % len(self._language_keys)]
-        self.refresh_view()
+        self._refresh_language_panel()
+        self._select_panel("languages")
 
     def action_prev_language(self) -> None:
         if not self._language_keys:
@@ -2178,7 +2284,8 @@ class GitViewerTUI(App[None]):
             return
         idx = self._language_keys.index(self.selected_language)
         self.selected_language = self._language_keys[(idx - 1) % len(self._language_keys)]
-        self.refresh_view()
+        self._refresh_language_panel()
+        self._select_panel("languages")
 
 
 def main() -> None:
