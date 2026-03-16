@@ -9,6 +9,7 @@ from pathlib import Path
 
 from rich.console import Console
 from textual.color import Color
+from textual.widgets import Input
 
 from git_viewer_textual.app import GitViewerApp
 from git_viewer_textual.data import filter_commits, resolve_graph_window
@@ -106,6 +107,25 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("tab")
             await pilot.pause()
             self.assertEqual(getattr(app.focused, "id", None), "language-summary-scroll")
+
+    async def test_branch_picker_restores_current_branch_when_filter_is_cleared(self) -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.press("b")
+            await pilot.pause()
+            self.assertEqual(type(app.screen).__name__, "BranchPickerScreen")
+
+            await pilot.press("d", "e", "v")
+            await pilot.pause()
+            self.assertEqual(app.screen.highlighted_branch, "dev")
+
+            await pilot.press("backspace", "backspace", "backspace")
+            await pilot.pause()
+            self.assertEqual(
+                app.screen.query_one("#branch-picker-filter", Input).value,
+                "",
+            )
+            self.assertEqual(app.screen.highlighted_branch, app.context.current_branch)
 
 
 class FilterTests(unittest.TestCase):

@@ -34,6 +34,15 @@ class BranchPickerScreen(ModalScreen[str | None]):
 
     #branch-picker-filter {
         margin: 0 1 1 1;
+        border: solid $border-blurred;
+        background: $surface;
+        color: $text;
+        outline: none;
+    }
+
+    #branch-picker-filter:focus {
+        border: solid $primary;
+        outline: none;
     }
 
     #branch-picker-options {
@@ -97,6 +106,10 @@ class BranchPickerScreen(ModalScreen[str | None]):
         help_text = self.query_one("#branch-picker-help", Static)
         help_text.styles.color = palette.muted
 
+        branch_filter = self.query_one("#branch-picker-filter", Input)
+        branch_filter.styles.background = palette.surface
+        branch_filter.styles.color = palette.foreground
+
         options = self.query_one("#branch-picker-options", OptionList)
         options.styles.background = palette.surface
 
@@ -129,7 +142,17 @@ class BranchPickerScreen(ModalScreen[str | None]):
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id != "branch-picker-filter":
             return
-        query = event.value
+        query = event.value.strip()
+        if not query:
+            self.filtered_branches = self.branches[:]
+            self.highlighted_branch = (
+                self.current_branch
+                if self.current_branch in self.filtered_branches
+                else (self.filtered_branches[0] if self.filtered_branches else "")
+            )
+            self._refresh_options()
+            return
+
         ranked: list[tuple[int, str]] = []
         for branch in self.branches:
             score = fuzzy_score(query, branch)
@@ -137,7 +160,9 @@ class BranchPickerScreen(ModalScreen[str | None]):
                 ranked.append((score, branch))
         ranked.sort(key=lambda item: (item[0], item[1]))
         self.filtered_branches = [branch for _score, branch in ranked]
-        if self.filtered_branches:
+        if self.highlighted_branch in self.filtered_branches:
+            pass
+        elif self.filtered_branches:
             self.highlighted_branch = self.filtered_branches[0]
         else:
             self.highlighted_branch = ""
