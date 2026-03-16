@@ -65,24 +65,25 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
         app = make_app()
         async with app.run_test() as pilot:
             graph_title_render = app.screen.query_one("#graph-title").render()
-            language_meta_render = app.screen.query_one("#language-meta").render()
+            language_title_render = app.screen.query_one("#language-title").render()
             graph_title = getattr(graph_title_render, "_renderable", graph_title_render)
-            language_meta = getattr(language_meta_render, "_renderable", language_meta_render)
+            language_title = getattr(language_title_render, "_renderable", language_title_render)
 
             console = Console(file=io.StringIO(), record=True, width=140)
             console.print(graph_title)
             graph_title_text = console.export_text()
             self.assertIn("commits", graph_title_text)
 
-            language_meta_text = getattr(language_meta, "plain", str(language_meta))
-            self.assertIn("languages", language_meta_text)
-            self.assertIn("Top language", language_meta_text)
+            language_title_text = getattr(language_title, "plain", str(language_title))
+            self.assertIn("languages", language_title_text)
+            self.assertIn("Top language", language_title_text)
 
     async def test_languages_panel_uses_summary_widget_instead_of_duplicate_list(self) -> None:
         app = make_app()
         async with app.run_test() as pilot:
             self.assertEqual(len(app.screen.query("#language-list")), 0)
             self.assertEqual(len(app.screen.query("#language-summary")), 1)
+            self.assertEqual(len(app.screen.query("#language-meta")), 0)
             await pilot.press("tab")
             await pilot.press("tab")
             await pilot.pause()

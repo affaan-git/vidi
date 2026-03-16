@@ -102,13 +102,40 @@ def build_graph_title(
     return title
 
 
+def build_language_title(
+    language_stats: list[LanguageStat],
+    palette: ThemePalette,
+) -> Text:
+    title = Text()
+    title.append("Languages", style=make_style(palette.muted, bold=True))
+    title.append("  ", style=make_style(palette.muted))
+    title.append(
+        f"{len(language_stats)} languages",
+        style=make_style(palette.muted),
+    )
+    if language_stats:
+        top_language = language_stats[0]
+        title.append("  ·  ", style=make_style(palette.muted))
+        title.append("Top language ", style=make_style(palette.muted))
+        title.append(
+            str(top_language["language"]),
+            style=make_style(palette.foreground, bold=True),
+        )
+        title.append(" ", style=make_style(palette.muted))
+        title.append(
+            f"{float(top_language['percentage']):.1f}%",
+            style=make_style(palette.muted),
+        )
+    return title
+
+
 def build_language_summary(
     language_stats: list[LanguageStat],
     selected_language: str,
     palette: ThemePalette,
     *,
     width: int,
-    max_rows: int = 8,
+    max_rows: int = 2,
 ) -> Group:
     if not language_stats:
         return Group(Text("No language data", style=make_style(palette.muted)))
@@ -140,6 +167,11 @@ def build_language_summary(
             continue
         bar.append("█" * segment_width, style=str(item["color"]))
 
+    if not bar:
+        bar.append("█" * bar_width, style=make_style(palette.surface))
+
+    column_count = max(1, min(3, width // 24))
+    visible_count = min(len(language_stats), column_count * max_rows)
     selected_index = next(
         (
             index
@@ -148,25 +180,57 @@ def build_language_summary(
         ),
         0,
     )
-    visible_rows = min(max_rows, len(language_stats))
-    start = max(0, selected_index - (visible_rows // 2))
-    end = min(len(language_stats), start + visible_rows)
-    start = max(0, end - visible_rows)
+    start = max(0, min(selected_index - (visible_count // 2), len(language_stats) - visible_count))
+    visible_items = language_stats[start : start + visible_count]
 
+    gap = 2
+    cell_width = max(18, (width - gap * (column_count - 1)) // column_count)
+    rows = (len(visible_items) + column_count - 1) // column_count
     legend_lines: list[Text] = []
-    for item in language_stats[start:end]:
-        line = Text()
-        prefix = ">" if item["language"] == selected_language else " "
-        line.append(prefix + " ", style=make_style(palette.muted))
-        line.append("● ", style=item["color"])
+
+    def build_cell(item: LanguageStat) -> Text:
+        percentage_text = f"{float(item['percentage']):.1f}%"
+        reserved = 2 + 2 + 1 + len(percentage_text)
+        label_width = max(4, cell_width - reserved)
+        cell = Text()
+        is_selected = item["language"] == selected_language
+        prefix = ">" if is_selected else " "
+        cell.append(prefix + " ", style=make_style(palette.muted))
+        cell.append("● ", style=str(item["color"]))
         label_style = (
             make_style(palette.foreground, bold=True)
-            if item["language"] == selected_language
+            if is_selected
             else make_style(palette.foreground)
         )
-        line.append(item["language"], style=label_style)
-        line.append(f" {item['percentage']:.1f}%", style=make_style(palette.muted))
+        cell.append(
+            truncate_middle(str(item["language"]), label_width),
+            style=label_style,
+        )
+        cell.append(" ", style=make_style(palette.muted))
+        cell.append(percentage_text, style=make_style(palette.muted))
+        return cell
+
+    for row_index in range(rows):
+        line = Text()
+        for column_index in range(column_count):
+            item_index = row_index * column_count + column_index
+            if item_index >= len(visible_items):
+                continue
+            cell = build_cell(visible_items[item_index])
+            padding = max(0, cell_width - len(cell.plain))
+            line.append(cell)
+            if column_index < column_count - 1:
+                line.append(" " * (padding + gap))
         legend_lines.append(line)
+
+    hidden_count = len(language_stats) - len(visible_items)
+    if hidden_count > 0:
+        more_line = Text()
+        more_line.append(
+            f"... {hidden_count} more languages",
+            style=make_style(palette.muted),
+        )
+        legend_lines.append(more_line)
 
     return Group(bar, *legend_lines)
 

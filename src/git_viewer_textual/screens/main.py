@@ -21,6 +21,7 @@ from ..render import (
     build_graph_title,
     build_language_details,
     build_language_summary,
+    build_language_title,
     render_contribution_graph,
 )
 from ..repository import RepoService
@@ -103,14 +104,13 @@ class MainScreen(Screen[None]):
         min-height: 12;
     }
 
-    #language-summary {
-        height: auto;
-        min-height: 6;
+    #language-title {
+        margin-bottom: 1;
     }
 
-    #language-meta {
+    #language-summary {
         height: auto;
-        margin-bottom: 1;
+        min-height: 4;
     }
 
     #language-details-scroll {
@@ -192,8 +192,7 @@ class MainScreen(Screen[None]):
                         yield Static(id="day-details")
                     yield Static(id="day-scroll-hint")
                 with Vertical(id="languages-panel", classes="panel"):
-                    yield Static("Languages / Files", classes="panel-title")
-                    yield Static(id="language-meta")
+                    yield Static(id="language-title", classes="panel-title")
                     yield FocusableStatic(id="language-summary")
                     with VerticalScroll(id="language-details-scroll"):
                         yield Static(id="language-details")
@@ -261,7 +260,6 @@ class MainScreen(Screen[None]):
             title.styles.color = palette.muted
 
         self.query_one("#day-scroll-hint", Static).styles.color = palette.muted
-        self.query_one("#language-meta", Static).styles.color = palette.muted
         self._refresh_panel_styles()
 
     def _refresh_panel_styles(self) -> None:
@@ -496,7 +494,9 @@ class MainScreen(Screen[None]):
     def _refresh_language_panel(self, commits: list[CommitRecord] | None = None) -> None:
         if commits is None:
             branch_data, commits = self._filtered_branch_data()
-        self.query_one("#language-meta", Static).update(self._build_language_meta())
+        self.query_one("#language-title", Static).update(
+            build_language_title(self.context.language_stats, self._theme_palette)
+        )
         summary_widget = self.query_one("#language-summary", FocusableStatic)
         summary_width = (
             summary_widget.content_region.width
@@ -530,30 +530,6 @@ class MainScreen(Screen[None]):
             f"{len(self.context.branches)} branches · "
             f"{total_files} scanned files"
         )
-
-    def _build_language_meta(self) -> Text:
-        meta = Text()
-        language_count = len(self.context.language_stats)
-        if self.context.language_stats:
-            top_language = self.context.language_stats[0]
-            meta.append(
-                f"{language_count} languages",
-                style=make_style(self._theme_palette.muted, bold=True),
-            )
-            meta.append("  ·  ", style=make_style(self._theme_palette.muted))
-            meta.append("Top language ", style=make_style(self._theme_palette.muted, bold=True))
-            meta.append(
-                str(top_language["language"]),
-                style=make_style(self._theme_palette.foreground, bold=True),
-            )
-            meta.append("  ", style=make_style(self._theme_palette.muted))
-            meta.append(
-                f"{float(top_language['percentage']):.1f}%",
-                style=make_style(self._theme_palette.muted),
-            )
-        else:
-            meta.append("0 languages", style=make_style(self._theme_palette.muted, bold=True))
-        return meta
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         if self._suspend_table_events or event.data_table.id != "commits-table":
