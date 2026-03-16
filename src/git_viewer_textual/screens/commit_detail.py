@@ -23,6 +23,12 @@ from ..utils import rel_time, truncate_middle, utc_now
 class CommitDetailScreen(ModalScreen[None]):
     """Full-screen modal for a single commit."""
 
+    BACK_GROUP = Binding.Group("Back", compact=True)
+    PANE_GROUP = Binding.Group("Pane")
+    MOVE_GROUP = Binding.Group("Move", compact=True)
+    PAGE_GROUP = Binding.Group("Page", compact=True)
+    JUMP_GROUP = Binding.Group("Jump", compact=True)
+
     CSS = """
     #commit-detail-summary-bar {
         padding: 0 1;
@@ -102,17 +108,23 @@ class CommitDetailScreen(ModalScreen[None]):
     """
 
     BINDINGS = [
-        ("escape", "close_screen", "Back"),
-        ("q", "close_screen", "Back"),
-        Binding("tab", "focus_next_pane", "Next Pane", priority=True),
-        Binding("shift+tab", "focus_prev_pane", "Prev Pane", priority=True),
-        Binding("up", "cursor_up", "Up", priority=True),
-        Binding("down", "cursor_down", "Down", priority=True),
-        Binding("pageup", "page_up", "Page Up", priority=True),
-        Binding("pagedown", "page_down", "Page Down", priority=True),
-        Binding("home", "scroll_top", "Top", priority=True),
-        Binding("end", "scroll_bottom", "Bottom", priority=True),
-        ("a", "toggle_patch_scope", "Toggle Patch Scope"),
+        Binding("escape", "close_screen", "Back", group=BACK_GROUP),
+        Binding("tab", "focus_next_pane", "Next Pane", priority=True, group=PANE_GROUP),
+        Binding(
+            "shift+tab",
+            "focus_prev_pane",
+            "Prev Pane",
+            priority=True,
+            key_display="S-Tab",
+            group=PANE_GROUP,
+        ),
+        Binding("up", "cursor_up", "Up", priority=True, group=MOVE_GROUP),
+        Binding("down", "cursor_down", "Down", priority=True, group=MOVE_GROUP),
+        Binding("pageup", "page_up", "Page Up", priority=True, group=PAGE_GROUP),
+        Binding("pagedown", "page_down", "Page Down", priority=True, group=PAGE_GROUP),
+        Binding("home", "scroll_top", "Top", priority=True, group=JUMP_GROUP),
+        Binding("end", "scroll_bottom", "Bottom", priority=True, group=JUMP_GROUP),
+        ("a", "toggle_patch_scope", "Patch"),
     ]
 
     def __init__(self, service: RepoService, commit_hash: str) -> None:

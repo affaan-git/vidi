@@ -9,6 +9,7 @@ from pathlib import Path
 
 from rich.console import Console
 from textual.color import Color
+from textual.binding import Binding
 from textual.widgets import Footer
 from textual.widgets import Input
 
@@ -93,7 +94,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Languages", language_title_text)
             self.assertRegex(language_title_text, r"\b\d+\b")
 
-    async def test_main_footer_uses_compact_grouped_builtin_footer(self) -> None:
+    async def test_main_footer_uses_grouped_builtin_footer(self) -> None:
         app = make_app()
         async with app.run_test() as pilot:
             footer = app.screen.query_one(Footer)
@@ -107,6 +108,41 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(grouped_descriptions, {"Move", "Panel", "Year", "Day"})
             footer_label = footer.query("FooterLabel").first()
             self.assertEqual(footer_label.styles.margin.right, 1)
+
+    async def test_commit_detail_footer_matches_main_footer_style(self) -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.press("enter")
+            await pilot.pause()
+            self.assertEqual(type(app.screen).__name__, "CommitDetailScreen")
+
+            footer = app.screen.query_one(Footer)
+            self.assertFalse(footer.compact)
+            grouped_descriptions = {
+                binding.group.description
+                for binding in app.screen.BINDINGS
+                if getattr(binding, "group", None) is not None
+            }
+            self.assertEqual(
+                grouped_descriptions,
+                {"Back", "Pane", "Move", "Page", "Jump"},
+            )
+            self.assertNotIn(
+                ("q", "close_screen"),
+                {
+                    (binding.key, binding.action)
+                    for binding in Binding.make_bindings(app.screen.BINDINGS)
+                },
+            )
+
+    async def test_branch_picker_uses_builtin_footer_instead_of_help_text(self) -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.press("b")
+            await pilot.pause()
+            self.assertEqual(type(app.screen).__name__, "BranchPickerScreen")
+            self.assertEqual(len(app.screen.query(Footer)), 1)
+            self.assertEqual(len(app.screen.query("#branch-picker-help")), 0)
 
     async def test_languages_panel_uses_summary_widget_instead_of_duplicate_list(self) -> None:
         app = make_app()
@@ -142,6 +178,22 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
                 "",
             )
             self.assertEqual(app.screen.highlighted_branch, app.context.current_branch)
+
+    async def test_branch_picker_enter_binding_selects_highlighted_branch(self) -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.press("b")
+            await pilot.pause()
+            self.assertEqual(type(app.screen).__name__, "BranchPickerScreen")
+
+            await pilot.press("d", "e", "v")
+            await pilot.pause()
+            self.assertEqual(app.screen.highlighted_branch, "dev")
+
+            await pilot.press("enter")
+            await pilot.pause()
+            self.assertEqual(type(app.screen).__name__, "MainScreen")
+            self.assertEqual(app.screen.selected_branch, "dev")
 
 
 class FilterTests(unittest.TestCase):

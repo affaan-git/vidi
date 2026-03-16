@@ -6,7 +6,7 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.screen import ModalScreen
-from textual.widgets import Input, OptionList, Static
+from textual.widgets import Footer, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 from ..theme import make_style, resolve_theme_palette
@@ -15,6 +15,9 @@ from ..utils import fuzzy_score, truncate_middle
 
 class BranchPickerScreen(ModalScreen[str | None]):
     """Modal branch picker using Textual's option list widget."""
+
+    BACK_GROUP = Binding.Group("Back", compact=True)
+    MOVE_GROUP = Binding.Group("Move", compact=True)
 
     CSS = """
     BranchPickerScreen {
@@ -55,17 +58,14 @@ class BranchPickerScreen(ModalScreen[str | None]):
         border: solid $border;
     }
 
-    #branch-picker-help {
-        margin: 1 1 0 1;
-        content-align: right middle;
-        height: 1;
-    }
     """
 
     BINDINGS = [
-        ("escape", "cancel", "Cancel"),
-        Binding("up", "cursor_up", "Up", priority=True),
-        Binding("down", "cursor_down", "Down", priority=True),
+        Binding("escape", "cancel", "Back", group=BACK_GROUP),
+        Binding("q", "cancel", "Back", group=BACK_GROUP),
+        Binding("up", "cursor_up", "Up", priority=True, group=MOVE_GROUP),
+        Binding("down", "cursor_down", "Down", priority=True, group=MOVE_GROUP),
+        Binding("enter", "choose_branch", "Choose", priority=True),
     ]
 
     def __init__(self, branches: list[str], current_branch: str) -> None:
@@ -82,7 +82,7 @@ class BranchPickerScreen(ModalScreen[str | None]):
             yield Static("Select Branch", id="branch-picker-title")
             yield Input(placeholder="Filter branches", id="branch-picker-filter")
             yield OptionList(id="branch-picker-options")
-            yield Static("Enter choose   Esc cancel", id="branch-picker-help")
+        yield Footer()
 
     def on_mount(self) -> None:
         self.watch(self.app, "theme", self._on_theme_change, init=False)
@@ -102,9 +102,6 @@ class BranchPickerScreen(ModalScreen[str | None]):
         container.styles.background = palette.panel
         container.styles.color = palette.foreground
         container.styles.border = ("solid", palette.border)
-
-        help_text = self.query_one("#branch-picker-help", Static)
-        help_text.styles.color = palette.muted
 
         branch_filter = self.query_one("#branch-picker-filter", Input)
         branch_filter.styles.background = palette.surface
@@ -197,6 +194,10 @@ class BranchPickerScreen(ModalScreen[str | None]):
 
     def action_cursor_down(self) -> None:
         self.query_one("#branch-picker-options", OptionList).action_cursor_down()
+
+    def action_choose_branch(self) -> None:
+        if self.highlighted_branch:
+            self.dismiss(self.highlighted_branch)
 
     def action_cancel(self) -> None:
         self.dismiss(None)
