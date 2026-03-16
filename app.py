@@ -314,14 +314,26 @@ class CommitFileChange:
 
 
 @dataclass(frozen=True)
+class CommitPatchSection:
+    path: str
+    old_path: str
+    new_path: str
+    patch: str
+    is_binary: bool
+    is_rename: bool
+
+
+@dataclass(frozen=True)
 class CommitDetail:
     commit_hash: str
+    parents: tuple[str, ...]
     author_name: str
     author_email: str
     authored_at: dt.datetime
     subject: str
     body: str
     file_changes: tuple[CommitFileChange, ...]
+    patch_sections: tuple[CommitPatchSection, ...]
     patch: str
 
 
@@ -443,7 +455,7 @@ class RepoService:
                 "show",
                 "--no-patch",
                 "--date=iso-strict",
-                "--format=%H%n%an%n%ae%n%ad%n%s%n%b",
+                "--format=%H%n%P%n%an%n%ae%n%ad%n%s%n%b",
                 commit_hash,
             ],
         )
@@ -469,10 +481,10 @@ class RepoService:
         )
 
         meta_lines = meta_out.splitlines()
-        if len(meta_lines) < 5:
+        if len(meta_lines) < 6:
             raise RuntimeError(f"Could not parse commit metadata for {commit_hash}")
-        full_hash, author_name, author_email, authored_raw, subject = meta_lines[:5]
-        body = "\n".join(meta_lines[5:]).strip()
+        full_hash, parents_raw, author_name, author_email, authored_raw, subject = meta_lines[:6]
+        body = "\n".join(meta_lines[6:]).strip()
 
         file_changes: list[CommitFileChange] = []
         for raw in numstat_out.splitlines():
@@ -494,12 +506,14 @@ class RepoService:
 
         return CommitDetail(
             commit_hash=full_hash,
+            parents=tuple(part for part in parents_raw.split() if part),
             author_name=author_name,
             author_email=author_email,
             authored_at=parse_iso_datetime(authored_raw),
             subject=subject,
             body=body,
             file_changes=tuple(file_changes),
+            patch_sections=parse_patch_sections(patch_out),
             patch=patch_out.rstrip(),
         )
 
@@ -846,6 +860,65 @@ def fuzzy_score(query: str, value: str) -> int | None:
     return 100 + gap_penalty
 
 
+def parse_patch_sections(patch_text: str) -> tuple[CommitPatchSection, ...]:
+    sections: list[CommitPatchSection] = []
+    if not patch_text.strip():
+        return tuple(sections)
+
+    current: list[str] = []
+    for raw in patch_text.splitlines():
+        if raw.startswith("diff --git ") and current:
+            sections.append(_build_patch_section(current))
+            current = [raw]
+        else:
+            current.append(raw)
+    if current:
+        sections.append(_build_patch_section(current))
+    return tuple(sections)
+
+
+def _build_patch_section(lines: list[str]) -> CommitPatchSection:
+    old_path = ""
+    new_path = ""
+    is_binary = any("Binary files " in line for line in lines)
+    is_rename = False
+
+    for line in lines:
+        if line.startswith("rename from "):
+            old_path = line.removeprefix("rename from ").strip()
+            is_rename = True
+        elif line.startswith("rename to "):
+            new_path = line.removeprefix("rename to ").strip()
+            is_rename = True
+        elif line.startswith("--- "):
+            candidate = line[4:].strip()
+            if candidate != "/dev/null":
+                old_path = candidate.removeprefix("a/")
+        elif line.startswith("+++ "):
+            candidate = line[4:].strip()
+            if candidate != "/dev/null":
+                new_path = candidate.removeprefix("b/")
+
+    if not old_path or not new_path:
+        header = next((line for line in lines if line.startswith("diff --git ")), "")
+        parts = header.split()
+        if len(parts) >= 4:
+            if not old_path:
+                old_path = parts[2].removeprefix("a/")
+            if not new_path:
+                new_path = parts[3].removeprefix("b/")
+
+    path = new_path or old_path or "unknown"
+    return CommitPatchSection(
+        path=path,
+        old_path=old_path or path,
+        new_path=new_path or path,
+        patch="\n".join(lines).rstrip(),
+        is_binary=is_binary,
+        is_rename=is_rename or ((old_path or path) != (new_path or path)),
+    )
+
+
 def build_language_summary(
     language_stats: list[dict[str, Any]], selected_language: str, palette: ThemePalette
 ) -> Group:
@@ -1123,7 +1196,10 @@ class CommitDetailScreen(ModalScreen[None]):
 
     BINDINGS = [
         ("escape", "cancel", "Close"),
-        ("q", "cancel", "Close"),
+        ("tab", "toggle_mode", "Toggle View"),
+        ("enter", "toggle_selected_file", "File Diff"),
+        ("j", "next_file", "Next File"),
+        ("k", "prev_file", "Prev File"),
     ]
 
     def __init__(self, service: RepoService, commit_hash: str) -> None:
@@ -1131,6 +1207,8 @@ class CommitDetailScreen(ModalScreen[None]):
         self.service = service
         self.commit_hash = commit_hash
         self.detail = service.get_commit_detail(commit_hash)
+        self.view_mode = "summary"
+        self.selected_file_index = 0
 
     def compose(self) -> ComposeResult:
         with Vertical(id="commit-detail-modal"):
@@ -1138,7 +1216,7 @@ class CommitDetailScreen(ModalScreen[None]):
             yield Static(id="commit-detail-subtitle")
             with VerticalScroll(id="commit-detail-scroll"):
                 yield Static(id="commit-detail-content")
-            yield Static("Esc close   q close", id="commit-detail-help")
+            yield Static(id="commit-detail-help")
 
     def on_mount(self) -> None:
         self.watch(self.app, "theme", self.on_theme_change, init=False)
@@ -1166,13 +1244,24 @@ class CommitDetailScreen(ModalScreen[None]):
         now = dt.datetime.utcnow()
         total_additions = sum(change.additions or 0 for change in self.detail.file_changes)
         total_deletions = sum(change.deletions or 0 for change in self.detail.file_changes)
+        section_count = len(self.detail.patch_sections)
+        if section_count and not (0 <= self.selected_file_index < section_count):
+            self.selected_file_index = 0
 
         title = Table.grid(expand=True)
         title.add_column(ratio=1)
-        title.add_column(justify="right", width=12)
+        title.add_column(justify="right", width=28)
+        mode_label = {
+            "summary": "summary",
+            "patch": "full patch",
+            "file": "selected file",
+        }[self.view_mode]
         title.add_row(
             Text("Commit", style=make_style(palette.foreground, bold=True)),
-            Text(self.detail.commit_hash[:12], style=make_style(palette.muted, bold=True)),
+            Text(
+                f"{mode_label}  {self.detail.commit_hash[:12]}",
+                style=make_style(palette.muted, bold=True),
+            ),
         )
         self.query_one("#commit-detail-title", Static).update(title)
 
@@ -1187,6 +1276,13 @@ class CommitDetailScreen(ModalScreen[None]):
         )
         subtitle.append("  ", style=make_style(palette.muted))
         subtitle.append(rel_time(self.detail.authored_at, now), style=make_style(palette.muted))
+        if self.detail.parents:
+            subtitle.append("  ", style=make_style(palette.muted))
+            subtitle.append("parents ", style=make_style(palette.muted))
+            subtitle.append(
+                ", ".join(parent[:7] for parent in self.detail.parents),
+                style=make_style(palette.foreground),
+            )
         self.query_one("#commit-detail-subtitle", Static).update(subtitle)
 
         content = Text()
@@ -1202,41 +1298,129 @@ class CommitDetailScreen(ModalScreen[None]):
             f"{len(self.detail.file_changes)} {file_word}  +{total_additions}  -{total_deletions}\n",
             style=make_style(palette.muted),
         )
-        for change in self.detail.file_changes:
+        for index, change in enumerate(self.detail.file_changes):
             added = "-" if change.additions is None else str(change.additions)
             deleted = "-" if change.deletions is None else str(change.deletions)
+            section = next((item for item in self.detail.patch_sections if item.path == change.path), None)
+            prefix = ">" if index == self.selected_file_index else " "
+            if section and section.is_rename:
+                path_label = f"{section.old_path} -> {section.new_path}"
+            else:
+                path_label = change.path
+            if change.additions is None or change.deletions is None:
+                path_label += "  [binary]"
             content.append("  ", style=make_style(palette.muted))
+            content.append(f"{prefix} ", style=make_style(palette.primary if index == self.selected_file_index else palette.muted, bold=index == self.selected_file_index))
             content.append(added.rjust(4), style=make_style(Color.parse("#39d353"), bold=True))
             content.append(" ", style=make_style(palette.muted))
             content.append(deleted.rjust(4), style=make_style(Color.parse("#f85149"), bold=True))
             content.append("  ", style=make_style(palette.muted))
-            content.append(f"{change.path}\n", style=make_style(palette.foreground))
+            label_style = make_style(palette.foreground, bold=index == self.selected_file_index)
+            content.append(f"{path_label}\n", style=label_style)
 
-        if self.detail.patch:
-            content.append("\nPatch\n", style=make_style(palette.muted, bold=True))
-            patch_lines = self.detail.patch.splitlines()
-            for index, raw in enumerate(patch_lines):
-                line = raw.rstrip("\n")
-                style = make_style(palette.foreground)
-                if line.startswith("diff --git") or line.startswith("index "):
-                    style = make_style(palette.muted, bold=True)
-                elif line.startswith("--- ") or line.startswith("+++ "):
-                    style = make_style(palette.muted)
-                elif line.startswith("@@"):
-                    style = make_style(palette.primary, bold=True)
-                elif line.startswith("+") and not line.startswith("+++"):
-                    style = make_style(Color.parse("#39d353"))
-                elif line.startswith("-") and not line.startswith("---"):
-                    style = make_style(Color.parse("#f85149"))
-                content.append(line, style=style)
-                if index < len(patch_lines) - 1:
+        patch_sections: tuple[CommitPatchSection, ...]
+        if self.view_mode == "summary":
+            patch_sections = ()
+        elif self.view_mode == "file":
+            patch_sections = (
+                (self.detail.patch_sections[self.selected_file_index],)
+                if self.detail.patch_sections
+                else ()
+            )
+        else:
+            patch_sections = self.detail.patch_sections
+
+        if patch_sections:
+            section_label = "Selected file diff" if self.view_mode == "file" else "Patch"
+            content.append(f"\n{section_label}\n", style=make_style(palette.muted, bold=True))
+            for section_index, section in enumerate(patch_sections):
+                if self.view_mode != "file":
+                    line = Text()
+                    marker = ">" if section_index == self.selected_file_index else " "
+                    line.append(f"{marker} ", style=make_style(palette.muted))
+                    path_style = make_style(
+                        palette.foreground,
+                        bold=(section_index == self.selected_file_index),
+                    )
+                    if section.is_rename:
+                        line.append(
+                            f"{section.old_path} -> {section.new_path}",
+                            style=path_style,
+                        )
+                    else:
+                        line.append(section.path, style=path_style)
+                    if section.is_binary:
+                        line.append("  [binary]", style=make_style(palette.muted, bold=True))
+                    content.append(line)
                     content.append("\n")
+                content.append(self._render_patch_text(section.patch, palette))
+                if section_index < len(patch_sections) - 1:
+                    content.append("\n\n")
 
         self.query_one("#commit-detail-content", Static).update(content)
+        hint = "Esc close   Tab toggle view   Enter selected file diff"
+        if self.detail.patch_sections:
+            hint += "   j/k file"
+        self.query_one("#commit-detail-help", Static).update(hint)
         self.query_one("#commit-detail-scroll", VerticalScroll).scroll_home(animate=False)
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+    def action_toggle_mode(self) -> None:
+        modes = ["summary", "patch", "file"]
+        if not self.detail.patch_sections:
+            modes = ["summary"]
+        idx = modes.index(self.view_mode) if self.view_mode in modes else 0
+        self.view_mode = modes[(idx + 1) % len(modes)]
+        self._render_detail_view()
+
+    def action_toggle_selected_file(self) -> None:
+        if not self.detail.patch_sections:
+            return
+        self.view_mode = "summary" if self.view_mode == "file" else "file"
+        self._render_detail_view()
+
+    def action_next_file(self) -> None:
+        if not self.detail.patch_sections:
+            return
+        self.selected_file_index = min(len(self.detail.patch_sections) - 1, self.selected_file_index + 1)
+        if self.view_mode == "summary":
+            self._render_detail_view()
+        else:
+            self._render_detail_view()
+
+    def action_prev_file(self) -> None:
+        if not self.detail.patch_sections:
+            return
+        self.selected_file_index = max(0, self.selected_file_index - 1)
+        if self.view_mode == "summary":
+            self._render_detail_view()
+        else:
+            self._render_detail_view()
+
+    def _render_patch_text(self, patch_text: str, palette: ThemePalette) -> Text:
+        text = Text()
+        patch_lines = patch_text.splitlines()
+        for index, raw in enumerate(patch_lines):
+            line = raw.rstrip("\n")
+            style = make_style(palette.foreground)
+            if line.startswith("diff --git") or line.startswith("index ") or line.startswith("similarity index"):
+                style = make_style(palette.muted, bold=True)
+            elif line.startswith("rename from ") or line.startswith("rename to "):
+                style = make_style(palette.primary, bold=True)
+            elif line.startswith("--- ") or line.startswith("+++ "):
+                style = make_style(palette.muted)
+            elif line.startswith("@@"):
+                style = make_style(palette.primary, bold=True)
+            elif line.startswith("+") and not line.startswith("+++"):
+                style = make_style(Color.parse("#39d353"))
+            elif line.startswith("-") and not line.startswith("---"):
+                style = make_style(Color.parse("#f85149"))
+            text.append(line, style=style)
+            if index < len(patch_lines) - 1:
+                text.append("\n")
+        return text
 
 
 def parse_args() -> argparse.Namespace:
