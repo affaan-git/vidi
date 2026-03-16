@@ -11,7 +11,7 @@ from rich.table import Table
 from rich.text import Text
 
 from .data import HEATMAP_STYLES, RANGE_PRESETS, build_year_grid
-from .models import CommitRecord, LanguageStat, ThemePalette
+from .models import LanguageStat, ThemePalette
 from .theme import make_style
 from .utils import rel_time, truncate_middle, utc_now
 
@@ -75,37 +75,11 @@ def render_contribution_graph(
     return Group(*lines, legend)
 
 
-def build_summary_text(
-    project_name: str,
-    branch: str,
-    year: int,
-    commits: list[CommitRecord],
-    language_stats: list[LanguageStat],
-    palette: ThemePalette,
-) -> Text:
-    counts: collections.Counter[dt.date] = collections.Counter(
-        commit.authored_date for commit in commits
-    )
-    top_language = language_stats[0]["language"] if language_stats else "Other"
-    text = Text()
-    text.append(project_name, style=make_style(palette.foreground, bold=True))
-    text.append("  |  ", style=make_style(palette.muted))
-    text.append(f"branch {branch}", style=make_style(palette.muted))
-    text.append("  |  ", style=make_style(palette.muted))
-    text.append(f"year {year}", style=make_style(palette.muted))
-    text.append("  |  ", style=make_style(palette.muted))
-    text.append(f"{len(commits)} commits", style=make_style(palette.muted))
-    text.append("  |  ", style=make_style(palette.muted))
-    text.append(f"{len(counts)} active days", style=make_style(palette.muted))
-    text.append("  |  ", style=make_style(palette.muted))
-    text.append(f"top language {top_language}", style=make_style(palette.muted))
-    return text
-
-
 def build_graph_title(
     branch: str,
     range_value: str,
     year: int,
+    commit_count: int,
     palette: ThemePalette,
 ) -> Table:
     range_label = dict(RANGE_PRESETS).get(range_value, range_value)
@@ -115,6 +89,8 @@ def build_graph_title(
     status.append(range_label, style=make_style(palette.foreground))
     status.append(" · ", style=make_style(palette.muted))
     status.append(str(year), style=make_style(palette.foreground, bold=True))
+    status.append(" · ", style=make_style(palette.muted))
+    status.append(f"{commit_count} commits", style=make_style(palette.foreground))
 
     title = Table.grid(expand=True)
     title.add_column(ratio=1)

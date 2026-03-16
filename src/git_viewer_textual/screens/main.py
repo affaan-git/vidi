@@ -22,7 +22,6 @@ from ..render import (
     build_graph_title,
     build_language_details,
     build_language_summary,
-    build_summary_text,
     render_contribution_graph,
 )
 from ..repository import RepoService
@@ -37,10 +36,6 @@ class MainScreen(Screen[None]):
     """Primary analytics screen."""
 
     CSS = """
-    #summary-bar {
-        padding: 0 1;
-    }
-
     #body {
         layout: horizontal;
         height: 1fr;
@@ -110,6 +105,10 @@ class MainScreen(Screen[None]):
     }
 
     #language-summary {
+        height: auto;
+    }
+
+    #language-meta {
         height: auto;
         margin-bottom: 1;
     }
@@ -185,9 +184,6 @@ class MainScreen(Screen[None]):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        with Static(id="summary-bar"):
-            yield Static(id="summary-content")
-
         with Horizontal(id="body"):
             with Vertical(classes="left-column"):
                 with Vertical(id="graph-panel", classes="panel"):
@@ -204,6 +200,7 @@ class MainScreen(Screen[None]):
                     yield Static(id="day-scroll-hint")
                 with Vertical(id="languages-panel", classes="panel"):
                     yield Static("Languages / Files", classes="panel-title")
+                    yield Static(id="language-meta")
                     yield Static(id="language-summary")
                     yield OptionList(id="language-list")
                     with VerticalScroll(id="language-details-scroll"):
@@ -225,6 +222,7 @@ class MainScreen(Screen[None]):
         self._apply_theme()
         self._refresh_year_options()
         self._refresh_language_options()
+        self.sub_title = self._build_repo_stats_sub_title()
         self.refresh_view()
         commits_table.focus()
         self._mounted = True
@@ -265,10 +263,6 @@ class MainScreen(Screen[None]):
         self._theme_palette = palette
         self.styles.background = palette.background
 
-        summary_bar = self.query_one("#summary-bar", Static)
-        summary_bar.styles.background = palette.surface
-        summary_bar.styles.border = ("solid", palette.border)
-
         for panel in self.query(".panel"):
             panel.styles.background = palette.panel
             panel.styles.border = ("solid", palette.border)
@@ -277,6 +271,7 @@ class MainScreen(Screen[None]):
             title.styles.color = palette.muted
 
         self.query_one("#day-scroll-hint", Static).styles.color = palette.muted
+        self.query_one("#language-meta", Static).styles.color = palette.muted
         language_list = self.query_one("#language-list", OptionList)
         language_list.styles.background = palette.surface
         self._refresh_panel_styles()
@@ -358,16 +353,7 @@ class MainScreen(Screen[None]):
                 self.selected_branch,
                 self.selected_range,
                 self.selected_year,
-                self._theme_palette,
-            )
-        )
-        self.query_one("#summary-content", Static).update(
-            build_summary_text(
-                self.context.project_name,
-                self.selected_branch,
-                self.selected_year,
-                commits,
-                self.context.language_stats,
+                len(commits),
                 self._theme_palette,
             )
         )
@@ -549,6 +535,7 @@ class MainScreen(Screen[None]):
     def _refresh_language_panel(self, commits: list[CommitRecord] | None = None) -> None:
         if commits is None:
             branch_data, commits = self._filtered_branch_data()
+        self.query_one("#language-meta", Static).update(self._build_language_meta())
         self.query_one("#language-summary", Static).update(
             build_language_summary(
                 self.context.language_stats,
@@ -567,6 +554,37 @@ class MainScreen(Screen[None]):
             )
         )
         self.query_one("#language-details-scroll", VerticalScroll).scroll_home(animate=False)
+
+    def _build_repo_stats_sub_title(self) -> str:
+        total_files = sum(len(files) for files in self.context.files_by_language.values())
+        return (
+            f"{len(self.context.branches)} branches · "
+            f"{total_files} scanned files"
+        )
+
+    def _build_language_meta(self) -> Text:
+        meta = Text()
+        language_count = len(self.context.language_stats)
+        if self.context.language_stats:
+            top_language = self.context.language_stats[0]
+            meta.append(
+                f"{language_count} languages",
+                style=make_style(self._theme_palette.muted, bold=True),
+            )
+            meta.append("  ·  ", style=make_style(self._theme_palette.muted))
+            meta.append("Top language ", style=make_style(self._theme_palette.muted, bold=True))
+            meta.append(
+                str(top_language["language"]),
+                style=make_style(self._theme_palette.foreground, bold=True),
+            )
+            meta.append("  ", style=make_style(self._theme_palette.muted))
+            meta.append(
+                f"{float(top_language['percentage']):.1f}%",
+                style=make_style(self._theme_palette.muted),
+            )
+        else:
+            meta.append("0 languages", style=make_style(self._theme_palette.muted, bold=True))
+        return meta
 
     def on_option_list_option_highlighted(
         self,

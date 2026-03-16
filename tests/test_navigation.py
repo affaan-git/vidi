@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import datetime as dt
+import io
 import unittest
 from pathlib import Path
+
+from rich.console import Console
 
 from git_viewer_textual.app import GitViewerApp
 from git_viewer_textual.data import filter_commits
@@ -22,6 +25,17 @@ def make_app() -> GitViewerApp:
 
 
 class NavigationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_main_screen_uses_header_subtitle_instead_of_extra_summary_bar(self) -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            self.assertEqual(type(app.screen).__name__, "MainScreen")
+            self.assertEqual(len(app.screen.query("#summary-bar")), 0)
+            self.assertTrue(app.screen.sub_title)
+            self.assertIn("branches", app.screen.sub_title)
+            self.assertIn("scanned files", app.screen.sub_title)
+            self.assertNotIn("languages", app.screen.sub_title)
+            self.assertNotIn("all", app.screen.sub_title)
+
     async def test_commit_detail_blocks_main_screen_bindings(self) -> None:
         app = make_app()
         async with app.run_test() as pilot:
@@ -45,6 +59,23 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("enter")
             await pilot.pause()
             self.assertEqual(type(app.screen).__name__, "MainScreen")
+
+    async def test_graph_title_shows_commit_count_and_language_panel_shows_language_count(self) -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            graph_title_render = app.screen.query_one("#graph-title").render()
+            language_meta_render = app.screen.query_one("#language-meta").render()
+            graph_title = getattr(graph_title_render, "_renderable", graph_title_render)
+            language_meta = getattr(language_meta_render, "_renderable", language_meta_render)
+
+            console = Console(file=io.StringIO(), record=True, width=140)
+            console.print(graph_title)
+            graph_title_text = console.export_text()
+            self.assertIn("commits", graph_title_text)
+
+            language_meta_text = getattr(language_meta, "plain", str(language_meta))
+            self.assertIn("languages", language_meta_text)
+            self.assertIn("Top language", language_meta_text)
 
 
 class FilterTests(unittest.TestCase):
