@@ -89,24 +89,63 @@ def calc_streaks(counts: collections.Counter[dt.date]) -> tuple[int, int]:
 def build_year_grid(
     commit_counts: collections.Counter[dt.date],
     year: int,
-) -> tuple[list[list[int]], list[str], dt.date]:
-    start = dt.date(year, 1, 1)
-    end = dt.date(year, 12, 31)
+) -> tuple[list[list[int | None]], list[str], dt.date]:
+    return build_date_grid(
+        commit_counts,
+        dt.date(year, 1, 1),
+        dt.date(year, 12, 31),
+    )
+
+
+def resolve_graph_window(
+    range_value: str,
+    year: int,
+    *,
+    now: dt.datetime | None = None,
+) -> tuple[dt.date, dt.date]:
+    year_start = dt.date(year, 1, 1)
+    year_end = dt.date(year, 12, 31)
+    if range_value == "all":
+        return year_start, year_end
+
+    today = (utc_now() if now is None else now).date()
+    if year != today.year:
+        return year_start, year_end
+
+    days = int(range_value)
+    window_end = min(today, year_end)
+    window_start = max(year_start, window_end - dt.timedelta(days=max(days - 1, 0)))
+    return window_start, window_end
+
+
+def build_date_grid(
+    commit_counts: collections.Counter[dt.date],
+    start: dt.date,
+    end: dt.date,
+) -> tuple[list[list[int | None]], list[str], dt.date]:
     days_to_prev_sunday = (start.weekday() + 1) % 7
     first_sunday = start - dt.timedelta(days=days_to_prev_sunday)
     row_for_end = (end.weekday() + 1) % 7
     last_day = end + dt.timedelta(days=6 - row_for_end)
     total_days = (last_day - first_sunday).days + 1
     num_weeks = (total_days + 6) // 7
-    grid = [[0 for _ in range(num_weeks)] for _ in range(7)]
+    grid: list[list[int | None]] = [[None for _ in range(num_weeks)] for _ in range(7)]
     month_labels = ["   " for _ in range(num_weeks)]
-    for idx in range(total_days):
-        day = first_sunday + dt.timedelta(days=idx)
-        col = idx // 7
-        row = idx % 7
-        grid[row][col] = commit_counts.get(day, 0)
-        if day.day == 1 and day.year == year:
-            month_labels[col] = day.strftime("%b")
+    previous_visible_month: int | None = None
+
+    for col in range(num_weeks):
+        week_start = first_sunday + dt.timedelta(days=col * 7)
+        visible_days: list[dt.date] = []
+        for row in range(7):
+            day = week_start + dt.timedelta(days=row)
+            if start <= day <= end:
+                grid[row][col] = commit_counts.get(day, 0)
+                visible_days.append(day)
+        if visible_days:
+            first_visible_day = visible_days[0]
+            if first_visible_day.month != previous_visible_month:
+                month_labels[col] = first_visible_day.strftime("%b")
+                previous_visible_month = first_visible_day.month
     return grid, month_labels, first_sunday
 
 

@@ -9,8 +9,9 @@ from typing import Any
 from rich.console import Group
 from rich.table import Table
 from rich.text import Text
+from textual.color import Color
 
-from .data import HEATMAP_STYLES, RANGE_PRESETS, build_year_grid
+from .data import HEATMAP_STYLES, RANGE_PRESETS, build_date_grid
 from .models import LanguageStat, ThemePalette
 from .theme import make_style
 from .utils import truncate_middle
@@ -18,12 +19,17 @@ from .utils import truncate_middle
 
 def render_contribution_graph(
     commit_counts: collections.Counter[dt.date],
-    year: int,
+    start_date: dt.date,
+    end_date: dt.date,
     selected_day: dt.date | None,
     palette: ThemePalette,
 ) -> Group:
-    grid, months, first_sunday = build_year_grid(commit_counts, year)
-    month_line = [" "] * len(months)
+    grid, months, first_sunday = build_date_grid(commit_counts, start_date, end_date)
+    header_width = max(
+        len(months),
+        max((index + 3 for index, label in enumerate(months) if label.strip()), default=0),
+    )
+    month_line = [" "] * header_width
     last_end = -4
     for index, label in enumerate(months):
         if not label.strip():
@@ -41,18 +47,20 @@ def render_contribution_graph(
 
     lines: list[Text] = [header]
     day_labels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
-    max_value = max((value for row in grid for value in row), default=0)
+    max_value = max((value for row in grid for value in row if value is not None), default=0)
     inactive_style = palette.surface.blend(
         palette.foreground,
         0.10 if palette.background.brightness < 0.5 else 0.06,
     ).hex6
     heatmap_styles = [inactive_style, *HEATMAP_STYLES]
     cell_char = "■"
-    selected_char = "▣"
 
     for row_index, day_name in enumerate(day_labels):
-        line = Text(f"{day_name} ", style=make_style(palette.muted))
+        line = Text(f"{day_name:<3} ", style=make_style(palette.muted))
         for col_index, value in enumerate(grid[row_index]):
+            if value is None:
+                line.append(" ")
+                continue
             if value <= 0:
                 style = heatmap_styles[0]
             elif max_value <= 1:
@@ -63,7 +71,8 @@ def render_contribution_graph(
                 style = heatmap_styles[bucket]
             cell_day = first_sunday + dt.timedelta(days=col_index * 7 + row_index)
             if selected_day == cell_day:
-                line.append(selected_char, style=f"bold {style}")
+                selected_style = Color.parse(style).blend(palette.foreground, 0.25).hex6
+                line.append(cell_char, style=f"bold {selected_style}")
             else:
                 line.append(cell_char, style=style)
         lines.append(line)

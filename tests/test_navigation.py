@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import collections
 import datetime as dt
 import io
 import unittest
@@ -8,12 +9,13 @@ from pathlib import Path
 from rich.console import Console
 
 from git_viewer_textual.app import GitViewerApp
-from git_viewer_textual.data import filter_commits
+from git_viewer_textual.data import filter_commits, resolve_graph_window
 from git_viewer_textual.models import CommitRecord
 from git_viewer_textual.render import (
     build_language_bar,
     build_language_summary,
     build_language_title,
+    render_contribution_graph,
 )
 from git_viewer_textual.repository import build_repo_context
 from git_viewer_textual.theme import resolve_theme_palette
@@ -54,14 +56,14 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertEqual(type(app.screen).__name__, "CommitDetailScreen")
 
-    async def test_graph_panel_uses_real_focus(self) -> None:
+    async def test_graph_panel_is_not_in_focus_cycle(self) -> None:
         app = make_app()
         async with app.run_test() as pilot:
             self.assertEqual(getattr(app.focused, "id", None), "commits-table")
 
             await pilot.press("shift+tab")
             await pilot.pause()
-            self.assertEqual(getattr(app.focused, "id", None), "graph-content")
+            self.assertEqual(getattr(app.focused, "id", None), "language-summary-scroll")
 
             await pilot.press("enter")
             await pilot.pause()
@@ -146,6 +148,43 @@ class FilterTests(unittest.TestCase):
         bar_text = console.export_text().strip("\n")
         self.assertEqual(len(bar_text.splitlines()), 1)
         self.assertEqual(len(bar_text), 20)
+
+    def test_resolve_graph_window_uses_short_window_for_current_year(self) -> None:
+        start, end = resolve_graph_window(
+            "30",
+            2026,
+            now=dt.datetime(2026, 3, 16, 12, 0, 0),
+        )
+        self.assertEqual(start, dt.date(2026, 2, 15))
+        self.assertEqual(end, dt.date(2026, 3, 16))
+
+        old_start, old_end = resolve_graph_window(
+            "30",
+            2025,
+            now=dt.datetime(2026, 3, 16, 12, 0, 0),
+        )
+        self.assertEqual(old_start, dt.date(2025, 1, 1))
+        self.assertEqual(old_end, dt.date(2025, 12, 31))
+
+    def test_render_contribution_graph_uses_single_cell_selection_in_short_window(self) -> None:
+        app = make_app()
+        graph = render_contribution_graph(
+            collections.Counter(
+                {
+                    dt.date(2026, 3, 12): 1,
+                    dt.date(2026, 3, 15): 3,
+                }
+            ),
+            dt.date(2026, 3, 10),
+            dt.date(2026, 3, 16),
+            dt.date(2026, 3, 15),
+            resolve_theme_palette(app.current_theme),
+        )
+        console = Console(file=io.StringIO(), record=True, width=160)
+        console.print(graph)
+        graph_text = console.export_text()
+        self.assertIn("Mar", graph_text)
+        self.assertNotIn("▣", graph_text)
 
     def test_filter_commits_uses_current_time_window(self) -> None:
         now = dt.datetime(2026, 3, 16, 12, 0, 0)

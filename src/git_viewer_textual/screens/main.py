@@ -15,7 +15,7 @@ from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Static
 
-from ..data import RANGE_PRESETS, filter_commits
+from ..data import RANGE_PRESETS, filter_commits, resolve_graph_window
 from ..models import BranchData, CommitRecord, RepoContext
 from ..render import (
     build_graph_title,
@@ -27,7 +27,6 @@ from ..render import (
 from ..repository import RepoService
 from ..theme import make_style, resolve_theme_palette
 from ..utils import rel_time, truncate_middle, utc_now
-from ..widgets import FocusableStatic
 from .branch_picker import BranchPickerScreen
 from .commit_detail import CommitDetailScreen
 
@@ -185,7 +184,7 @@ class MainScreen(Screen[None]):
             with Vertical(classes="left-column"):
                 with Vertical(id="graph-panel", classes="panel"):
                     yield Static("Contribution Activity", id="graph-title", classes="panel-title")
-                    yield FocusableStatic(id="graph-content")
+                    yield Static(id="graph-content")
                 with Vertical(id="commits-panel", classes="panel"):
                     yield Static("Year Commits", classes="panel-title")
                     yield DataTable(id="commits-table")
@@ -222,9 +221,8 @@ class MainScreen(Screen[None]):
         self._mounted = True
         self._refresh_panel_styles()
 
-    def _focus_targets(self) -> tuple[FocusableStatic | DataTable | VerticalScroll, ...]:
+    def _focus_targets(self) -> tuple[DataTable | VerticalScroll, ...]:
         return (
-            self.query_one("#graph-content", FocusableStatic),
             self.query_one("#commits-table", DataTable),
             self.query_one("#day-details-scroll", VerticalScroll),
             self.query_one("#language-summary-scroll", VerticalScroll),
@@ -233,7 +231,6 @@ class MainScreen(Screen[None]):
     def _current_panel(self) -> str:
         focused_id = getattr(self.focused, "id", None)
         return {
-            "graph-content": "graph",
             "commits-table": "commits",
             "day-details-scroll": "details",
             "language-summary-scroll": "languages",
@@ -349,10 +346,12 @@ class MainScreen(Screen[None]):
         if include_table:
             self._update_commits_table(commits)
         self._day_keys = sorted(counts.keys(), reverse=True)
-        self.query_one("#graph-content", FocusableStatic).update(
+        graph_start, graph_end = resolve_graph_window(self.selected_range, self.selected_year)
+        self.query_one("#graph-content", Static).update(
             render_contribution_graph(
                 counts,
-                self.selected_year,
+                graph_start,
+                graph_end,
                 self.selected_day,
                 self._theme_palette,
             )
@@ -389,10 +388,12 @@ class MainScreen(Screen[None]):
                     pass
                 finally:
                     self._suspend_table_events = False
-        self.query_one("#graph-content", FocusableStatic).update(
+        graph_start, graph_end = resolve_graph_window(self.selected_range, self.selected_year)
+        self.query_one("#graph-content", Static).update(
             render_contribution_graph(
                 counts,
-                self.selected_year,
+                graph_start,
+                graph_end,
                 self.selected_day,
                 self._theme_palette,
             )
