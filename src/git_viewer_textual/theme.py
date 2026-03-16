@@ -27,6 +27,7 @@ def make_style(
 def resolve_theme_palette(theme: Theme) -> ThemePalette:
     primary = Color.parse(theme.primary)
     success = Color.parse(theme.success)
+    error = Color.parse(theme.error)
 
     if theme.foreground is not None:
         foreground = Color.parse(theme.foreground)
@@ -72,6 +73,7 @@ def resolve_theme_palette(theme: Theme) -> ThemePalette:
         surface=surface,
         foreground=foreground,
         success=success,
+        error=error,
         muted=muted,
         border=border,
         primary=primary,

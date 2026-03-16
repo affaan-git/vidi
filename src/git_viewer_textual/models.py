@@ -19,6 +19,7 @@ class ThemePalette:
     surface: Color
     foreground: Color
     success: Color
+    error: Color
     muted: Color
     border: Color
     primary: Color

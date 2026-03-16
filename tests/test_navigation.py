@@ -4,11 +4,11 @@ import collections
 import datetime as dt
 import io
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from rich.console import Console
 from textual.color import Color
-from textual.theme import BUILTIN_THEMES
 
 from git_viewer_textual.app import GitViewerApp
 from git_viewer_textual.data import filter_commits, resolve_graph_window
@@ -218,11 +218,17 @@ class FilterTests(unittest.TestCase):
                 + (left_triplet.blue - right_triplet.blue) ** 2
             )
 
-        textual_light = resolve_theme_palette(BUILTIN_THEMES["textual-light"])
-        rose_pine_dawn = resolve_theme_palette(BUILTIN_THEMES["rose-pine-dawn"])
+        app = make_app()
+        base_palette = resolve_theme_palette(app.current_theme)
+        alternate_success = (
+            base_palette.primary
+            if base_palette.primary != base_palette.success
+            else base_palette.foreground
+        )
+        alternate_palette = replace(base_palette, success=alternate_success)
 
-        inactive_a, padding_a, styles_a = resolve_heatmap_colors(textual_light)
-        inactive_b, padding_b, styles_b = resolve_heatmap_colors(rose_pine_dawn)
+        inactive_a, padding_a, styles_a = resolve_heatmap_colors(base_palette)
+        inactive_b, padding_b, styles_b = resolve_heatmap_colors(alternate_palette)
 
         self.assertEqual(len(styles_a), 5)
         self.assertEqual(len(styles_b), 5)
@@ -232,12 +238,12 @@ class FilterTests(unittest.TestCase):
         self.assertNotEqual(inactive_b, padding_b)
         self.assertNotEqual(styles_a[1:], styles_b[1:])
         self.assertLess(
-            color_distance(styles_a[-1], textual_light.success),
-            color_distance(inactive_a, textual_light.success),
+            color_distance(styles_a[-1], base_palette.success),
+            color_distance(inactive_a, base_palette.success),
         )
         self.assertLess(
-            color_distance(styles_b[-1], rose_pine_dawn.success),
-            color_distance(inactive_b, rose_pine_dawn.success),
+            color_distance(styles_b[-1], alternate_palette.success),
+            color_distance(inactive_b, alternate_palette.success),
         )
 
     def test_filter_commits_uses_current_time_window(self) -> None:

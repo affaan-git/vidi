@@ -283,12 +283,12 @@ class CommitDetailScreen(ModalScreen[None]):
         files_meta.append("  ", style=make_style(palette.muted))
         files_meta.append(
             f"+{total_additions}",
-            style=make_style(Color.parse("#39d353"), bold=True),
+            style=make_style(palette.success, bold=True),
         )
         files_meta.append("  ", style=make_style(palette.muted))
         files_meta.append(
             f"-{total_deletions}",
-            style=make_style(Color.parse("#f85149"), bold=True),
+            style=make_style(palette.error, bold=True),
         )
         self.query_one("#commit-detail-files-meta", Static).update(files_meta)
 
@@ -364,9 +364,9 @@ class CommitDetailScreen(ModalScreen[None]):
             elif line.startswith("@@"):
                 style = make_style(palette.primary, bold=True)
             elif line.startswith("+") and not line.startswith("+++"):
-                style = make_style(Color.parse("#39d353"))
+                style = make_style(palette.success)
             elif line.startswith("-") and not line.startswith("---"):
-                style = make_style(Color.parse("#f85149"))
+                style = make_style(palette.error)
             text.append(line, style=style)
             if index < len(patch_lines) - 1:
                 text.append("\n")
