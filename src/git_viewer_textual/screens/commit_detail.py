@@ -141,6 +141,8 @@ class CommitDetailScreen(ModalScreen[None]):
         self.selected_file_index = 0
         self._suspend_file_events = False
         self._patch_section_offsets: dict[CommitPatchSection, int] = {}
+        self._outline_offsets: list[tuple[int, int]] = []
+        self._ignore_next_patch_scroll_sync = False
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -175,6 +177,8 @@ class CommitDetailScreen(ModalScreen[None]):
     def on_mount(self) -> None:
         self.watch(self.app, "theme", self._on_theme_change, init=False)
         files_table = self.query_one("#commit-detail-files", DataTable)
+        patch_scroll = self.query_one("#commit-detail-scroll", VerticalScroll)
+        self.watch(patch_scroll, "scroll_y", self._on_patch_scroll_y, init=False)
         files_table.cursor_type = "row"
         files_table.show_horizontal_scrollbar = False
         files_table.add_column("File", width=18, key="file")
@@ -404,6 +408,12 @@ class CommitDetailScreen(ModalScreen[None]):
             table.columns["dels"].width = dels_width
         return file_width
 
+    def _file_index_for_section(self, section: CommitPatchSection) -> int | None:
+        for index, change in enumerate(self.detail.file_changes):
+            if change.path in {section.path, section.old_path, section.new_path}:
+                return index
+        return None
+
     def _section_for_change(
         self,
         index: int,
@@ -526,11 +536,15 @@ class CommitDetailScreen(ModalScreen[None]):
         if refresh_content:
             content = Text()
             self._patch_section_offsets = {}
+            self._outline_offsets = []
             current_line = 0
             if patch_sections:
                 for section_index, section in enumerate(patch_sections):
                     if self.show_full_patch:
                         self._patch_section_offsets[section] = current_line
+                        file_index = self._file_index_for_section(section)
+                        if file_index is not None:
+                            self._outline_offsets.append((current_line, file_index))
                         line = Text()
                         if section.is_rename:
                             line.append(
@@ -573,10 +587,56 @@ class CommitDetailScreen(ModalScreen[None]):
         offset = self._patch_section_offsets.get(section)
         if offset is None:
             return
-        self.query_one("#commit-detail-scroll", VerticalScroll).scroll_to(
-            y=max(offset - 1, 0),
+        patch_scroll = self.query_one("#commit-detail-scroll", VerticalScroll)
+        target_y = max(offset - 1, 0)
+        if int(patch_scroll.scroll_y) == target_y:
+            self._ignore_next_patch_scroll_sync = False
+            return
+        self._ignore_next_patch_scroll_sync = True
+        patch_scroll.scroll_to(
+            y=target_y,
             animate=False,
         )
+
+    def _sync_outline_cursor(self, index: int) -> None:
+        if not (0 <= index < len(self.detail.file_changes)):
+            return
+        table = self.query_one("#commit-detail-files", DataTable)
+        if table.cursor_row == index:
+            return
+        self._suspend_file_events = True
+        try:
+            table.move_cursor(row=index, animate=False, scroll=True)
+        finally:
+            self._suspend_file_events = False
+
+    def _sync_selection_from_patch_scroll(self, scroll_y: float) -> None:
+        if not self.show_full_patch or not self._outline_offsets:
+            return
+        patch_scroll = self.query_one("#commit-detail-scroll", VerticalScroll)
+        viewport_height = (
+            patch_scroll.scrollable_content_region.height
+            or patch_scroll.content_region.height
+            or patch_scroll.size.height
+            or 1
+        )
+        anchor_line = max(int(scroll_y) + max(viewport_height // 2, 0), 0)
+        active_index = self._outline_offsets[0][1]
+        for offset, file_index in self._outline_offsets:
+            if offset > anchor_line:
+                break
+            active_index = file_index
+        if active_index == self.selected_file_index:
+            self._sync_outline_cursor(active_index)
+            return
+        self.selected_file_index = active_index
+        self._sync_outline_cursor(active_index)
+
+    def _on_patch_scroll_y(self, old_value: float, new_value: float) -> None:
+        if self._ignore_next_patch_scroll_sync:
+            self._ignore_next_patch_scroll_sync = False
+            return
+        self._sync_selection_from_patch_scroll(new_value)
 
     def _update_files_table(self) -> None:
         table = self.query_one("#commit-detail-files", DataTable)
@@ -704,9 +764,13 @@ class CommitDetailScreen(ModalScreen[None]):
             target.scroll_end(animate=False)
 
     def action_toggle_patch_scope(self) -> None:
+        was_full_patch = self.show_full_patch
         self.show_full_patch = not self.show_full_patch
         self._render_detail_view()
-        self.query_one("#commit-detail-scroll", VerticalScroll).focus()
+        if was_full_patch:
+            self.query_one("#commit-detail-files", DataTable).focus()
+        else:
+            self.query_one("#commit-detail-scroll", VerticalScroll).focus()
 
     def action_close_screen(self) -> None:
         self.dismiss(None)

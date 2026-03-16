@@ -186,6 +186,37 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
                 app.screen.query_one("#commit-detail-files-title").render(),
                 "Files Changed",
             )
+            self.assertEqual(getattr(app.focused, "id", None), "commit-detail-files")
+
+    async def test_commit_detail_full_patch_scroll_updates_outline_selection(self) -> None:
+        app = make_app()
+        async with app.run_test(size=(100, 20)) as pilot:
+            await pilot.press("enter")
+            await pilot.pause()
+            self.assertEqual(type(app.screen).__name__, "CommitDetailScreen")
+
+            await pilot.press("p")
+            await pilot.pause()
+
+            patch_scroll = app.screen.query_one("#commit-detail-scroll")
+            files_table = app.screen.query_one("#commit-detail-files", DataTable)
+            self.assertGreater(patch_scroll.max_scroll_y, 0)
+            self.assertEqual(app.screen.selected_file_index, 0)
+            self.assertEqual(files_table.cursor_row, 0)
+
+            patch_scroll.scroll_end(animate=False)
+            await pilot.pause()
+            self.assertEqual(app.screen.selected_file_index, 1)
+            self.assertEqual(files_table.cursor_row, 1)
+
+            await pilot.press("shift+tab")
+            await pilot.pause()
+            self.assertEqual(getattr(app.focused, "id", None), "commit-detail-files")
+
+            patch_scroll.scroll_home(animate=False)
+            await pilot.pause()
+            self.assertEqual(app.screen.selected_file_index, 0)
+            self.assertEqual(files_table.cursor_row, 0)
 
     async def test_branch_picker_uses_builtin_footer_instead_of_help_text(self) -> None:
         app = make_app()
