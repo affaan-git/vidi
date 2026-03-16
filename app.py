@@ -1155,6 +1155,7 @@ class BranchPickerScreen(ModalScreen[str | None]):
 
 
 class CommitDetailScreen(Screen[None]):
+    _inherit_bindings = False
     CSS = """
     #commit-detail-summary-bar {
         padding: 0 1;
@@ -1234,11 +1235,6 @@ class CommitDetailScreen(Screen[None]):
         min-height: 1;
     }
 
-    #commit-detail-help {
-        height: 1;
-        content-align: left middle;
-        margin-top: 1;
-    }
     """
 
     BINDINGS = [
@@ -1246,9 +1242,6 @@ class CommitDetailScreen(Screen[None]):
         ("q", "close_screen", "Back"),
         ("tab", "focus_next_pane", "Next Pane"),
         ("shift+tab", "focus_prev_pane", "Prev Pane"),
-        ("f", "focus_files", "Files"),
-        ("o", "focus_overview", "Overview"),
-        ("d", "focus_patch", "Diff"),
         ("up", "cursor_up", "Up"),
         ("down", "cursor_down", "Down"),
         ("pageup", "page_up", "Page Up"),
@@ -1287,7 +1280,6 @@ class CommitDetailScreen(Screen[None]):
                     yield Static(id="commit-detail-patch-title", classes="commit-detail-panel-title")
                     with VerticalScroll(id="commit-detail-scroll"):
                         yield Static(id="commit-detail-content")
-                    yield Static(id="commit-detail-help")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -1325,7 +1317,6 @@ class CommitDetailScreen(Screen[None]):
         for title in self.query(".commit-detail-panel-title"):
             title.styles.color = palette.muted
 
-        self.query_one("#commit-detail-help", Static).styles.color = palette.muted
         self._refresh_focus_styles()
 
     def _render_detail_view(self) -> None:
@@ -1434,16 +1425,6 @@ class CommitDetailScreen(Screen[None]):
                 style=make_style(palette.muted, bold=True),
             )
         self.query_one("#commit-detail-content", Static).update(content)
-        focus_label = {
-            "files": "files",
-            "overview": "overview",
-            "patch": "diff",
-        }[self.focus_mode]
-        hint = (
-            f"Focus {focus_label}   Tab cycle panes   F files   O overview   D diff   "
-            "Up/Down scroll or move   PgUp/PgDn page   Home/End top/bottom   A toggle selected/full patch"
-        )
-        self.query_one("#commit-detail-help", Static).update(hint)
 
     def action_close_screen(self) -> None:
         self.app.pop_screen()
@@ -1492,15 +1473,6 @@ class CommitDetailScreen(Screen[None]):
         panes = self._focusable_panes()
         index = panes.index(self.focus_mode)
         self._set_focus_mode(panes[(index - 1) % len(panes)])
-
-    def action_focus_files(self) -> None:
-        self._set_focus_mode("files")
-
-    def action_focus_overview(self) -> None:
-        self._set_focus_mode("overview")
-
-    def action_focus_patch(self) -> None:
-        self._set_focus_mode("patch")
 
     def _scroll_target(self) -> Any:
         return self._widget_for_focus_mode(self.focus_mode)
