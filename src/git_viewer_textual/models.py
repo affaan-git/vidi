@@ -18,6 +18,7 @@ class ThemePalette:
     panel: Color
     surface: Color
     foreground: Color
+    success: Color
     muted: Color
     border: Color
     primary: Color

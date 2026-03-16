@@ -11,10 +11,28 @@ from rich.table import Table
 from rich.text import Text
 from textual.color import Color
 
-from .data import HEATMAP_STYLES, RANGE_PRESETS, build_date_grid
+from .data import RANGE_PRESETS, build_date_grid
 from .models import LanguageStat, ThemePalette
 from .theme import make_style
 from .utils import truncate_middle
+
+
+def resolve_heatmap_colors(palette: ThemePalette) -> tuple[str, str, list[str]]:
+    is_dark = palette.background.brightness < 0.5
+    inactive_style = palette.background.blend(
+        palette.foreground,
+        0.10 if is_dark else 0.14,
+    ).hex6
+    padding_style = palette.background.blend(
+        palette.panel,
+        0.50 if is_dark else 0.45,
+    ).hex6
+    blend_steps = (0.28, 0.48, 0.68, 0.84) if is_dark else (0.30, 0.50, 0.70, 0.86)
+    active_styles = [
+        Color.parse(inactive_style).blend(palette.success, step).hex6
+        for step in blend_steps
+    ]
+    return inactive_style, padding_style, [inactive_style, *active_styles]
 
 
 def render_contribution_graph(
@@ -99,15 +117,7 @@ def render_contribution_graph(
     lines: list[Text] = [header]
     day_labels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
     max_value = max((value for row in grid for value in row if value is not None), default=0)
-    inactive_style = palette.surface.blend(
-        palette.foreground,
-        0.10 if palette.background.brightness < 0.5 else 0.06,
-    ).hex6
-    padding_style = palette.background.blend(
-        palette.panel,
-        0.50 if palette.background.brightness < 0.5 else 0.32,
-    ).hex6
-    heatmap_styles = [inactive_style, *HEATMAP_STYLES]
+    _inactive_style, padding_style, heatmap_styles = resolve_heatmap_colors(palette)
     cell_char = "■"
 
     for row_index, day_name in enumerate(day_labels):

@@ -18,14 +18,6 @@ RANGE_PRESETS = [
     ("7 days", "7"),
 ]
 
-HEATMAP_STYLES = [
-    "#0e4429",
-    "#006d32",
-    "#26a641",
-    "#39d353",
-]
-
-
 def filter_commits(
     commits: list[CommitRecord],
     range_value: str,
