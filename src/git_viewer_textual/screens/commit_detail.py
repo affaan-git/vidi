@@ -12,6 +12,7 @@ from textual.screen import ModalScreen
 from textual.widgets import DataTable, Footer, Header, Static
 
 from ..data import display_label_for_change
+from ..focus import focus_targets, scroll_has_overflow, set_scroll_focusability
 from ..models import CommitFileChange, CommitPatchSection
 from ..repository import RepoService
 from ..theme import make_style, resolve_theme_palette
@@ -194,16 +195,36 @@ class CommitDetailScreen(ModalScreen[None]):
             self._render_detail_view()
 
     def _focus_targets(self) -> tuple[VerticalScroll | DataTable, ...]:
-        if self.show_full_patch:
-            return (
-                self.query_one("#commit-detail-files", DataTable),
-                self.query_one("#commit-detail-scroll", VerticalScroll),
-            )
-        return (
-            self.query_one("#commit-detail-overview-scroll", VerticalScroll),
-            self.query_one("#commit-detail-files", DataTable),
-            self.query_one("#commit-detail-scroll", VerticalScroll),
+        overview_scroll = self.query_one("#commit-detail-overview-scroll", VerticalScroll)
+        files_table = self.query_one("#commit-detail-files", DataTable)
+        patch_scroll = self.query_one("#commit-detail-scroll", VerticalScroll)
+        if not self.show_full_patch and scroll_has_overflow(overview_scroll):
+            return focus_targets(overview_scroll, files_table, patch_scroll)
+        return focus_targets(files_table, patch_scroll)
+
+    def _refresh_scroll_focusability(self) -> None:
+        overview_scroll = self.query_one("#commit-detail-overview-scroll", VerticalScroll)
+        patch_scroll = self.query_one("#commit-detail-scroll", VerticalScroll)
+        files_table = self.query_one("#commit-detail-files", DataTable)
+
+        set_scroll_focusability(overview_scroll, patch_scroll)
+        overview_scroll.can_focus = (
+            not self.show_full_patch and scroll_has_overflow(overview_scroll)
         )
+
+        if self.focused not in self._focus_targets():
+            if self.show_full_patch and patch_scroll.can_focus:
+                patch_scroll.focus()
+            else:
+                files_table.focus()
+        self._refresh_focus_styles()
+
+    def _focus_patch_if_available(self) -> None:
+        patch_scroll = self.query_one("#commit-detail-scroll", VerticalScroll)
+        if patch_scroll.can_focus:
+            patch_scroll.focus()
+        else:
+            self.query_one("#commit-detail-files", DataTable).focus()
 
     def _current_pane(self) -> str:
         focused_id = getattr(self.focused, "id", None)
@@ -362,6 +383,7 @@ class CommitDetailScreen(ModalScreen[None]):
     def _refresh_files_table_after_layout(self) -> None:
         self._configure_files_table()
         self._update_files_table()
+        self._refresh_scroll_focusability()
 
     def _files_table_layout(self) -> tuple[int, int, int]:
         table = self.query_one("#commit-detail-files", DataTable)
@@ -764,7 +786,7 @@ class CommitDetailScreen(ModalScreen[None]):
         if was_full_patch:
             self.query_one("#commit-detail-files", DataTable).focus()
         else:
-            self.query_one("#commit-detail-scroll", VerticalScroll).focus()
+            self.call_after_refresh(self._focus_patch_if_available)
 
     def action_close_screen(self) -> None:
         self.dismiss(None)

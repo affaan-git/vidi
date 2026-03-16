@@ -16,6 +16,7 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Static
 
 from ..data import RANGE_PRESETS, filter_commits, resolve_graph_window
+from ..focus import focus_targets, set_scroll_focusability
 from ..models import BranchData, CommitRecord, RepoContext
 from ..render import (
     build_graph_title,
@@ -235,11 +236,19 @@ class MainScreen(Screen[None]):
         self._refresh_panel_styles()
 
     def _focus_targets(self) -> tuple[DataTable | VerticalScroll, ...]:
-        return (
+        return focus_targets(
             self.query_one("#commits-table", DataTable),
             self.query_one("#day-details-scroll", VerticalScroll),
             self.query_one("#language-summary-scroll", VerticalScroll),
         )
+
+    def _refresh_scroll_focusability(self) -> None:
+        details_scroll = self.query_one("#day-details-scroll", VerticalScroll)
+        languages_scroll = self.query_one("#language-summary-scroll", VerticalScroll)
+        set_scroll_focusability(details_scroll, languages_scroll)
+        if self.focused not in self._focus_targets():
+            self.query_one("#commits-table", DataTable).focus()
+        self._refresh_panel_styles()
 
     def _current_panel(self) -> str:
         focused_id = getattr(self.focused, "id", None)
@@ -371,6 +380,7 @@ class MainScreen(Screen[None]):
         )
         self._update_day_details(commits, reset_scroll=reset_scroll)
         self._refresh_language_panel()
+        self.call_after_refresh(self._refresh_scroll_focusability)
 
     def _set_selected_commit(
         self,
