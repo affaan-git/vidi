@@ -306,6 +306,25 @@ class CommitRecord:
         return self.authored_at.date()
 
 
+@dataclass(frozen=True)
+class CommitFileChange:
+    path: str
+    additions: int | None
+    deletions: int | None
+
+
+@dataclass(frozen=True)
+class CommitDetail:
+    commit_hash: str
+    author_name: str
+    author_email: str
+    authored_at: dt.datetime
+    subject: str
+    body: str
+    file_changes: tuple[CommitFileChange, ...]
+    patch: str
+
+
 @dataclass
 class BranchData:
     branch: str
@@ -415,6 +434,74 @@ class RepoService:
 
         years = sorted({item.authored_date.year for item in commits})
         return BranchData(branch, commits, years, contributors, file_activity)
+
+    @lru_cache(maxsize=256)
+    def get_commit_detail(self, commit_hash: str) -> CommitDetail:
+        meta_out = run_git(
+            self.repo_dir,
+            [
+                "show",
+                "--no-patch",
+                "--date=iso-strict",
+                "--format=%H%n%an%n%ae%n%ad%n%s%n%b",
+                commit_hash,
+            ],
+        )
+        numstat_out = run_git(
+            self.repo_dir,
+            [
+                "show",
+                "--format=",
+                "--numstat",
+                "--find-renames",
+                commit_hash,
+            ],
+        )
+        patch_out = run_git(
+            self.repo_dir,
+            [
+                "show",
+                "--format=",
+                "--patch",
+                "--find-renames",
+                commit_hash,
+            ],
+        )
+
+        meta_lines = meta_out.splitlines()
+        if len(meta_lines) < 5:
+            raise RuntimeError(f"Could not parse commit metadata for {commit_hash}")
+        full_hash, author_name, author_email, authored_raw, subject = meta_lines[:5]
+        body = "\n".join(meta_lines[5:]).strip()
+
+        file_changes: list[CommitFileChange] = []
+        for raw in numstat_out.splitlines():
+            if not raw.strip():
+                continue
+            parts = raw.split("\t", 2)
+            if len(parts) != 3:
+                continue
+            added_raw, deleted_raw, path = parts
+            additions = None if added_raw == "-" else int(added_raw)
+            deletions = None if deleted_raw == "-" else int(deleted_raw)
+            file_changes.append(
+                CommitFileChange(
+                    path=path,
+                    additions=additions,
+                    deletions=deletions,
+                )
+            )
+
+        return CommitDetail(
+            commit_hash=full_hash,
+            author_name=author_name,
+            author_email=author_email,
+            authored_at=parse_iso_datetime(authored_raw),
+            subject=subject,
+            body=body,
+            file_changes=tuple(file_changes),
+            patch=patch_out.rstrip(),
+        )
 
 
 def get_branches(repo_dir: str) -> tuple[list[str], str]:
@@ -619,30 +706,23 @@ def render_contribution_graph(
     year: int,
     selected_day: dt.date | None,
     palette: ThemePalette,
-    available_width: int | None = None,
 ) -> Group:
     grid, months, first_sunday = build_year_grid(commit_counts, year)
-    label_width = 4
-    week_count = len(months)
-    usable_width = max(week_count, (available_width or week_count + label_width) - label_width)
-    cell_width = max(1, min(3, usable_width // week_count))
-
-    month_line = [" "] * (week_count * cell_width)
+    month_line = [" "] * len(months)
     last_end = -4
     for index, label in enumerate(months):
         if not label.strip():
             continue
         short = label[:3]
-        start = index * cell_width
-        if start < last_end:
+        if index < last_end:
             continue
         for offset, char in enumerate(short):
-            pos = start + offset
+            pos = index + offset
             if pos < len(month_line):
                 month_line[pos] = char
-        last_end = start + len(short) + 2
+        last_end = index + len(short) + 1
 
-    header = Text((" " * label_width) + "".join(month_line), style=make_style(palette.muted))
+    header = Text("    " + "".join(month_line), style=make_style(palette.muted))
 
     lines: list[Text] = [header]
     day_labels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
@@ -651,8 +731,8 @@ def render_contribution_graph(
         palette.foreground, 0.10 if palette.background.brightness < 0.5 else 0.06
     ).hex6
     heatmap_styles = [inactive_style, *HEATMAP_STYLES]
-    cell_char = "■" * cell_width
-    selected_char = "▣" * cell_width
+    cell_char = "■"
+    selected_char = "▣"
 
     for row_index, day_name in enumerate(day_labels):
         line = Text(f"{day_name} ", style=make_style(palette.muted))
@@ -1001,6 +1081,164 @@ class BranchPickerScreen(ModalScreen[str | None]):
         self.dismiss(None)
 
 
+class CommitDetailScreen(ModalScreen[None]):
+    CSS = """
+    CommitDetailScreen {
+        align: center middle;
+    }
+
+    #commit-detail-modal {
+        width: 92%;
+        height: 92%;
+        padding: 1 1;
+    }
+
+    #commit-detail-title {
+        margin: 0 1;
+        text-style: bold;
+    }
+
+    #commit-detail-subtitle {
+        margin: 0 1 1 1;
+    }
+
+    #commit-detail-scroll {
+        height: 1fr;
+        margin: 0 1;
+        overflow-y: auto;
+        scrollbar-gutter: stable;
+    }
+
+    #commit-detail-content {
+        height: auto;
+        min-height: 1;
+    }
+
+    #commit-detail-help {
+        margin: 1 1 0 1;
+        height: 1;
+        content-align: right middle;
+    }
+    """
+
+    BINDINGS = [
+        ("escape", "cancel", "Close"),
+        ("q", "cancel", "Close"),
+    ]
+
+    def __init__(self, service: RepoService, commit_hash: str) -> None:
+        super().__init__()
+        self.service = service
+        self.commit_hash = commit_hash
+        self.detail = service.get_commit_detail(commit_hash)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="commit-detail-modal"):
+            yield Static(id="commit-detail-title")
+            yield Static(id="commit-detail-subtitle")
+            with VerticalScroll(id="commit-detail-scroll"):
+                yield Static(id="commit-detail-content")
+            yield Static("Esc close   q close", id="commit-detail-help")
+
+    def on_mount(self) -> None:
+        self.watch(self.app, "theme", self.on_theme_change, init=False)
+        self._apply_theme()
+        self._render_detail_view()
+
+    def on_theme_change(self, old_value: str, new_value: str) -> None:
+        self._apply_theme()
+        self._render_detail_view()
+
+    def _apply_theme(self) -> None:
+        palette = resolve_theme_palette(self.app.current_theme)
+        self.styles.background = palette.overlay
+
+        modal = self.query_one("#commit-detail-modal", Vertical)
+        modal.styles.background = palette.panel
+        modal.styles.color = palette.foreground
+        modal.styles.border = ("solid", palette.border)
+
+        self.query_one("#commit-detail-help", Static).styles.color = palette.muted
+        self.query_one("#commit-detail-subtitle", Static).styles.color = palette.muted
+
+    def _render_detail_view(self) -> None:
+        palette = resolve_theme_palette(self.app.current_theme)
+        now = dt.datetime.utcnow()
+        total_additions = sum(change.additions or 0 for change in self.detail.file_changes)
+        total_deletions = sum(change.deletions or 0 for change in self.detail.file_changes)
+
+        title = Table.grid(expand=True)
+        title.add_column(ratio=1)
+        title.add_column(justify="right", width=12)
+        title.add_row(
+            Text("Commit", style=make_style(palette.foreground, bold=True)),
+            Text(self.detail.commit_hash[:12], style=make_style(palette.muted, bold=True)),
+        )
+        self.query_one("#commit-detail-title", Static).update(title)
+
+        subtitle = Text()
+        subtitle.append(self.detail.author_name, style=make_style(palette.foreground, bold=True))
+        subtitle.append("  ", style=make_style(palette.muted))
+        subtitle.append(self.detail.author_email, style=make_style(palette.muted))
+        subtitle.append("  ", style=make_style(palette.muted))
+        subtitle.append(
+            self.detail.authored_at.strftime("%Y-%m-%d %H:%M"),
+            style=make_style(palette.muted),
+        )
+        subtitle.append("  ", style=make_style(palette.muted))
+        subtitle.append(rel_time(self.detail.authored_at, now), style=make_style(palette.muted))
+        self.query_one("#commit-detail-subtitle", Static).update(subtitle)
+
+        content = Text()
+        content.append(f"{self.detail.subject}\n", style=make_style(palette.foreground, bold=True))
+        if self.detail.body:
+            content.append(f"{self.detail.body}\n\n", style=make_style(palette.foreground))
+        else:
+            content.append("\n")
+
+        file_word = "file" if len(self.detail.file_changes) == 1 else "files"
+        content.append("Files changed\n", style=make_style(palette.muted, bold=True))
+        content.append(
+            f"{len(self.detail.file_changes)} {file_word}  +{total_additions}  -{total_deletions}\n",
+            style=make_style(palette.muted),
+        )
+        for change in self.detail.file_changes:
+            added = "-" if change.additions is None else str(change.additions)
+            deleted = "-" if change.deletions is None else str(change.deletions)
+            content.append("  ", style=make_style(palette.muted))
+            content.append(added.rjust(4), style=make_style(Color.parse("#39d353"), bold=True))
+            content.append(" ", style=make_style(palette.muted))
+            content.append(deleted.rjust(4), style=make_style(Color.parse("#f85149"), bold=True))
+            content.append("  ", style=make_style(palette.muted))
+            content.append(f"{change.path}\n", style=make_style(palette.foreground))
+
+        if self.detail.patch:
+            content.append("\nPatch\n", style=make_style(palette.muted, bold=True))
+            patch_lines = self.detail.patch.splitlines()
+            for index, raw in enumerate(patch_lines):
+                line = raw.rstrip("\n")
+                style = make_style(palette.foreground)
+                if line.startswith("diff --git") or line.startswith("index "):
+                    style = make_style(palette.muted, bold=True)
+                elif line.startswith("--- ") or line.startswith("+++ "):
+                    style = make_style(palette.muted)
+                elif line.startswith("@@"):
+                    style = make_style(palette.primary, bold=True)
+                elif line.startswith("+") and not line.startswith("+++"):
+                    style = make_style(Color.parse("#39d353"))
+                elif line.startswith("-") and not line.startswith("---"):
+                    style = make_style(Color.parse("#f85149"))
+                content.append(line, style=style)
+                if index < len(patch_lines) - 1:
+                    content.append("\n")
+
+        self.query_one("#commit-detail-content", Static).update(content)
+        self.query_one("#commit-detail-scroll", VerticalScroll).scroll_home(animate=False)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run a terminal-based local git repository viewer with Textual."
@@ -1291,7 +1529,6 @@ class GitViewerTUI(App[None]):
                 self.selected_year,
                 self.selected_day,
                 self._theme_palette,
-                self.query_one("#graph-content", Static).content_region.width,
             )
         )
         self._update_day_details(commits)
@@ -1446,7 +1683,9 @@ class GitViewerTUI(App[None]):
             row_key = event.row_key.value if event.row_key else None
             if row_key:
                 _branch_data, commits = self._filtered_branch_data()
-                self._set_selected_commit(commits, str(row_key), sync_table=False)
+                commit_hash = str(row_key)
+                self._set_selected_commit(commits, commit_hash, sync_table=False)
+                self.push_screen(CommitDetailScreen(self.service, commit_hash))
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         if self._suspend_table_events:
