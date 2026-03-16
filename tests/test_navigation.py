@@ -10,7 +10,9 @@ from rich.console import Console
 from git_viewer_textual.app import GitViewerApp
 from git_viewer_textual.data import filter_commits
 from git_viewer_textual.models import CommitRecord
+from git_viewer_textual.render import build_language_title
 from git_viewer_textual.repository import build_repo_context
+from git_viewer_textual.theme import resolve_theme_palette
 
 
 def make_app() -> GitViewerApp:
@@ -74,9 +76,11 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             graph_title_text = console.export_text()
             self.assertIn("commits", graph_title_text)
 
-            language_title_text = getattr(language_title, "plain", str(language_title))
-            self.assertIn("languages", language_title_text)
-            self.assertIn("Top language", language_title_text)
+            language_console = Console(file=io.StringIO(), record=True, width=140)
+            language_console.print(language_title)
+            language_title_text = language_console.export_text()
+            self.assertIn("Languages", language_title_text)
+            self.assertRegex(language_title_text, r"\b\d+\b")
 
     async def test_languages_panel_uses_summary_widget_instead_of_duplicate_list(self) -> None:
         app = make_app()
@@ -84,6 +88,8 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(app.screen.query("#language-list")), 0)
             self.assertEqual(len(app.screen.query("#language-summary")), 1)
             self.assertEqual(len(app.screen.query("#language-meta")), 0)
+            self.assertEqual(len(app.screen.query("#language-details")), 0)
+            self.assertEqual(len(app.screen.query("#language-details-scroll")), 0)
             await pilot.press("tab")
             await pilot.press("tab")
             await pilot.pause()
@@ -91,6 +97,21 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
 
 
 class FilterTests(unittest.TestCase):
+    def test_build_language_title_stays_compact_but_keeps_top_language_when_width_allows(self) -> None:
+        app = make_app()
+        title = build_language_title(
+            app.context.language_stats,
+            resolve_theme_palette(app.current_theme),
+            width=44,
+        )
+        console = Console(file=io.StringIO(), record=True, width=140)
+        console.print(title)
+        title_text = console.export_text()
+        self.assertIn("Languages", title_text)
+        self.assertIn("Top", title_text)
+        self.assertIn("Markdown", title_text)
+        self.assertIn("%", title_text)
+
     def test_filter_commits_uses_current_time_window(self) -> None:
         now = dt.datetime(2026, 3, 16, 12, 0, 0)
         recent = CommitRecord(

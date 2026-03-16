@@ -15,11 +15,10 @@ from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Static
 
-from ..data import RANGE_PRESETS, aggregate_file_activity, filter_commits
+from ..data import RANGE_PRESETS, filter_commits
 from ..models import BranchData, CommitRecord, RepoContext
 from ..render import (
     build_graph_title,
-    build_language_details,
     build_language_summary,
     build_language_title,
     render_contribution_graph,
@@ -113,14 +112,7 @@ class MainScreen(Screen[None]):
         min-height: 4;
     }
 
-    #language-details-scroll {
-        height: 1fr;
-        overflow-y: auto;
-        scrollbar-gutter: stable;
-    }
-
-    #day-details,
-    #language-details {
+    #day-details {
         height: auto;
         min-height: 1;
     }
@@ -194,8 +186,6 @@ class MainScreen(Screen[None]):
                 with Vertical(id="languages-panel", classes="panel"):
                     yield Static(id="language-title", classes="panel-title")
                     yield FocusableStatic(id="language-summary")
-                    with VerticalScroll(id="language-details-scroll"):
-                        yield Static(id="language-details")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -233,7 +223,6 @@ class MainScreen(Screen[None]):
             "commits-table": "commits",
             "day-details-scroll": "details",
             "language-summary": "languages",
-            "language-details-scroll": "languages",
         }.get(focused_id, "commits")
 
     def _on_theme_change(self, old_value: str, new_value: str) -> None:
@@ -355,7 +344,7 @@ class MainScreen(Screen[None]):
             )
         )
         self._update_day_details(commits, reset_scroll=reset_scroll)
-        self._refresh_language_panel(commits)
+        self._refresh_language_panel()
 
     def _set_selected_commit(
         self,
@@ -491,37 +480,33 @@ class MainScreen(Screen[None]):
                 animate=False
             )
 
-    def _refresh_language_panel(self, commits: list[CommitRecord] | None = None) -> None:
-        if commits is None:
-            branch_data, commits = self._filtered_branch_data()
-        self.query_one("#language-title", Static).update(
-            build_language_title(self.context.language_stats, self._theme_palette)
+    def _refresh_language_panel(self) -> None:
+        panel = self.query_one("#languages-panel", Vertical)
+        panel_width = panel.content_region.width or panel.size.width or 40
+        title_widget = self.query_one("#language-title", Static)
+        title_widget.update(
+            build_language_title(
+                self.context.language_stats,
+                self._theme_palette,
+                width=max(18, panel_width - 2),
+            )
         )
         summary_widget = self.query_one("#language-summary", FocusableStatic)
         summary_width = (
             summary_widget.content_region.width
-            or summary_widget.size.width
-            or 40
+            or max(18, panel_width - 2)
         )
+        panel_height = panel.content_region.height or panel.size.height or 8
+        max_legend_lines = max(3, panel_height - 4)
         self.query_one("#language-summary", Static).update(
             build_language_summary(
                 self.context.language_stats,
                 self.selected_language,
                 self._theme_palette,
                 width=summary_width,
+                max_legend_lines=max_legend_lines,
             )
         )
-        activity = aggregate_file_activity(commits)
-        files = self.context.files_by_language.get(self.selected_language, [])
-        self.query_one("#language-details", Static).update(
-            build_language_details(
-                files,
-                activity,
-                self.selected_language,
-                self._theme_palette,
-            )
-        )
-        self.query_one("#language-details-scroll", VerticalScroll).scroll_home(animate=False)
 
     def _build_repo_stats_sub_title(self) -> str:
         total_files = sum(len(files) for files in self.context.files_by_language.values())

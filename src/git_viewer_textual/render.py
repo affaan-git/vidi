@@ -13,7 +13,7 @@ from rich.text import Text
 from .data import HEATMAP_STYLES, RANGE_PRESETS, build_year_grid
 from .models import LanguageStat, ThemePalette
 from .theme import make_style
-from .utils import rel_time, truncate_middle, utc_now
+from .utils import truncate_middle
 
 
 def render_contribution_graph(
@@ -105,27 +105,35 @@ def build_graph_title(
 def build_language_title(
     language_stats: list[LanguageStat],
     palette: ThemePalette,
+    *,
+    width: int,
 ) -> Text:
     title = Text()
     title.append("Languages", style=make_style(palette.muted, bold=True))
-    title.append("  ", style=make_style(palette.muted))
+    title.append(" ", style=make_style(palette.muted))
     title.append(
-        f"{len(language_stats)} languages",
+        str(len(language_stats)),
+        style=make_style(palette.foreground, bold=True),
+    )
+
+    if not language_stats:
+        return title
+
+    top_language = language_stats[0]
+    title.append(" · ", style=make_style(palette.muted))
+    title.append("Top ", style=make_style(palette.muted))
+    title.append(
+        truncate_middle(
+            str(top_language["language"]),
+            max(8, min(18, width // 3)),
+        ),
+        style=make_style(palette.foreground, bold=True),
+    )
+    title.append(" ", style=make_style(palette.muted))
+    title.append(
+        f"{float(top_language['percentage']):.1f}%",
         style=make_style(palette.muted),
     )
-    if language_stats:
-        top_language = language_stats[0]
-        title.append("  ·  ", style=make_style(palette.muted))
-        title.append("Top language ", style=make_style(palette.muted))
-        title.append(
-            str(top_language["language"]),
-            style=make_style(palette.foreground, bold=True),
-        )
-        title.append(" ", style=make_style(palette.muted))
-        title.append(
-            f"{float(top_language['percentage']):.1f}%",
-            style=make_style(palette.muted),
-        )
     return title
 
 
@@ -135,7 +143,7 @@ def build_language_summary(
     palette: ThemePalette,
     *,
     width: int,
-    max_rows: int = 2,
+    max_legend_lines: int = 3,
 ) -> Group:
     if not language_stats:
         return Group(Text("No language data", style=make_style(palette.muted)))
@@ -170,32 +178,13 @@ def build_language_summary(
     if not bar:
         bar.append("█" * bar_width, style=make_style(palette.surface))
 
-    column_count = max(1, min(3, width // 24))
-    visible_count = min(len(language_stats), column_count * max_rows)
-    selected_index = next(
-        (
-            index
-            for index, item in enumerate(language_stats)
-            if item["language"] == selected_language
-        ),
-        0,
-    )
-    start = max(0, min(selected_index - (visible_count // 2), len(language_stats) - visible_count))
-    visible_items = language_stats[start : start + visible_count]
-
-    gap = 2
-    cell_width = max(18, (width - gap * (column_count - 1)) // column_count)
-    rows = (len(visible_items) + column_count - 1) // column_count
     legend_lines: list[Text] = []
 
-    def build_cell(item: LanguageStat) -> Text:
+    def build_entry(item: LanguageStat) -> Text:
         percentage_text = f"{float(item['percentage']):.1f}%"
-        reserved = 2 + 2 + 1 + len(percentage_text)
-        label_width = max(4, cell_width - reserved)
+        label_width = max(6, min(16, width // 3))
         cell = Text()
         is_selected = item["language"] == selected_language
-        prefix = ">" if is_selected else " "
-        cell.append(prefix + " ", style=make_style(palette.muted))
         cell.append("● ", style=str(item["color"]))
         label_style = (
             make_style(palette.foreground, bold=True)
@@ -210,20 +199,36 @@ def build_language_summary(
         cell.append(percentage_text, style=make_style(palette.muted))
         return cell
 
-    for row_index in range(rows):
-        line = Text()
-        for column_index in range(column_count):
-            item_index = row_index * column_count + column_index
-            if item_index >= len(visible_items):
-                continue
-            cell = build_cell(visible_items[item_index])
-            padding = max(0, cell_width - len(cell.plain))
-            line.append(cell)
-            if column_index < column_count - 1:
-                line.append(" " * (padding + gap))
-        legend_lines.append(line)
+    entry_separator = 3
+    current_line = Text()
+    current_width = 0
+    shown_count = 0
 
-    hidden_count = len(language_stats) - len(visible_items)
+    for item in language_stats:
+        entry = build_entry(item)
+        entry_width = len(entry.plain)
+        separator_width = entry_separator if current_width else 0
+        would_overflow = current_width and (current_width + separator_width + entry_width > width)
+        if would_overflow:
+            legend_lines.append(current_line)
+            if len(legend_lines) >= max_legend_lines:
+                break
+            current_line = Text()
+            current_width = 0
+            separator_width = 0
+
+        if current_width:
+            current_line.append(" " * entry_separator, style=make_style(palette.muted))
+            current_width += entry_separator
+
+        current_line.append(entry)
+        current_width += entry_width
+        shown_count += 1
+
+    if current_line and len(legend_lines) < max_legend_lines:
+        legend_lines.append(current_line)
+
+    hidden_count = len(language_stats) - shown_count
     if hidden_count > 0:
         more_line = Text()
         more_line.append(
@@ -233,46 +238,3 @@ def build_language_summary(
         legend_lines.append(more_line)
 
     return Group(bar, *legend_lines)
-
-
-def build_language_details(
-    files: list[str],
-    activity: dict[str, dict[str, Any]],
-    selected_language: str,
-    palette: ThemePalette,
-) -> Text:
-    now = utc_now()
-    lines = Text()
-    lines.append(selected_language, style=make_style(palette.foreground, bold=True))
-    lines.append(f"  {len(files)} files\n", style=make_style(palette.muted))
-    for path in files[:10]:
-        info = activity.get(path)
-        if info:
-            top_author = info["authors"].most_common(1)[0][0] if info["authors"] else "-"
-            lines.append(
-                f"{truncate_middle(path, 28)}\n",
-                style=make_style(palette.foreground),
-            )
-            lines.append(
-                f"  {info['commits']} commits\n",
-                style=make_style(palette.muted),
-            )
-            lines.append(
-                f"  {truncate_middle(top_author, 14)}  {rel_time(info['last_modified'], now)}\n",
-                style=make_style(palette.muted),
-            )
-        else:
-            lines.append(
-                f"{truncate_middle(path, 28)}\n",
-                style=make_style(palette.foreground),
-            )
-            lines.append(
-                "  no activity in selection\n",
-                style=make_style(palette.muted),
-            )
-    if len(files) > 10:
-        lines.append(
-            f"... {len(files) - 10} more files",
-            style=make_style(palette.muted),
-        )
-    return lines
