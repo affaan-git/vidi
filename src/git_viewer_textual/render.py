@@ -106,18 +106,55 @@ def build_language_summary(
     language_stats: list[LanguageStat],
     selected_language: str,
     palette: ThemePalette,
+    *,
+    width: int,
+    max_rows: int = 8,
 ) -> Group:
+    if not language_stats:
+        return Group(Text("No language data", style=make_style(palette.muted)))
+
+    bar_width = max(8, width)
+    total_percentage = sum(max(float(item["percentage"]), 0.0) for item in language_stats)
+    if total_percentage <= 0:
+        segment_widths = [0 for _item in language_stats]
+        segment_widths[0] = bar_width
+    else:
+        raw_widths = [
+            (max(float(item["percentage"]), 0.0) / total_percentage) * bar_width
+            for item in language_stats
+        ]
+        segment_widths = [int(raw) for raw in raw_widths]
+        remainder = bar_width - sum(segment_widths)
+        if remainder > 0:
+            order = sorted(
+                range(len(raw_widths)),
+                key=lambda index: raw_widths[index] - segment_widths[index],
+                reverse=True,
+            )
+            for index in order[:remainder]:
+                segment_widths[index] += 1
+
     bar = Text()
-    for item in language_stats[:8]:
-        width = max(1, int(round(item["percentage"] / 4)))
-        marker = "█" * min(width, 18)
-        style = item["color"]
-        if item["language"] == selected_language:
-            style = f"bold {style}"
-        bar.append(marker, style=style)
+    for item, segment_width in zip(language_stats, segment_widths):
+        if segment_width <= 0:
+            continue
+        bar.append("█" * segment_width, style=str(item["color"]))
+
+    selected_index = next(
+        (
+            index
+            for index, item in enumerate(language_stats)
+            if item["language"] == selected_language
+        ),
+        0,
+    )
+    visible_rows = min(max_rows, len(language_stats))
+    start = max(0, selected_index - (visible_rows // 2))
+    end = min(len(language_stats), start + visible_rows)
+    start = max(0, end - visible_rows)
 
     legend_lines: list[Text] = []
-    for item in language_stats[:4]:
+    for item in language_stats[start:end]:
         line = Text()
         prefix = ">" if item["language"] == selected_language else " "
         line.append(prefix + " ", style=make_style(palette.muted))

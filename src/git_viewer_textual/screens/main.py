@@ -13,8 +13,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
 from textual.screen import Screen
-from textual.widgets import DataTable, Footer, Header, OptionList, Static
-from textual.widgets.option_list import Option
+from textual.widgets import DataTable, Footer, Header, Static
 
 from ..data import RANGE_PRESETS, aggregate_file_activity, filter_commits
 from ..models import BranchData, CommitRecord, RepoContext
@@ -106,21 +105,12 @@ class MainScreen(Screen[None]):
 
     #language-summary {
         height: auto;
+        min-height: 6;
     }
 
     #language-meta {
         height: auto;
         margin-bottom: 1;
-    }
-
-    #language-list {
-        height: 6;
-        margin-bottom: 1;
-        border: solid $border-blurred;
-    }
-
-    #language-list:focus {
-        border: solid $border;
     }
 
     #language-details-scroll {
@@ -178,6 +168,9 @@ class MainScreen(Screen[None]):
         )
         self.selected_commit_hash = None
         self._theme_palette = resolve_theme_palette(self.app.current_theme)
+        self._language_keys: list[str] = [
+            str(item["language"]) for item in context.language_stats
+        ]
         self._day_keys: list[dt.date] = []
         self._suspend_table_events = False
         self._mounted = False
@@ -201,8 +194,7 @@ class MainScreen(Screen[None]):
                 with Vertical(id="languages-panel", classes="panel"):
                     yield Static("Languages / Files", classes="panel-title")
                     yield Static(id="language-meta")
-                    yield Static(id="language-summary")
-                    yield OptionList(id="language-list")
+                    yield FocusableStatic(id="language-summary")
                     with VerticalScroll(id="language-details-scroll"):
                         yield Static(id="language-details")
         yield Footer()
@@ -221,19 +213,18 @@ class MainScreen(Screen[None]):
 
         self._apply_theme()
         self._refresh_year_options()
-        self._refresh_language_options()
         self.sub_title = self._build_repo_stats_sub_title()
         self.refresh_view()
         commits_table.focus()
         self._mounted = True
         self._refresh_panel_styles()
 
-    def _focus_targets(self) -> tuple[FocusableStatic | DataTable | VerticalScroll | OptionList, ...]:
+    def _focus_targets(self) -> tuple[FocusableStatic | DataTable | VerticalScroll, ...]:
         return (
             self.query_one("#graph-content", FocusableStatic),
             self.query_one("#commits-table", DataTable),
             self.query_one("#day-details-scroll", VerticalScroll),
-            self.query_one("#language-list", OptionList),
+            self.query_one("#language-summary", FocusableStatic),
         )
 
     def _current_panel(self) -> str:
@@ -242,13 +233,12 @@ class MainScreen(Screen[None]):
             "graph-content": "graph",
             "commits-table": "commits",
             "day-details-scroll": "details",
-            "language-list": "languages",
+            "language-summary": "languages",
             "language-details-scroll": "languages",
         }.get(focused_id, "commits")
 
     def _on_theme_change(self, old_value: str, new_value: str) -> None:
         self._apply_theme()
-        self._refresh_language_options()
         branch_data, commits, counts = self._current_view_state(normalize_selection=False)
         self._render_view(commits, counts, include_table=False, reset_scroll=False)
 
@@ -272,8 +262,6 @@ class MainScreen(Screen[None]):
 
         self.query_one("#day-scroll-hint", Static).styles.color = palette.muted
         self.query_one("#language-meta", Static).styles.color = palette.muted
-        language_list = self.query_one("#language-list", OptionList)
-        language_list.styles.background = palette.surface
         self._refresh_panel_styles()
 
     def _refresh_panel_styles(self) -> None:
@@ -505,42 +493,22 @@ class MainScreen(Screen[None]):
                 animate=False
             )
 
-    def _refresh_language_options(self) -> None:
-        options_widget = self.query_one("#language-list", OptionList)
-        languages = [str(item["language"]) for item in self.context.language_stats]
-        if not languages:
-            options_widget.set_options([Option("No languages detected", disabled=True)])
-            options_widget.highlighted = None
-            self.selected_language = "Other"
-            return
-
-        if self.selected_language not in languages:
-            self.selected_language = languages[0]
-
-        options = []
-        for item in self.context.language_stats:
-            language = str(item["language"])
-            percentage = float(item["percentage"])
-            label = Text()
-            label.append(truncate_middle(language, 18))
-            label.append(
-                f"  {percentage:.1f}%",
-                style=make_style(self._theme_palette.muted),
-            )
-            options.append(Option(label, id=language))
-
-        options_widget.set_options(options)
-        options_widget.highlighted = languages.index(self.selected_language)
-
     def _refresh_language_panel(self, commits: list[CommitRecord] | None = None) -> None:
         if commits is None:
             branch_data, commits = self._filtered_branch_data()
         self.query_one("#language-meta", Static).update(self._build_language_meta())
+        summary_widget = self.query_one("#language-summary", FocusableStatic)
+        summary_width = (
+            summary_widget.content_region.width
+            or summary_widget.size.width
+            or 40
+        )
         self.query_one("#language-summary", Static).update(
             build_language_summary(
                 self.context.language_stats,
                 self.selected_language,
                 self._theme_palette,
+                width=summary_width,
             )
         )
         activity = aggregate_file_activity(commits)
@@ -558,6 +526,7 @@ class MainScreen(Screen[None]):
     def _build_repo_stats_sub_title(self) -> str:
         total_files = sum(len(files) for files in self.context.files_by_language.values())
         return (
+            f"{self.context.repo_commit_count} total commits · "
             f"{len(self.context.branches)} branches · "
             f"{total_files} scanned files"
         )
@@ -585,26 +554,6 @@ class MainScreen(Screen[None]):
         else:
             meta.append("0 languages", style=make_style(self._theme_palette.muted, bold=True))
         return meta
-
-    def on_option_list_option_highlighted(
-        self,
-        event: OptionList.OptionHighlighted,
-    ) -> None:
-        if event.option_list.id != "language-list" or event.option_id is None:
-            return
-        selected_language = str(event.option_id)
-        if selected_language != self.selected_language:
-            self.selected_language = selected_language
-            self._refresh_language_panel()
-
-    def on_option_list_option_selected(
-        self,
-        event: OptionList.OptionSelected,
-    ) -> None:
-        if event.option_list.id != "language-list" or event.option_id is None:
-            return
-        self.selected_language = str(event.option_id)
-        self._refresh_language_panel()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         if self._suspend_table_events or event.data_table.id != "commits-table":
@@ -642,8 +591,8 @@ class MainScreen(Screen[None]):
             focused.action_cursor_up()
         elif isinstance(focused, VerticalScroll):
             focused.scroll_up(animate=False)
-        elif isinstance(focused, OptionList):
-            focused.action_cursor_up()
+        elif getattr(focused, "id", None) == "language-summary":
+            self.action_prev_language()
         else:
             self.action_day_up()
 
@@ -653,8 +602,8 @@ class MainScreen(Screen[None]):
             focused.action_cursor_down()
         elif isinstance(focused, VerticalScroll):
             focused.scroll_down(animate=False)
-        elif isinstance(focused, OptionList):
-            focused.action_cursor_down()
+        elif getattr(focused, "id", None) == "language-summary":
+            self.action_next_language()
         else:
             self.action_day_down()
 
@@ -735,3 +684,17 @@ class MainScreen(Screen[None]):
             day_commits[0].commit_hash if day_commits else None,
             sync_table=True,
         )
+
+    def action_next_language(self) -> None:
+        if not self._language_keys:
+            return
+        index = self._language_keys.index(self.selected_language)
+        self.selected_language = self._language_keys[(index + 1) % len(self._language_keys)]
+        self._refresh_language_panel()
+
+    def action_prev_language(self) -> None:
+        if not self._language_keys:
+            return
+        index = self._language_keys.index(self.selected_language)
+        self.selected_language = self._language_keys[(index - 1) % len(self._language_keys)]
+        self._refresh_language_panel()

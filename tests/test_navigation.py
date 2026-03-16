@@ -32,6 +32,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(app.screen.query("#summary-bar")), 0)
             self.assertTrue(app.screen.sub_title)
             self.assertIn("branches", app.screen.sub_title)
+            self.assertIn("commits", app.screen.sub_title)
             self.assertIn("scanned files", app.screen.sub_title)
             self.assertNotIn("languages", app.screen.sub_title)
             self.assertNotIn("all", app.screen.sub_title)
@@ -76,6 +77,16 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             language_meta_text = getattr(language_meta, "plain", str(language_meta))
             self.assertIn("languages", language_meta_text)
             self.assertIn("Top language", language_meta_text)
+
+    async def test_languages_panel_uses_summary_widget_instead_of_duplicate_list(self) -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            self.assertEqual(len(app.screen.query("#language-list")), 0)
+            self.assertEqual(len(app.screen.query("#language-summary")), 1)
+            await pilot.press("tab")
+            await pilot.press("tab")
+            await pilot.pause()
+            self.assertEqual(getattr(app.focused, "id", None), "language-summary")
 
 
 class FilterTests(unittest.TestCase):

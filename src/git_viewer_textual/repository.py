@@ -230,6 +230,7 @@ def build_repo_context(
     context = RepoContext(
         repo_dir=repo_dir,
         project_name=os.path.basename(os.path.abspath(repo_dir)),
+        repo_commit_count=int(run_git(repo_dir, ["rev-list", "--all", "--count"]).strip() or "0"),
         branches=branches,
         current_branch=current_branch,
         language_stats=language_stats,

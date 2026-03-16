@@ -82,6 +82,7 @@ class BranchData:
 class RepoContext:
     repo_dir: str
     project_name: str
+    repo_commit_count: int
     branches: list[str]
     current_branch: str
     language_stats: list[LanguageStat]
