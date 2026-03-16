@@ -19,6 +19,7 @@ from ..data import RANGE_PRESETS, filter_commits
 from ..models import BranchData, CommitRecord, RepoContext
 from ..render import (
     build_graph_title,
+    build_language_bar,
     build_language_summary,
     build_language_title,
     render_contribution_graph,
@@ -107,6 +108,11 @@ class MainScreen(Screen[None]):
         margin-bottom: 1;
     }
 
+    #language-bar {
+        height: 1;
+        margin-bottom: 1;
+    }
+
     #language-summary-scroll {
         height: 1fr;
         overflow-y: auto;
@@ -191,6 +197,7 @@ class MainScreen(Screen[None]):
                     yield Static(id="day-scroll-hint")
                 with Vertical(id="languages-panel", classes="panel"):
                     yield Static(id="language-title", classes="panel-title")
+                    yield Static(id="language-bar")
                     with VerticalScroll(id="language-summary-scroll"):
                         yield Static(id="language-summary")
         yield Footer()
@@ -498,11 +505,25 @@ class MainScreen(Screen[None]):
                 width=max(18, panel_width - 2),
             )
         )
+        bar_widget = self.query_one("#language-bar", Static)
+        bar_width = (
+            bar_widget.content_region.width
+            or bar_widget.size.width
+            or max(8, panel_width - 2)
+        )
+        bar_widget.update(
+            build_language_bar(
+                self.context.language_stats,
+                self._theme_palette,
+                width=bar_width,
+            )
+        )
         summary_scroll = self.query_one("#language-summary-scroll", VerticalScroll)
         summary_widget = self.query_one("#language-summary", Static)
         summary_width = (
-            summary_scroll.content_region.width
-            or max(18, panel_width - 2)
+            summary_widget.content_region.width
+            or summary_widget.size.width
+            or max(18, (summary_scroll.content_region.width or panel_width) - 2)
         )
         summary_widget.update(
             build_language_summary(

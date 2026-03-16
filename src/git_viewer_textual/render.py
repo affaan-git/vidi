@@ -148,36 +148,6 @@ def build_language_summary(
     if not language_stats:
         return Group(Text("No language data", style=make_style(palette.muted)))
 
-    bar_width = max(8, width)
-    total_percentage = sum(max(float(item["percentage"]), 0.0) for item in language_stats)
-    if total_percentage <= 0:
-        segment_widths = [0 for _item in language_stats]
-        segment_widths[0] = bar_width
-    else:
-        raw_widths = [
-            (max(float(item["percentage"]), 0.0) / total_percentage) * bar_width
-            for item in language_stats
-        ]
-        segment_widths = [int(raw) for raw in raw_widths]
-        remainder = bar_width - sum(segment_widths)
-        if remainder > 0:
-            order = sorted(
-                range(len(raw_widths)),
-                key=lambda index: raw_widths[index] - segment_widths[index],
-                reverse=True,
-            )
-            for index in order[:remainder]:
-                segment_widths[index] += 1
-
-    bar = Text()
-    for item, segment_width in zip(language_stats, segment_widths):
-        if segment_width <= 0:
-            continue
-        bar.append("█" * segment_width, style=str(item["color"]))
-
-    if not bar:
-        bar.append("█" * bar_width, style=make_style(palette.surface))
-
     legend_lines: list[Text] = []
 
     def build_entry(item: LanguageStat) -> Text:
@@ -223,4 +193,43 @@ def build_language_summary(
     if current_line:
         legend_lines.append(current_line)
 
-    return Group(bar, *legend_lines)
+    return Group(*legend_lines)
+
+
+def build_language_bar(
+    language_stats: list[LanguageStat],
+    palette: ThemePalette,
+    *,
+    width: int,
+) -> Text:
+    bar_width = max(8, width)
+    total_percentage = sum(max(float(item["percentage"]), 0.0) for item in language_stats)
+    if total_percentage <= 0:
+        segment_widths = [0 for _item in language_stats]
+        segment_widths[0] = bar_width
+    else:
+        raw_widths = [
+            (max(float(item["percentage"]), 0.0) / total_percentage) * bar_width
+            for item in language_stats
+        ]
+        segment_widths = [int(raw) for raw in raw_widths]
+        remainder = bar_width - sum(segment_widths)
+        if remainder > 0:
+            order = sorted(
+                range(len(raw_widths)),
+                key=lambda index: raw_widths[index] - segment_widths[index],
+                reverse=True,
+            )
+            for index in order[:remainder]:
+                segment_widths[index] += 1
+
+    bar = Text()
+    for item, segment_width in zip(language_stats, segment_widths):
+        if segment_width <= 0:
+            continue
+        bar.append("█" * segment_width, style=str(item["color"]))
+
+    if not bar:
+        bar.append("█" * bar_width, style=make_style(palette.surface))
+
+    return bar

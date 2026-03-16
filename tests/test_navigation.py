@@ -10,7 +10,11 @@ from rich.console import Console
 from git_viewer_textual.app import GitViewerApp
 from git_viewer_textual.data import filter_commits
 from git_viewer_textual.models import CommitRecord
-from git_viewer_textual.render import build_language_summary, build_language_title
+from git_viewer_textual.render import (
+    build_language_bar,
+    build_language_summary,
+    build_language_title,
+)
 from git_viewer_textual.repository import build_repo_context
 from git_viewer_textual.theme import resolve_theme_palette
 
@@ -85,12 +89,14 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
     async def test_languages_panel_uses_summary_widget_instead_of_duplicate_list(self) -> None:
         app = make_app()
         async with app.run_test() as pilot:
+            self.assertEqual(len(app.screen.query("#language-bar")), 1)
             self.assertEqual(len(app.screen.query("#language-list")), 0)
             self.assertEqual(len(app.screen.query("#language-summary")), 1)
             self.assertEqual(len(app.screen.query("#language-summary-scroll")), 1)
             self.assertEqual(len(app.screen.query("#language-meta")), 0)
             self.assertEqual(len(app.screen.query("#language-details")), 0)
             self.assertEqual(len(app.screen.query("#language-details-scroll")), 0)
+            self.assertEqual(app.screen.query_one("#language-summary-scroll").max_scroll_y, 0)
             await pilot.press("tab")
             await pilot.press("tab")
             await pilot.pause()
@@ -127,6 +133,19 @@ class FilterTests(unittest.TestCase):
         self.assertIn("JavaScript", summary_text)
         self.assertIn("Other", summary_text)
         self.assertNotIn("more languages", summary_text)
+
+    def test_build_language_bar_respects_requested_width(self) -> None:
+        app = make_app()
+        bar = build_language_bar(
+            app.context.language_stats,
+            resolve_theme_palette(app.current_theme),
+            width=20,
+        )
+        console = Console(file=io.StringIO(), record=True, width=20)
+        console.print(bar)
+        bar_text = console.export_text().strip("\n")
+        self.assertEqual(len(bar_text.splitlines()), 1)
+        self.assertEqual(len(bar_text), 20)
 
     def test_filter_commits_uses_current_time_window(self) -> None:
         now = dt.datetime(2026, 3, 16, 12, 0, 0)
