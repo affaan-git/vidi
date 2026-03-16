@@ -1837,12 +1837,14 @@ class GitViewerTUI(App[None]):
 
     def on_theme_change(self, old_value: str, new_value: str) -> None:
         self._apply_theme()
-        self.refresh_view()
+        _branch_data, commits, counts = self._current_view_state(normalize_selection=False)
+        self._render_view(commits, counts, include_table=False, reset_scroll=False)
 
     def on_resize(self, event: events.Resize) -> None:
         if not self._mounted:
             return
-        self.refresh_view()
+        _branch_data, commits, counts = self._current_view_state(normalize_selection=False)
+        self._render_view(commits, counts, include_table=False, reset_scroll=False)
 
     def _apply_theme(self) -> None:
         palette = resolve_theme_palette(self.current_theme)
@@ -1952,21 +1954,35 @@ class GitViewerTUI(App[None]):
         commits = filter_commits(branch_data.commits, self.selected_range, self.selected_year)
         return branch_data, commits
 
-    def refresh_view(self) -> None:
-        self._suspend_table_events = True
+    def _current_view_state(
+        self, *, normalize_selection: bool
+    ) -> tuple[BranchData, list[CommitRecord], collections.Counter[dt.date]]:
         branch_data, commits = self._filtered_branch_data()
         counts: collections.Counter[dt.date] = collections.Counter(
             commit.authored_date for commit in commits
         )
+        if normalize_selection:
+            if self.selected_day is None or self.selected_day not in counts:
+                self.selected_day = max(counts) if counts else None
+            if self.selected_commit_hash not in {commit.commit_hash for commit in commits}:
+                day_commits = [
+                    commit
+                    for commit in commits
+                    if self.selected_day and commit.authored_date == self.selected_day
+                ]
+                self.selected_commit_hash = (
+                    day_commits[0].commit_hash if day_commits else (commits[0].commit_hash if commits else None)
+                )
+        return branch_data, commits, counts
 
-        if self.selected_day is None or self.selected_day not in counts:
-            self.selected_day = max(counts) if counts else None
-        if self.selected_commit_hash not in {commit.commit_hash for commit in commits}:
-            day_commits = [
-                commit for commit in commits if self.selected_day and commit.authored_date == self.selected_day
-            ]
-            self.selected_commit_hash = day_commits[0].commit_hash if day_commits else (commits[0].commit_hash if commits else None)
-
+    def _render_view(
+        self,
+        commits: list[CommitRecord],
+        counts: collections.Counter[dt.date],
+        *,
+        include_table: bool,
+        reset_scroll: bool,
+    ) -> None:
         self.query_one("#graph-title", Static).update(
             build_graph_title(
                 self.selected_branch,
@@ -1985,21 +2001,21 @@ class GitViewerTUI(App[None]):
                 self._theme_palette,
             )
         )
-        self._update_commits_table(commits)
+        if include_table:
+            self._update_commits_table(commits)
         self._day_keys = sorted(counts.keys(), reverse=True)
-        self._update_selection_views(commits, counts)
-        self.query_one("#language-summary", Static).update(
-            build_language_summary(
-                self.context.language_stats,
-                self.selected_language,
-                self._theme_palette,
-            )
-        )
-        self._update_language_files(commits)
+        self._update_selection_views(commits, counts, reset_scroll=reset_scroll)
+        self._refresh_language_panel(commits)
+
+    def refresh_view(self) -> None:
+        self._suspend_table_events = True
+        _branch_data, commits, counts = self._current_view_state(normalize_selection=True)
+        self._render_view(commits, counts, include_table=True, reset_scroll=True)
         self._suspend_table_events = False
 
-    def _refresh_language_panel(self) -> None:
-        _branch_data, commits = self._filtered_branch_data()
+    def _refresh_language_panel(self, commits: list[CommitRecord] | None = None) -> None:
+        if commits is None:
+            _branch_data, commits = self._filtered_branch_data()
         self.query_one("#language-summary", Static).update(
             build_language_summary(
                 self.context.language_stats,
@@ -2013,6 +2029,8 @@ class GitViewerTUI(App[None]):
         self,
         commits: list[CommitRecord],
         counts: collections.Counter[dt.date],
+        *,
+        reset_scroll: bool,
     ) -> None:
         self.query_one("#graph-content", Static).update(
             render_contribution_graph(
@@ -2022,7 +2040,7 @@ class GitViewerTUI(App[None]):
                 self._theme_palette,
             )
         )
-        self._update_day_details(commits)
+        self._update_day_details(commits, reset_scroll=reset_scroll)
 
     def _set_selected_commit(
         self,
@@ -2053,7 +2071,7 @@ class GitViewerTUI(App[None]):
                     pass
                 finally:
                     self._suspend_table_events = False
-        self._update_selection_views(commits, counts)
+        self._update_selection_views(commits, counts, reset_scroll=True)
 
     def _update_commits_table(self, commits: list[CommitRecord]) -> None:
         table = self.query_one("#commits-table", DataTable)
@@ -2076,7 +2094,7 @@ class GitViewerTUI(App[None]):
             except Exception:
                 pass
 
-    def _update_day_details(self, commits: list[CommitRecord]) -> None:
+    def _update_day_details(self, commits: list[CommitRecord], *, reset_scroll: bool) -> None:
         palette = self._theme_palette
         details = Text()
         if self.selected_day is None:
@@ -2087,7 +2105,8 @@ class GitViewerTUI(App[None]):
             )
             self.query_one("#day-details", Static).update(details)
             self.query_one("#day-scroll-hint", Static).update("")
-            self.query_one("#day-details-scroll", VerticalScroll).scroll_home(animate=False)
+            if reset_scroll:
+                self.query_one("#day-details-scroll", VerticalScroll).scroll_home(animate=False)
             return
 
         day_commits = [commit for commit in commits if commit.authored_date == self.selected_day]
@@ -2100,7 +2119,8 @@ class GitViewerTUI(App[None]):
             details.append("No commit selected.", style=make_style(palette.muted))
             self.query_one("#day-details", Static).update(details)
             self.query_one("#day-scroll-hint", Static).update("")
-            self.query_one("#day-details-scroll", VerticalScroll).scroll_home(animate=False)
+            if reset_scroll:
+                self.query_one("#day-details-scroll", VerticalScroll).scroll_home(animate=False)
             return
 
         title_row = Table.grid(expand=True)
@@ -2127,7 +2147,8 @@ class GitViewerTUI(App[None]):
         self.query_one("#day-details", Static).update(details)
         overflow_hint = "Scroll for more" if len(selected_commit.changed_files) > 4 or len(selected_commit.message) > 54 else ""
         self.query_one("#day-scroll-hint", Static).update(overflow_hint)
-        self.query_one("#day-details-scroll", VerticalScroll).scroll_home(animate=False)
+        if reset_scroll:
+            self.query_one("#day-details-scroll", VerticalScroll).scroll_home(animate=False)
 
     def _update_language_files(self, commits: list[CommitRecord]) -> None:
         palette = self._theme_palette
