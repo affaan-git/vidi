@@ -1265,7 +1265,7 @@ class CommitDetailScreen(Screen[None]):
         self.detail = service.get_commit_detail(commit_hash)
         self.show_full_patch = False
         self.selected_file_index = 0
-        self.focus_mode = "patch"
+        self.focus_mode = "files"
         self._suspend_file_events = False
 
     def compose(self) -> ComposeResult:
@@ -1295,9 +1295,9 @@ class CommitDetailScreen(Screen[None]):
         files_table = self.query_one("#commit-detail-files", DataTable)
         files_table.cursor_type = "row"
         files_table.show_horizontal_scrollbar = False
-        files_table.add_column("File", width=48)
-        files_table.add_column("+", width=5)
-        files_table.add_column("-", width=5)
+        files_table.add_column("File", width=18, key="file")
+        files_table.add_column("+", width=4, key="adds")
+        files_table.add_column("-", width=4, key="dels")
         self._apply_theme()
         self._render_detail_view()
         self._set_focus_mode(self.focus_mode)
@@ -1305,6 +1305,10 @@ class CommitDetailScreen(Screen[None]):
     def on_theme_change(self, old_value: str, new_value: str) -> None:
         self._apply_theme()
         self._render_detail_view()
+
+    def on_resize(self, event: events.Resize) -> None:
+        if self.is_mounted:
+            self._render_detail_view()
 
     def _apply_theme(self) -> None:
         palette = resolve_theme_palette(self.app.current_theme)
@@ -1351,14 +1355,8 @@ class CommitDetailScreen(Screen[None]):
         overview.append(f"{self.detail.subject}\n", style=make_style(palette.foreground, bold=True))
         if self.detail.body:
             overview.append(f"{self.detail.body}\n\n", style=make_style(palette.foreground))
-        overview.append("Author\n", style=make_style(palette.muted, bold=True))
-        overview.append(f"{self.detail.author_name}\n", style=make_style(palette.foreground))
-        overview.append(f"{self.detail.author_email}\n\n", style=make_style(palette.muted))
-        overview.append("Timestamp\n", style=make_style(palette.muted, bold=True))
-        overview.append(
-            f"{self.detail.authored_at.strftime('%Y-%m-%d %H:%M:%S UTC')}\n",
-            style=make_style(palette.foreground),
-        )
+        overview.append("Author Email\n", style=make_style(palette.muted, bold=True))
+        overview.append(f"{self.detail.author_email}\n", style=make_style(palette.foreground))
         if self.detail.parents:
             overview.append("\nParents\n", style=make_style(palette.muted, bold=True))
             overview.append(
@@ -1381,6 +1379,22 @@ class CommitDetailScreen(Screen[None]):
         self.query_one("#commit-detail-files-meta", Static).update(files_meta)
 
         self._render_patch_panel()
+
+    def _files_table_layout(self) -> tuple[int, int, int]:
+        table = self.query_one("#commit-detail-files", DataTable)
+        width = table.size.width or table.content_region.width or 28
+        stats_width = 4
+        padding = 6
+        file_width = max(8, width - (stats_width * 2) - padding)
+        return file_width, stats_width, stats_width
+
+    def _apply_files_table_layout(self) -> int:
+        table = self.query_one("#commit-detail-files", DataTable)
+        file_width, adds_width, dels_width = self._files_table_layout()
+        table.columns["file"].width = file_width
+        table.columns["adds"].width = adds_width
+        table.columns["dels"].width = dels_width
+        return file_width
 
     def _render_patch_panel(self) -> None:
         palette = resolve_theme_palette(self.app.current_theme)
@@ -1594,6 +1608,7 @@ class CommitDetailScreen(Screen[None]):
 
     def _update_files_table(self) -> None:
         table = self.query_one("#commit-detail-files", DataTable)
+        file_width = self._apply_files_table_layout()
         table.clear(columns=False)
         self._suspend_file_events = True
         try:
@@ -1608,7 +1623,7 @@ class CommitDetailScreen(Screen[None]):
                 additions = "-" if change.additions is None else str(change.additions)
                 deletions = "-" if change.deletions is None else str(change.deletions)
                 table.add_row(
-                    truncate_middle(label, 48),
+                    truncate_middle(label, file_width),
                     additions,
                     deletions,
                     key=str(index),
