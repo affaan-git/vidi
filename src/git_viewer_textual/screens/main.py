@@ -78,8 +78,8 @@ class MainScreen(Screen[None]):
     }
 
     #details-panel {
-        height: 2fr;
-        min-height: 10;
+        height: 3fr;
+        min-height: 12;
     }
 
     #day-details-scroll {
@@ -100,11 +100,11 @@ class MainScreen(Screen[None]):
 
     #languages-panel {
         height: 1fr;
-        min-height: 12;
+        min-height: 10;
     }
 
     #language-title {
-        margin-bottom: 1;
+        margin-bottom: 0;
     }
 
     #language-bar {

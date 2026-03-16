@@ -140,9 +140,8 @@ class FilterTests(unittest.TestCase):
         console.print(title)
         title_text = console.export_text()
         self.assertIn("Languages", title_text)
-        self.assertIn("Top", title_text)
-        self.assertIn("Markdown", title_text)
-        self.assertIn("%", title_text)
+        self.assertIn("10", title_text)
+        self.assertNotIn("Top", title_text)
 
     def test_build_language_summary_renders_all_languages_without_placeholder(self) -> None:
         app = make_app()

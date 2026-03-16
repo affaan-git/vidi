@@ -189,25 +189,6 @@ def build_language_title(
         str(len(language_stats)),
         style=make_style(palette.foreground, bold=True),
     )
-
-    if not language_stats:
-        return title
-
-    top_language = language_stats[0]
-    title.append(" · ", style=make_style(palette.muted))
-    title.append("Top ", style=make_style(palette.muted))
-    title.append(
-        truncate_middle(
-            str(top_language["language"]),
-            max(8, min(18, width // 3)),
-        ),
-        style=make_style(palette.foreground, bold=True),
-    )
-    title.append(" ", style=make_style(palette.muted))
-    title.append(
-        f"{float(top_language['percentage']):.1f}%",
-        style=make_style(palette.muted),
-    )
     return title
 
 
