@@ -10,7 +10,7 @@ from rich.console import Console
 from git_viewer_textual.app import GitViewerApp
 from git_viewer_textual.data import filter_commits
 from git_viewer_textual.models import CommitRecord
-from git_viewer_textual.render import build_language_title
+from git_viewer_textual.render import build_language_summary, build_language_title
 from git_viewer_textual.repository import build_repo_context
 from git_viewer_textual.theme import resolve_theme_palette
 
@@ -87,13 +87,14 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
         async with app.run_test() as pilot:
             self.assertEqual(len(app.screen.query("#language-list")), 0)
             self.assertEqual(len(app.screen.query("#language-summary")), 1)
+            self.assertEqual(len(app.screen.query("#language-summary-scroll")), 1)
             self.assertEqual(len(app.screen.query("#language-meta")), 0)
             self.assertEqual(len(app.screen.query("#language-details")), 0)
             self.assertEqual(len(app.screen.query("#language-details-scroll")), 0)
             await pilot.press("tab")
             await pilot.press("tab")
             await pilot.pause()
-            self.assertEqual(getattr(app.focused, "id", None), "language-summary")
+            self.assertEqual(getattr(app.focused, "id", None), "language-summary-scroll")
 
 
 class FilterTests(unittest.TestCase):
@@ -111,6 +112,21 @@ class FilterTests(unittest.TestCase):
         self.assertIn("Top", title_text)
         self.assertIn("Markdown", title_text)
         self.assertIn("%", title_text)
+
+    def test_build_language_summary_renders_all_languages_without_placeholder(self) -> None:
+        app = make_app()
+        summary = build_language_summary(
+            app.context.language_stats,
+            selected_language=str(app.context.language_stats[0]["language"]),
+            palette=resolve_theme_palette(app.current_theme),
+            width=44,
+        )
+        console = Console(file=io.StringIO(), record=True, width=80)
+        console.print(summary)
+        summary_text = console.export_text()
+        self.assertIn("JavaScript", summary_text)
+        self.assertIn("Other", summary_text)
+        self.assertNotIn("more languages", summary_text)
 
     def test_filter_commits_uses_current_time_window(self) -> None:
         now = dt.datetime(2026, 3, 16, 12, 0, 0)

@@ -202,8 +202,6 @@ def build_language_summary(
     entry_separator = 3
     current_line = Text()
     current_width = 0
-    shown_count = 0
-
     for item in language_stats:
         entry = build_entry(item)
         entry_width = len(entry.plain)
@@ -211,8 +209,6 @@ def build_language_summary(
         would_overflow = current_width and (current_width + separator_width + entry_width > width)
         if would_overflow:
             legend_lines.append(current_line)
-            if len(legend_lines) >= max_legend_lines:
-                break
             current_line = Text()
             current_width = 0
             separator_width = 0
@@ -223,18 +219,8 @@ def build_language_summary(
 
         current_line.append(entry)
         current_width += entry_width
-        shown_count += 1
 
-    if current_line and len(legend_lines) < max_legend_lines:
+    if current_line:
         legend_lines.append(current_line)
-
-    hidden_count = len(language_stats) - shown_count
-    if hidden_count > 0:
-        more_line = Text()
-        more_line.append(
-            f"... {hidden_count} more languages",
-            style=make_style(palette.muted),
-        )
-        legend_lines.append(more_line)
 
     return Group(bar, *legend_lines)

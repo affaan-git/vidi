@@ -107,9 +107,15 @@ class MainScreen(Screen[None]):
         margin-bottom: 1;
     }
 
+    #language-summary-scroll {
+        height: 1fr;
+        overflow-y: auto;
+        scrollbar-gutter: stable;
+    }
+
     #language-summary {
         height: auto;
-        min-height: 4;
+        min-height: 1;
     }
 
     #day-details {
@@ -185,7 +191,8 @@ class MainScreen(Screen[None]):
                     yield Static(id="day-scroll-hint")
                 with Vertical(id="languages-panel", classes="panel"):
                     yield Static(id="language-title", classes="panel-title")
-                    yield FocusableStatic(id="language-summary")
+                    with VerticalScroll(id="language-summary-scroll"):
+                        yield Static(id="language-summary")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -213,7 +220,7 @@ class MainScreen(Screen[None]):
             self.query_one("#graph-content", FocusableStatic),
             self.query_one("#commits-table", DataTable),
             self.query_one("#day-details-scroll", VerticalScroll),
-            self.query_one("#language-summary", FocusableStatic),
+            self.query_one("#language-summary-scroll", VerticalScroll),
         )
 
     def _current_panel(self) -> str:
@@ -222,7 +229,7 @@ class MainScreen(Screen[None]):
             "graph-content": "graph",
             "commits-table": "commits",
             "day-details-scroll": "details",
-            "language-summary": "languages",
+            "language-summary-scroll": "languages",
         }.get(focused_id, "commits")
 
     def _on_theme_change(self, old_value: str, new_value: str) -> None:
@@ -491,20 +498,18 @@ class MainScreen(Screen[None]):
                 width=max(18, panel_width - 2),
             )
         )
-        summary_widget = self.query_one("#language-summary", FocusableStatic)
+        summary_scroll = self.query_one("#language-summary-scroll", VerticalScroll)
+        summary_widget = self.query_one("#language-summary", Static)
         summary_width = (
-            summary_widget.content_region.width
+            summary_scroll.content_region.width
             or max(18, panel_width - 2)
         )
-        panel_height = panel.content_region.height or panel.size.height or 8
-        max_legend_lines = max(3, panel_height - 4)
-        self.query_one("#language-summary", Static).update(
+        summary_widget.update(
             build_language_summary(
                 self.context.language_stats,
                 self.selected_language,
                 self._theme_palette,
                 width=summary_width,
-                max_legend_lines=max_legend_lines,
             )
         )
 
@@ -552,8 +557,6 @@ class MainScreen(Screen[None]):
             focused.action_cursor_up()
         elif isinstance(focused, VerticalScroll):
             focused.scroll_up(animate=False)
-        elif getattr(focused, "id", None) == "language-summary":
-            self.action_prev_language()
         else:
             self.action_day_up()
 
@@ -563,8 +566,6 @@ class MainScreen(Screen[None]):
             focused.action_cursor_down()
         elif isinstance(focused, VerticalScroll):
             focused.scroll_down(animate=False)
-        elif getattr(focused, "id", None) == "language-summary":
-            self.action_next_language()
         else:
             self.action_day_down()
 
