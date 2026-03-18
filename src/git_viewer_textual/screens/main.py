@@ -33,7 +33,7 @@ from ..render import (
 from ..repository import RepoService
 from ..theme import make_style, resolve_theme_palette
 from ..utils import rel_time, truncate_middle, utc_now
-from ..widgets import StatusHeader
+from ..widgets import TopBar
 from .branch_picker import BranchPickerScreen
 from .commit_detail import CommitDetailScreen
 
@@ -206,7 +206,7 @@ class MainScreen(Screen[None]):
         self._mounted = False
 
     def compose(self) -> ComposeResult:
-        yield StatusHeader(id="main-header")
+        yield TopBar(id="main-top-bar")
         with Horizontal(id="body"):
             with Vertical(classes="left-column"):
                 with Vertical(id="graph-panel", classes="panel"):
@@ -671,12 +671,12 @@ class MainScreen(Screen[None]):
         )
 
     def _build_scanned_file_status(self) -> str:
-        return f"{self.scanned_file_count} scanned"
+        return f"{self.scanned_file_count} files"
 
     def _update_header_status(self) -> None:
         if not self._mounted:
             return
-        self.query_one("#main-header", StatusHeader).status = self._build_scanned_file_status()
+        self.query_one("#main-top-bar", TopBar).status_text = self._build_scanned_file_status()
 
     def handle_repo_context_refresh(
         self,

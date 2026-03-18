@@ -30,7 +30,7 @@ from git_viewer_textual.render import (
 )
 from git_viewer_textual.repository import build_repo_context
 from git_viewer_textual.theme import resolve_theme_palette
-from git_viewer_textual.widgets import StatusHeader
+from git_viewer_textual.widgets import TopBar
 
 
 def make_app() -> GitViewerApp:
@@ -56,15 +56,15 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("scanned files", app.screen.sub_title)
             self.assertNotIn("languages", app.screen.sub_title)
             self.assertNotIn("all", app.screen.sub_title)
-            header = app.screen.query_one("#main-header", StatusHeader)
-            self.assertIn("scanned", header.status)
+            header = app.screen.query_one("#main-top-bar", TopBar)
+            self.assertIn("files", header.status_text)
 
     async def test_main_header_uses_live_scanned_file_status_slot(self) -> None:
         app = make_app()
         async with app.run_test() as pilot:
-            header = app.screen.query_one("#main-header", StatusHeader)
+            header = app.screen.query_one("#main-top-bar", TopBar)
             expected_count = sum(len(files) for files in app.context.files_by_language.values())
-            self.assertEqual(header.status, f"{expected_count} scanned")
+            self.assertEqual(header.status_text, f"{expected_count} files")
 
     async def test_main_screen_repo_refresh_updates_header_status_and_subtitle(self) -> None:
         app = make_app()
@@ -101,8 +101,8 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             )
             await pilot.pause()
 
-            header = screen.query_one("#main-header", StatusHeader)
-            self.assertEqual(header.status, "0 scanned")
+            header = screen.query_one("#main-top-bar", TopBar)
+            self.assertEqual(header.status_text, "0 files")
             self.assertIn("9 total commits", screen.sub_title)
             self.assertIn("10 branches", screen.sub_title)
 
