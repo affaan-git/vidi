@@ -11,7 +11,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import DataTable, Footer, Static
+from textual.widgets import DataTable, Footer, Header, Static
 
 from ..data import compact_label_for_change, display_label_for_change
 from ..focus import (
@@ -23,7 +23,6 @@ from ..models import CommitFileChange, CommitPatchSection, RepoContext, RepoScan
 from ..repository import RepoService
 from ..theme import make_style, resolve_theme_palette
 from ..utils import rel_time, utc_now
-from ..widgets import TopBar
 
 
 class CommitDetailScreen(ModalScreen[None]):
@@ -168,7 +167,7 @@ class CommitDetailScreen(ModalScreen[None]):
         self._full_patch_ready = False
 
     def compose(self) -> ComposeResult:
-        yield TopBar(id="commit-detail-top-bar", show_clock=True)
+        yield Header(show_clock=True)
         with Static(id="commit-detail-summary-bar"):
             yield Static(id="commit-detail-summary-content")
         with Horizontal(id="commit-detail-body"):

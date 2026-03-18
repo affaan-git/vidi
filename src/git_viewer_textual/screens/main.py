@@ -13,7 +13,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
 from textual.screen import Screen
-from textual.widgets import DataTable, Footer, Static
+from textual.widgets import DataTable, Footer, Header, Static
 
 from ..data import (
     RANGE_PRESETS,
@@ -33,7 +33,6 @@ from ..render import (
 from ..repository import RepoService
 from ..theme import make_style, resolve_theme_palette
 from ..utils import rel_time, truncate_middle, utc_now
-from ..widgets import TopBar
 from .branch_picker import BranchPickerScreen
 from .commit_detail import CommitDetailScreen
 
@@ -206,7 +205,7 @@ class MainScreen(Screen[None]):
         self._mounted = False
 
     def compose(self) -> ComposeResult:
-        yield TopBar(id="main-top-bar")
+        yield Header(show_clock=False)
         with Horizontal(id="body"):
             with Vertical(classes="left-column"):
                 with Vertical(id="graph-panel", classes="panel"):
@@ -244,7 +243,6 @@ class MainScreen(Screen[None]):
         self._apply_theme()
         self._refresh_year_options()
         self.sub_title = self._build_repo_stats_sub_title()
-        self._update_header_status()
         self.refresh_view()
         self._focus_active_panel()
 
@@ -665,18 +663,12 @@ class MainScreen(Screen[None]):
         )
 
     def _build_repo_stats_sub_title(self) -> str:
+        total_files = self.scanned_file_count
         return (
             f"{self.context.repo_commit_count} total commits · "
-            f"{len(self.context.branches)} branches"
+            f"{len(self.context.branches)} branches · "
+            f"{total_files} scanned files"
         )
-
-    def _build_scanned_file_status(self) -> str:
-        return f"{self.scanned_file_count} files"
-
-    def _update_header_status(self) -> None:
-        if not self._mounted:
-            return
-        self.query_one("#main-top-bar", TopBar).status_text = self._build_scanned_file_status()
 
     def handle_repo_context_refresh(
         self,
@@ -700,7 +692,6 @@ class MainScreen(Screen[None]):
         if self.selected_language not in self._language_keys and self._language_keys:
             self.selected_language = self._language_keys[0]
         self.sub_title = self._build_repo_stats_sub_title()
-        self._update_header_status()
         self._refresh_year_options()
         self.refresh_view()
 
