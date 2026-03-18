@@ -25,6 +25,7 @@ from git_viewer_textual.render import (
 )
 from git_viewer_textual.repository import build_repo_context
 from git_viewer_textual.theme import resolve_theme_palette
+from git_viewer_textual.widgets import StatusHeader
 
 
 def make_app() -> GitViewerApp:
@@ -47,9 +48,18 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(app.screen.sub_title)
             self.assertIn("branches", app.screen.sub_title)
             self.assertIn("commits", app.screen.sub_title)
-            self.assertIn("scanned files", app.screen.sub_title)
+            self.assertNotIn("scanned files", app.screen.sub_title)
             self.assertNotIn("languages", app.screen.sub_title)
             self.assertNotIn("all", app.screen.sub_title)
+            header = app.screen.query_one("#main-header", StatusHeader)
+            self.assertIn("scanned files", header.status)
+
+    async def test_main_header_uses_live_scanned_file_status_slot(self) -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            header = app.screen.query_one("#main-header", StatusHeader)
+            expected_count = sum(len(files) for files in app.context.files_by_language.values())
+            self.assertEqual(header.status, f"{expected_count} scanned files")
 
     async def test_commit_detail_blocks_main_screen_bindings(self) -> None:
         app = make_app()

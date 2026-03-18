@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import collections
 import datetime as dt
 
@@ -13,7 +14,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
 from textual.screen import Screen
-from textual.widgets import DataTable, Footer, Header, Static
+from textual.widgets import DataTable, Footer, Static
 
 from ..data import (
     RANGE_PRESETS,
@@ -33,12 +34,17 @@ from ..render import (
 from ..repository import RepoService
 from ..theme import make_style, resolve_theme_palette
 from ..utils import rel_time, truncate_middle, utc_now
+from ..widgets import StatusHeader
 from .branch_picker import BranchPickerScreen
 from .commit_detail import CommitDetailScreen
 
 
 class MainScreen(Screen[None]):
     """Primary analytics screen."""
+
+    FILE_COUNT_REFRESH_MIN_SECONDS = 10.0
+    FILE_COUNT_REFRESH_DEFAULT_SECONDS = 20.0
+    FILE_COUNT_REFRESH_MAX_SECONDS = 120.0
 
     MOVE_GROUP = Binding.Group("Move", compact=True)
     PANEL_GROUP = Binding.Group("Panel")
@@ -172,6 +178,7 @@ class MainScreen(Screen[None]):
     selected_language: reactive[str]
     selected_commit_hash: reactive[str | None]
     active_panel: reactive[str]
+    scanned_file_count: reactive[int]
 
     def __init__(self, context: RepoContext, service: RepoService) -> None:
         super().__init__()
@@ -191,6 +198,10 @@ class MainScreen(Screen[None]):
         )
         self.selected_commit_hash = None
         self.active_panel = "commits"
+        self.scanned_file_count = (
+            service.get_cached_scanned_file_count()
+            or sum(len(files) for files in context.files_by_language.values())
+        )
         self._theme_palette = resolve_theme_palette(self.app.current_theme)
         self._language_keys: list[str] = [
             str(item["language"]) for item in context.language_stats
@@ -198,9 +209,11 @@ class MainScreen(Screen[None]):
         self._day_keys: list[dt.date] = []
         self._suspend_table_events = False
         self._mounted = False
+        self._file_count_refresh_in_flight = False
+        self._file_count_refresh_task: asyncio.Task[None] | None = None
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
+        yield StatusHeader(id="main-header")
         with Horizontal(id="body"):
             with Vertical(classes="left-column"):
                 with Vertical(id="graph-panel", classes="panel"):
@@ -234,12 +247,19 @@ class MainScreen(Screen[None]):
         commits_table.add_column("When", width=7)
         commits_table.add_column("Files", width=5)
 
+        self._mounted = True
         self._apply_theme()
         self._refresh_year_options()
         self.sub_title = self._build_repo_stats_sub_title()
+        self._update_header_status()
         self.refresh_view()
         self._focus_active_panel()
-        self._mounted = True
+        self._schedule_next_file_count_refresh(self.FILE_COUNT_REFRESH_DEFAULT_SECONDS)
+
+    def on_unmount(self) -> None:
+        if self._file_count_refresh_task is not None:
+            self._file_count_refresh_task.cancel()
+            self._file_count_refresh_task = None
 
     def _panel_target(self, panel: str) -> DataTable | VerticalScroll:
         targets: dict[str, DataTable | VerticalScroll] = {
@@ -658,12 +678,51 @@ class MainScreen(Screen[None]):
         )
 
     def _build_repo_stats_sub_title(self) -> str:
-        total_files = sum(len(files) for files in self.context.files_by_language.values())
         return (
             f"{self.context.repo_commit_count} total commits · "
-            f"{len(self.context.branches)} branches · "
-            f"{total_files} scanned files"
+            f"{len(self.context.branches)} branches"
         )
+
+    def _build_scanned_file_status(self) -> str:
+        return f"{self.scanned_file_count} scanned files"
+
+    def _update_header_status(self) -> None:
+        if not self._mounted:
+            return
+        self.query_one("#main-header", StatusHeader).status = self._build_scanned_file_status()
+
+    def _schedule_next_file_count_refresh(self, delay_seconds: float) -> None:
+        if not self._mounted:
+            return
+        self.set_timer(delay_seconds, self._trigger_file_count_refresh)
+
+    def _next_file_count_refresh_delay(self, duration_seconds: float) -> float:
+        return min(
+            self.FILE_COUNT_REFRESH_MAX_SECONDS,
+            max(self.FILE_COUNT_REFRESH_MIN_SECONDS, duration_seconds * 30.0),
+        )
+
+    def _trigger_file_count_refresh(self) -> None:
+        if self._file_count_refresh_in_flight:
+            self._schedule_next_file_count_refresh(self.FILE_COUNT_REFRESH_MIN_SECONDS)
+            return
+        self._file_count_refresh_task = asyncio.create_task(self._refresh_scanned_file_count())
+
+    async def _refresh_scanned_file_count(self) -> None:
+        self._file_count_refresh_in_flight = True
+        duration = self.FILE_COUNT_REFRESH_DEFAULT_SECONDS
+        try:
+            count, duration = await asyncio.to_thread(self.service.refresh_scanned_file_count)
+            if self._mounted and count != self.scanned_file_count:
+                self.scanned_file_count = count
+                self._update_header_status()
+        finally:
+            self._file_count_refresh_in_flight = False
+            self._file_count_refresh_task = None
+            if self._mounted:
+                self._schedule_next_file_count_refresh(
+                    self._next_file_count_refresh_delay(duration)
+                )
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         if self._suspend_table_events or event.data_table.id != "commits-table":

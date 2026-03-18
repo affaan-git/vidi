@@ -5,6 +5,7 @@ from __future__ import annotations
 import collections
 import os
 import subprocess
+import time
 from functools import lru_cache
 from pathlib import Path
 
@@ -236,14 +237,60 @@ def build_repo_context(
         language_stats=language_stats,
         files_by_language=files_by_language,
     )
-    return context, RepoService(repo_dir)
+    return context, RepoService(
+        repo_dir,
+        language_mode=language_mode,
+        exclude_languages=exclude_languages,
+        ignore_dirs=ignore_dirs,
+        initial_scanned_file_count=sum(len(files) for files in files_by_language.values()),
+    )
 
 
 class RepoService:
     """Thin cached wrapper over git commands."""
 
-    def __init__(self, repo_dir: str):
+    def __init__(
+        self,
+        repo_dir: str,
+        *,
+        language_mode: str = "bytes",
+        exclude_languages: set[str] | None = None,
+        ignore_dirs: set[str] | None = None,
+        initial_scanned_file_count: int | None = None,
+    ):
         self.repo_dir = repo_dir
+        self.language_mode = language_mode
+        self.exclude_languages = set(exclude_languages or set())
+        self.ignore_dirs = set(ignore_dirs or set())
+        self._cached_scanned_file_count = initial_scanned_file_count
+
+    def get_cached_scanned_file_count(self) -> int | None:
+        return self._cached_scanned_file_count
+
+    def refresh_scanned_file_count(self) -> tuple[int, float]:
+        started = time.perf_counter()
+        output = run_git(
+            self.repo_dir,
+            ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+        )
+        count = 0
+        repo_root = Path(self.repo_dir)
+        for raw_path in output.split("\0"):
+            if not raw_path:
+                continue
+            path = Path(raw_path)
+            if any(part in self.ignore_dirs for part in path.parts):
+                continue
+            full_path = repo_root / path
+            if not full_path.is_file():
+                continue
+            language = detect_language(raw_path, EXTENSION_TO_LANGUAGE)
+            if language in self.exclude_languages:
+                continue
+            count += 1
+        duration = time.perf_counter() - started
+        self._cached_scanned_file_count = count
+        return count, duration
 
     @lru_cache(maxsize=64)
     def get_branch_data(self, branch: str) -> BranchData:
