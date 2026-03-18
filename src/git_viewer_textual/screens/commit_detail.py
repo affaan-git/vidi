@@ -163,7 +163,10 @@ class CommitDetailScreen(ModalScreen[None]):
         self._pending_focus_target: str | None = None
         self._pending_focus_origin_id: str | None = None
         self._pending_patch_scroll_to_selection = False
-        self._files_table_signature: tuple[bool, int, int, int] | None = None
+        self._files_table_signatures: dict[str, tuple[int, int, int] | None] = {
+            "commit-detail-files-diff": None,
+            "commit-detail-files-outline": None,
+        }
         self._mode_transition_active = False
         self._full_patch_ready = False
         self._force_requested_focus = False
@@ -360,8 +363,8 @@ class CommitDetailScreen(ModalScreen[None]):
             self.active_pane = available[0]
         self._focus_active_pane()
 
-    def _files_table_is_measured(self) -> bool:
-        table = self._current_files_table()
+    def _files_table_is_measured(self, table: DataTable | None = None) -> bool:
+        table = table or self._current_files_table()
         return bool(table.size.width or table.content_region.width)
 
     def _diff_files_table(self) -> DataTable:
@@ -374,19 +377,20 @@ class CommitDetailScreen(ModalScreen[None]):
         return self._outline_files_table() if self.show_full_patch else self._diff_files_table()
 
     def _refresh_files_table(self, *, force: bool = False) -> None:
-        if not self._files_table_is_measured():
-            return
-        signature = (self.show_full_patch, *self._files_table_layout())
         table = self._current_files_table()
+        if not self._files_table_is_measured(table):
+            return
+        signature = self._files_table_layout(table)
+        table_id = table.id or ""
         if (
             not force
-            and signature == self._files_table_signature
+            and signature == self._files_table_signatures.get(table_id)
             and table.row_count == len(self.detail.file_changes)
         ):
             self._sync_outline_cursor(self.selected_file_index)
             return
         self._update_files_table()
-        self._files_table_signature = signature
+        self._files_table_signatures[table_id] = signature
 
     def _focus_widget_for_name(self, name: str | None) -> VerticalScroll | DataTable | None:
         if name == "overview":
@@ -411,7 +415,8 @@ class CommitDetailScreen(ModalScreen[None]):
             self._pending_patch_scroll_to_selection or scroll_to_selection
         )
         if force_files_table_refresh:
-            self._files_table_signature = None
+            for table_id in self._files_table_signatures:
+                self._files_table_signatures[table_id] = None
         self._reconcile_revision += 1
         revision = self._reconcile_revision
         self.call_after_refresh(partial(self._reconcile_after_refresh, revision))
@@ -522,9 +527,11 @@ class CommitDetailScreen(ModalScreen[None]):
             )
         self.query_one("#commit-detail-overview", Static).update(overview)
 
-        if not self._files_table_is_measured():
+        current_table = self._current_files_table()
+        if not self._files_table_is_measured(current_table):
             self._current_files_table().clear(columns=False)
-            self._files_table_signature = None
+            table_id = current_table.id or ""
+            self._files_table_signatures[table_id] = None
         else:
             self._refresh_files_table(force=False)
         file_word = "file" if len(self.detail.file_changes) == 1 else "files"
@@ -572,8 +579,8 @@ class CommitDetailScreen(ModalScreen[None]):
             force_files_table_refresh=False,
         )
 
-    def _files_table_layout(self) -> tuple[int, int, int]:
-        table = self._current_files_table()
+    def _files_table_layout(self, table: DataTable | None = None) -> tuple[int, int, int]:
+        table = table or self._current_files_table()
         width = (
             table.scrollable_content_region.width
             or table.content_region.width
@@ -587,7 +594,7 @@ class CommitDetailScreen(ModalScreen[None]):
 
     def _apply_files_table_layout(self) -> int:
         table = self._current_files_table()
-        file_width, adds_width, dels_width = self._files_table_layout()
+        file_width, adds_width, dels_width = self._files_table_layout(table)
         table.columns["file"].width = file_width
         if "adds" in table.columns:
             table.columns["adds"].width = adds_width
@@ -1013,7 +1020,8 @@ class CommitDetailScreen(ModalScreen[None]):
         self.commit_hash = new_branch_head
         self.detail = self.service.get_commit_detail(new_branch_head)
         self.selected_file_index = 0
-        self._files_table_signature = None
+        for table_id in self._files_table_signatures:
+            self._files_table_signatures[table_id] = None
         self._ignore_next_patch_scroll_sync = False
         self._render_detail_view(
             focus_target="patch" if self.show_full_patch else self.DEFAULT_PANE,
