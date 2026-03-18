@@ -166,6 +166,7 @@ class CommitDetailScreen(ModalScreen[None]):
         self._files_table_signature: tuple[bool, int, int, int] | None = None
         self._mode_transition_active = False
         self._full_patch_ready = False
+        self._force_requested_focus = False
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -430,7 +431,8 @@ class CommitDetailScreen(ModalScreen[None]):
             requested_focus in targets
             and self.focused is not requested_focus
             and (
-                self.focused not in targets
+                self._force_requested_focus
+                or self.focused not in targets
                 or getattr(self.focused, "id", None) == self._pending_focus_origin_id
             )
         ):
@@ -446,6 +448,7 @@ class CommitDetailScreen(ModalScreen[None]):
         self._pending_focus_target = None
         self._pending_focus_origin_id = None
         self._mode_transition_active = False
+        self._force_requested_focus = False
         self._refresh_focus_styles()
 
     def _render_detail_view(
@@ -461,12 +464,6 @@ class CommitDetailScreen(ModalScreen[None]):
         if focus_target is not None:
             self.active_pane = focus_target
             self._refresh_focus_styles()
-        if (
-            self._mode_transition_active
-            and focus_target == "patch"
-            and self.show_full_patch
-        ):
-            self.set_focus(None, scroll_visible=False)
         self._apply_detail_layout()
         self._diff_files_table().styles.display = "none" if self.show_full_patch else "block"
         self._outline_files_table().styles.display = "block" if self.show_full_patch else "none"
@@ -1003,6 +1000,7 @@ class CommitDetailScreen(ModalScreen[None]):
     def action_toggle_patch_scope(self) -> None:
         was_full_patch = self.show_full_patch
         self._mode_transition_active = True
+        self._force_requested_focus = True
         self.show_full_patch = not self.show_full_patch
         self.active_pane = "files" if was_full_patch else "patch"
         scroll_to_selection = not was_full_patch and not self._full_patch_ready
