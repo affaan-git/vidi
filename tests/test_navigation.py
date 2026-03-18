@@ -73,6 +73,21 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
                 f"{expected_count} files",
             )
 
+    async def test_commit_detail_uses_same_builtin_header_without_clock(self) -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.press("enter")
+            await pilot.pause()
+            header = app.screen.query_one(Header)
+            self.assertFalse(getattr(header, "_show_clock"))
+            expected_count = sum(len(files) for files in app.context.files_by_language.values())
+            self.assertEqual(
+                app.screen.sub_title,
+                f"{app.context.repo_commit_count} commits · "
+                f"{len(app.context.branches)} branches · "
+                f"{expected_count} files",
+            )
+
     async def test_main_screen_repo_refresh_updates_header_status_and_subtitle(self) -> None:
         app = make_app()
         async with app.run_test() as pilot:

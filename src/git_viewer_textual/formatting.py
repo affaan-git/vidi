@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from rich.text import Text
 
-from .models import ThemePalette
+from .models import RepoContext, ThemePalette
 from .theme import make_change_stat_style, make_style
 from .utils import truncate_middle
 
@@ -48,4 +48,12 @@ def append_file_change_summary_line(
     text.append(
         deletions_text,
         style=make_change_stat_style(palette, deletions, positive=False),
+    )
+
+
+def build_repo_stats_sub_title(context: RepoContext, scanned_file_count: int) -> str:
+    return (
+        f"{context.repo_commit_count} commits · "
+        f"{len(context.branches)} branches · "
+        f"{scanned_file_count} files"
     )

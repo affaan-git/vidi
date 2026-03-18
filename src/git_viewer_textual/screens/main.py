@@ -21,7 +21,11 @@ from ..data import (
     filter_commits,
     resolve_graph_window,
 )
-from ..formatting import append_file_change_summary_line, build_commit_identity_line
+from ..formatting import (
+    append_file_change_summary_line,
+    build_commit_identity_line,
+    build_repo_stats_sub_title,
+)
 from ..focus import mark_scroll_focus_pending, set_scroll_focusability
 from ..models import BranchData, CommitFileChange, CommitPatchSection, CommitRecord, RepoContext
 from ..render import (
@@ -647,12 +651,7 @@ class MainScreen(Screen[None]):
         )
 
     def _build_repo_stats_sub_title(self) -> str:
-        total_files = self.scanned_file_count
-        return (
-            f"{self.context.repo_commit_count} commits · "
-            f"{len(self.context.branches)} branches · "
-            f"{total_files} files"
-        )
+        return build_repo_stats_sub_title(self.context, self.scanned_file_count)
 
     def handle_repo_context_refresh(
         self,

@@ -14,6 +14,7 @@ from textual.screen import ModalScreen
 from textual.widgets import DataTable, Footer, Header, Static
 
 from ..data import compact_label_for_change, display_label_for_change
+from ..formatting import build_repo_stats_sub_title
 from ..focus import (
     mark_scroll_focus_pending,
     scroll_has_overflow,
@@ -172,7 +173,7 @@ class CommitDetailScreen(ModalScreen[None]):
         self._force_requested_focus = False
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
+        yield Header(show_clock=False)
         with Static(id="commit-detail-summary-bar"):
             yield Static(id="commit-detail-summary-content")
         with Horizontal(id="commit-detail-body"):
@@ -218,6 +219,7 @@ class CommitDetailScreen(ModalScreen[None]):
         outline_table.add_column("File", width=18, key="file")
         outline_table.add_column("+", width=4, key="adds")
         outline_table.add_column("-", width=4, key="dels")
+        self.sub_title = self._build_repo_stats_sub_title()
         self._apply_theme()
         self._render_detail_view(focus_target=self.DEFAULT_PANE)
 
@@ -578,6 +580,14 @@ class CommitDetailScreen(ModalScreen[None]):
             scroll_to_selection=scroll_to_selection,
             force_files_table_refresh=False,
         )
+
+    def _build_repo_stats_sub_title(self) -> str:
+        context = self.app.context
+        scanned_file_count = (
+            self.service.get_cached_scanned_file_count()
+            or sum(len(files) for files in context.files_by_language.values())
+        )
+        return build_repo_stats_sub_title(context, scanned_file_count)
 
     def _files_table_layout(self, table: DataTable | None = None) -> tuple[int, int, int]:
         table = table or self._current_files_table()
@@ -1001,6 +1011,7 @@ class CommitDetailScreen(ModalScreen[None]):
         previous_snapshot: RepoScanSnapshot,
         new_snapshot: RepoScanSnapshot,
     ) -> None:
+        self.sub_title = self._build_repo_stats_sub_title()
         if self.source_branch is None:
             return
         old_heads = dict(previous_snapshot.branch_heads)
