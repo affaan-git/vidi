@@ -21,6 +21,7 @@ from ..data import (
     filter_commits,
     resolve_graph_window,
 )
+from ..formatting import append_file_change_summary_line, build_commit_identity_line
 from ..focus import mark_scroll_focus_pending, set_scroll_focusability
 from ..models import BranchData, CommitFileChange, CommitPatchSection, CommitRecord, RepoContext
 from ..render import (
@@ -31,7 +32,7 @@ from ..render import (
     render_contribution_graph,
 )
 from ..repository import RepoService
-from ..theme import make_change_stat_style, make_style, resolve_theme_palette
+from ..theme import make_style, resolve_theme_palette
 from ..utils import rel_time, truncate_middle, utc_now
 from .branch_picker import BranchPickerScreen
 from .commit_detail import CommitDetailScreen
@@ -534,14 +535,13 @@ class MainScreen(Screen[None]):
         )
         self.query_one("#details-title", Static).update(title_row)
 
-        details.append(
-            selected_commit.authored_date.isoformat(),
-            style=make_style(palette.muted),
-        )
-        details.append("  ", style=make_style(palette.muted))
-        details.append(
-            truncate_middle(selected_commit.author_name, 20),
-            style=make_style(palette.foreground, bold=True),
+        details.append_text(
+            build_commit_identity_line(
+                palette,
+                selected_commit.authored_date.isoformat(),
+                selected_commit.author_name,
+                author_max_width=20,
+            )
         )
         details.append("\n")
         details.append(
@@ -562,22 +562,12 @@ class MainScreen(Screen[None]):
                 commit_detail.patch_sections,
                 change,
             )
-            additions = "+-" if change.additions is None else f"+{change.additions}"
-            deletions = "--" if change.deletions is None else f"-{change.deletions}"
-            details.append("  - ", style=make_style(palette.muted))
-            details.append(
+            append_file_change_summary_line(
+                details,
+                palette,
                 compact_label_for_change(change, section, label_width),
-                style=make_style(palette.foreground, bold=True),
-            )
-            details.append("  ", style=make_style(palette.muted))
-            details.append(
-                additions,
-                style=make_change_stat_style(palette, change.additions, positive=True),
-            )
-            details.append(" ", style=make_style(palette.muted))
-            details.append(
-                deletions,
-                style=make_change_stat_style(palette, change.deletions, positive=False),
+                change.additions,
+                change.deletions,
             )
             if suffix:
                 details.append(suffix, style=make_style(palette.muted))

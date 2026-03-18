@@ -8,6 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from rich.console import Console
+from rich.text import Text
 from textual.color import Color
 from textual.binding import Binding
 from textual.widgets import DataTable, Footer, Header
@@ -15,6 +16,10 @@ from textual.widgets import Input
 
 from git_viewer_textual.app import GitViewerApp
 from git_viewer_textual.data import compact_label_for_change, filter_commits, resolve_graph_window
+from git_viewer_textual.formatting import (
+    append_file_change_summary_line,
+    build_commit_identity_line,
+)
 from git_viewer_textual.models import (
     CommitFileChange,
     CommitPatchSection,
@@ -664,6 +669,47 @@ class FilterTests(unittest.TestCase):
         self.assertEqual(del_style.color, palette.error.rich_color)
         self.assertTrue(add_style.bold)
         self.assertTrue(del_style.bold)
+
+    def test_build_commit_identity_line_uses_muted_date_and_regular_author(self) -> None:
+        app = make_app()
+        palette = resolve_theme_palette(app.current_theme)
+
+        line = build_commit_identity_line(
+            palette,
+            "2026-01-07",
+            "Example User",
+            author_max_width=20,
+        )
+        spans = line.spans
+
+        self.assertEqual(line.plain, "2026-01-07  Example User")
+        self.assertEqual(spans[0].style.color, palette.muted.rich_color)
+        self.assertEqual(spans[1].style.color, palette.muted.rich_color)
+        self.assertEqual(spans[2].style.color, palette.foreground.rich_color)
+        self.assertFalse(spans[2].style.bold)
+
+    def test_append_file_change_summary_line_uses_regular_label_and_muted_zero_stats(self) -> None:
+        app = make_app()
+        palette = resolve_theme_palette(app.current_theme)
+
+        text = Text()
+        append_file_change_summary_line(
+            text,
+            palette,
+            "README.md",
+            0,
+            3,
+        )
+        spans = text.spans
+
+        self.assertEqual(text.plain, "  - README.md  +0 -3")
+        self.assertEqual(spans[0].style.color, palette.muted.rich_color)
+        self.assertEqual(spans[1].style.color, palette.foreground.rich_color)
+        self.assertFalse(spans[1].style.bold)
+        self.assertEqual(spans[3].style.color, palette.muted.rich_color)
+        self.assertFalse(spans[3].style.bold)
+        self.assertEqual(spans[5].style.color, palette.error.rich_color)
+        self.assertTrue(spans[5].style.bold)
 
     def test_filter_commits_uses_current_time_window(self) -> None:
         now = dt.datetime(2026, 3, 16, 12, 0, 0)
