@@ -498,7 +498,7 @@ class CommitDetailScreen(ModalScreen[None]):
         self.query_one("#commit-detail-overview", Static).update(overview)
 
         columns_changed = self._configure_files_table()
-        if columns_changed or not self._files_table_is_measured():
+        if not self._files_table_is_measured():
             self.query_one("#commit-detail-files", DataTable).clear(columns=False)
             self._files_table_signature = None
         else:
@@ -541,8 +541,15 @@ class CommitDetailScreen(ModalScreen[None]):
         )
 
     def _files_table_layout(self) -> tuple[int, int, int]:
+        panel = self.query_one("#commit-detail-files-panel", Vertical)
         table = self.query_one("#commit-detail-files", DataTable)
-        width = table.size.width or table.content_region.width or 28
+        width = (
+            panel.content_region.width
+            or panel.size.width
+            or table.content_region.width
+            or table.size.width
+            or 28
+        )
         padding = 6
         if self.show_full_patch:
             file_width = max(8, width - padding)
@@ -929,7 +936,6 @@ class CommitDetailScreen(ModalScreen[None]):
         index = panes.index(current)
         self.active_pane = panes[(index + 1) % len(panes)]
         self._focus_active_pane()
-        self._refresh_focus_styles()
 
     def action_focus_prev_pane(self) -> None:
         panes = self._available_panes()
@@ -939,7 +945,6 @@ class CommitDetailScreen(ModalScreen[None]):
         index = panes.index(current)
         self.active_pane = panes[(index - 1) % len(panes)]
         self._focus_active_pane()
-        self._refresh_focus_styles()
 
     def action_cursor_up(self) -> None:
         target = self._scroll_target()

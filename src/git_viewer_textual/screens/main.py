@@ -235,7 +235,6 @@ class MainScreen(Screen[None]):
         self.refresh_view()
         self._focus_active_panel()
         self._mounted = True
-        self._refresh_panel_styles()
 
     def _panel_target(self, panel: str) -> DataTable | VerticalScroll:
         targets: dict[str, DataTable | VerticalScroll] = {
@@ -542,7 +541,10 @@ class MainScreen(Screen[None]):
         details.append("\nFiles changed\n", style=make_style(palette.muted, bold=True))
         for index, path in enumerate(selected_commit.changed_files):
             suffix = "\n" if index < len(selected_commit.changed_files) - 1 else ""
-            details.append(f"  - {path}{suffix}", style=make_style(palette.muted))
+            details.append("  - ", style=make_style(palette.muted))
+            details.append(path, style=make_style(palette.foreground, bold=True))
+            if suffix:
+                details.append(suffix, style=make_style(palette.muted))
         self.query_one("#day-details", Static).update(details)
         overflow_hint = (
             "Scroll for more"
