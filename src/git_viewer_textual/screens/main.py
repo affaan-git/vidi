@@ -16,7 +16,7 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Static
 
 from ..data import RANGE_PRESETS, filter_commits, resolve_graph_window
-from ..focus import focus_targets, mark_scroll_focus_pending, set_scroll_focusability
+from ..focus import mark_scroll_focus_pending, set_scroll_focusability
 from ..models import BranchData, CommitRecord, RepoContext
 from ..render import (
     build_graph_title,
@@ -166,6 +166,7 @@ class MainScreen(Screen[None]):
     selected_day: reactive[dt.date | None]
     selected_language: reactive[str]
     selected_commit_hash: reactive[str | None]
+    active_panel: reactive[str]
 
     def __init__(self, context: RepoContext, service: RepoService) -> None:
         super().__init__()
@@ -184,6 +185,7 @@ class MainScreen(Screen[None]):
             else "Other"
         )
         self.selected_commit_hash = None
+        self.active_panel = "commits"
         self._theme_palette = resolve_theme_palette(self.app.current_theme)
         self._language_keys: list[str] = [
             str(item["language"]) for item in context.language_stats
@@ -231,32 +233,63 @@ class MainScreen(Screen[None]):
         self._refresh_year_options()
         self.sub_title = self._build_repo_stats_sub_title()
         self.refresh_view()
-        commits_table.focus()
+        self._focus_active_panel()
         self._mounted = True
         self._refresh_panel_styles()
 
-    def _focus_targets(self) -> tuple[DataTable | VerticalScroll, ...]:
-        return focus_targets(
-            self.query_one("#commits-table", DataTable),
-            self.query_one("#day-details-scroll", VerticalScroll),
-            self.query_one("#language-summary-scroll", VerticalScroll),
+    def _panel_target(self, panel: str) -> DataTable | VerticalScroll:
+        targets: dict[str, DataTable | VerticalScroll] = {
+            "commits": self.query_one("#commits-table", DataTable),
+            "details": self.query_one("#day-details-scroll", VerticalScroll),
+            "languages": self.query_one("#language-summary-scroll", VerticalScroll),
+        }
+        return targets[panel]
+
+    def _available_panels(self) -> tuple[str, ...]:
+        ordered = ("commits", "details", "languages")
+        return tuple(
+            panel
+            for panel in ordered
+            if panel == "commits" or self._panel_target(panel).can_focus
         )
+
+    def _focus_targets(self) -> tuple[DataTable | VerticalScroll, ...]:
+        return tuple(self._panel_target(panel) for panel in self._available_panels())
+
+    def _sync_active_panel_from_focus(self) -> None:
+        focused_id = getattr(self.focused, "id", None)
+        mapping = {
+            "commits-table": "commits",
+            "day-details-scroll": "details",
+            "language-summary-scroll": "languages",
+        }
+        focused_panel = mapping.get(focused_id)
+        if focused_panel in self._available_panels():
+            self.active_panel = focused_panel
+
+    def _focus_active_panel(self) -> None:
+        available = self._available_panels()
+        if not available:
+            return
+        if self.active_panel not in available:
+            self.active_panel = available[0]
+        target = self._panel_target(self.active_panel)
+        self._refresh_panel_styles()
+        if self.focused is not target:
+            target.focus()
 
     def _refresh_scroll_focusability(self) -> None:
         details_scroll = self.query_one("#day-details-scroll", VerticalScroll)
         languages_scroll = self.query_one("#language-summary-scroll", VerticalScroll)
         set_scroll_focusability(details_scroll, languages_scroll)
+        available = self._available_panels()
+        if self.active_panel not in available:
+            self.active_panel = available[0]
         if self.focused not in self._focus_targets():
-            self.query_one("#commits-table", DataTable).focus()
+            self._focus_active_panel()
+        else:
+            self._sync_active_panel_from_focus()
         self._refresh_panel_styles()
-
-    def _current_panel(self) -> str:
-        focused_id = getattr(self.focused, "id", None)
-        return {
-            "commits-table": "commits",
-            "day-details-scroll": "details",
-            "language-summary-scroll": "languages",
-        }.get(focused_id, "commits")
 
     def _on_theme_change(self, old_value: str, new_value: str) -> None:
         self._apply_theme()
@@ -286,7 +319,6 @@ class MainScreen(Screen[None]):
 
     def _refresh_panel_styles(self) -> None:
         palette = self._theme_palette
-        current_panel = self._current_panel()
         panel_ids = {
             "graph": "#graph-panel",
             "commits": "#commits-panel",
@@ -295,10 +327,11 @@ class MainScreen(Screen[None]):
         }
         for panel_name, selector in panel_ids.items():
             panel = self.query_one(selector, Vertical)
-            border_color = palette.primary if panel_name == current_panel else palette.border
+            border_color = palette.primary if panel_name == self.active_panel else palette.border
             panel.styles.border = ("solid", border_color)
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        self._sync_active_panel_from_focus()
         self._refresh_panel_styles()
 
     def _refresh_year_options(self) -> None:
@@ -589,19 +622,25 @@ class MainScreen(Screen[None]):
             self._set_selected_commit(commits, str(row_key), sync_table=False)
 
     def action_focus_next_panel(self) -> None:
-        targets = self._focus_targets()
-        focused = self.focused
-        index = targets.index(focused) if focused in targets else 1
-        targets[(index + 1) % len(targets)].focus()
+        panels = self._available_panels()
+        if not panels:
+            return
+        current = self.active_panel if self.active_panel in panels else panels[0]
+        index = panels.index(current)
+        self.active_panel = panels[(index + 1) % len(panels)]
+        self._focus_active_panel()
 
     def action_focus_prev_panel(self) -> None:
-        targets = self._focus_targets()
-        focused = self.focused
-        index = targets.index(focused) if focused in targets else 1
-        targets[(index - 1) % len(targets)].focus()
+        panels = self._available_panels()
+        if not panels:
+            return
+        current = self.active_panel if self.active_panel in panels else panels[0]
+        index = panels.index(current)
+        self.active_panel = panels[(index - 1) % len(panels)]
+        self._focus_active_panel()
 
     def action_cursor_up(self) -> None:
-        focused = self.focused
+        focused = self._panel_target(self.active_panel)
         if isinstance(focused, DataTable):
             focused.action_cursor_up()
         elif isinstance(focused, VerticalScroll):
@@ -610,7 +649,7 @@ class MainScreen(Screen[None]):
             self.action_day_up()
 
     def action_cursor_down(self) -> None:
-        focused = self.focused
+        focused = self._panel_target(self.active_panel)
         if isinstance(focused, DataTable):
             focused.action_cursor_down()
         elif isinstance(focused, VerticalScroll):
