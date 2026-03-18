@@ -213,6 +213,8 @@ class CommitDetailScreen(ModalScreen[None]):
         diff_table.add_column("+", width=4, key="adds")
         diff_table.add_column("-", width=4, key="dels")
         outline_table.add_column("File", width=18, key="file")
+        outline_table.add_column("+", width=4, key="adds")
+        outline_table.add_column("-", width=4, key="dels")
         self._apply_theme()
         self._render_detail_view(focus_target=self.DEFAULT_PANE)
 
@@ -579,9 +581,6 @@ class CommitDetailScreen(ModalScreen[None]):
             or 28
         )
         padding = 6
-        if self.show_full_patch:
-            file_width = max(8, width - padding)
-            return file_width, 0, 0
         stats_width = 4
         file_width = max(8, width - (stats_width * 2) - padding)
         return file_width, stats_width, stats_width
@@ -590,8 +589,9 @@ class CommitDetailScreen(ModalScreen[None]):
         table = self._current_files_table()
         file_width, adds_width, dels_width = self._files_table_layout()
         table.columns["file"].width = file_width
-        if not self.show_full_patch:
+        if "adds" in table.columns:
             table.columns["adds"].width = adds_width
+        if "dels" in table.columns:
             table.columns["dels"].width = dels_width
         return file_width
 
@@ -626,38 +626,22 @@ class CommitDetailScreen(ModalScreen[None]):
         section = self._section_for_change(index, change)
         return compact_label_for_change(change, section, 56)
 
-    def _build_outline_row_label(
+    def _build_stat_cell(
         self,
-        change: CommitFileChange,
-        section: CommitPatchSection | None,
-        width: int,
+        value: int | None,
+        *,
+        positive: bool,
     ) -> Text:
         palette = resolve_theme_palette(self.app.current_theme)
-        additions = "+-" if change.additions is None else f"+{change.additions}"
-        deletions = "--" if change.deletions is None else f"-{change.deletions}"
-        stats_width = len(additions) + 1 + len(deletions)
-        name_width = max(4, width - stats_width - 1)
-        display_name = compact_label_for_change(change, section, name_width)
-        gap = max(width - len(display_name) - stats_width, 1)
-
-        row = Text(display_name, style=make_style(palette.foreground))
-        row.append(" " * gap, style=make_style(palette.muted))
-        row.append(
-            additions,
+        if value is None:
+            return Text("-", style=make_style(palette.muted))
+        return Text(
+            str(value),
             style=make_style(
-                palette.success if change.additions is not None else palette.muted,
-                bold=change.additions is not None,
+                palette.success if positive else palette.error,
+                bold=True,
             ),
         )
-        row.append(" ", style=make_style(palette.muted))
-        row.append(
-            deletions,
-            style=make_style(
-                palette.error if change.deletions is not None else palette.muted,
-                bold=change.deletions is not None,
-            ),
-        )
-        return row
 
     def _visible_patch_sections(self) -> tuple[CommitPatchSection, ...]:
         if self.show_full_patch:
@@ -877,20 +861,12 @@ class CommitDetailScreen(ModalScreen[None]):
         try:
             for index, change in enumerate(self.detail.file_changes):
                 section = self._section_for_change(index, change)
-                if self.show_full_patch:
-                    table.add_row(
-                        self._build_outline_row_label(change, section, file_width),
-                        key=str(index),
-                    )
-                else:
-                    additions = "-" if change.additions is None else str(change.additions)
-                    deletions = "-" if change.deletions is None else str(change.deletions)
-                    table.add_row(
-                        compact_label_for_change(change, section, file_width),
-                        additions,
-                        deletions,
-                        key=str(index),
-                    )
+                table.add_row(
+                    compact_label_for_change(change, section, file_width),
+                    self._build_stat_cell(change.additions, positive=True),
+                    self._build_stat_cell(change.deletions, positive=False),
+                    key=str(index),
+                )
             if self.detail.file_changes:
                 table.move_cursor(row=self.selected_file_index, animate=False, scroll=True)
         finally:

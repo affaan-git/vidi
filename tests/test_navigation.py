@@ -241,10 +241,16 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
                 app.screen.query_one("#commit-detail-files-outline", DataTable).max_scroll_x,
                 0,
             )
-            first_outline_cell = app.screen.query_one("#commit-detail-files-outline", DataTable).get_row_at(0)[0]
+            outline_table = app.screen.query_one("#commit-detail-files-outline", DataTable)
+            self.assertEqual([column.label.plain for column in outline_table.columns.values()], ["File", "+", "-"])
+            first_outline_cell = outline_table.get_row_at(0)[0]
             first_outline_text = getattr(first_outline_cell, "plain", str(first_outline_cell))
-            self.assertRegex(first_outline_text, r"\+\d+")
-            self.assertRegex(first_outline_text, r"-\d+|--")
+            self.assertNotRegex(first_outline_text, r"\+\d+")
+            self.assertNotRegex(first_outline_text, r"-\d+|--")
+            first_outline_adds = outline_table.get_row_at(0)[1]
+            first_outline_dels = outline_table.get_row_at(0)[2]
+            self.assertEqual(getattr(first_outline_adds, "plain", str(first_outline_adds)), "2")
+            self.assertEqual(getattr(first_outline_dels, "plain", str(first_outline_dels)), "0")
             self.assertEqual(getattr(app.focused, "id", None), "commit-detail-full-scroll")
             files_meta_render = app.screen.query_one("#commit-detail-files-meta").render()
             meta_console = Console(file=io.StringIO(), record=True, width=120)
@@ -283,6 +289,8 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
                 app.screen.query_one("#commit-detail-files-title").render(),
                 "Files Changed",
             )
+            diff_table = app.screen.query_one("#commit-detail-files-diff", DataTable)
+            self.assertEqual([column.label.plain for column in diff_table.columns.values()], ["File", "+", "-"])
             self.assertEqual(getattr(app.focused, "id", None), "commit-detail-files-diff")
 
     async def test_commit_detail_retargets_rewritten_branch_head(self) -> None:
