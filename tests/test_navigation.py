@@ -52,7 +52,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(app.screen.sub_title)
             self.assertIn("branches", app.screen.sub_title)
             self.assertIn("commits", app.screen.sub_title)
-            self.assertIn("scanned files", app.screen.sub_title)
+            self.assertIn("files", app.screen.sub_title)
             self.assertNotIn("languages", app.screen.sub_title)
             self.assertNotIn("all", app.screen.sub_title)
             self.assertEqual(len(app.screen.query(Header)), 1)
@@ -63,9 +63,9 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             expected_count = sum(len(files) for files in app.context.files_by_language.values())
             self.assertEqual(
                 app.screen.sub_title,
-                f"{app.context.repo_commit_count} total commits · "
+                f"{app.context.repo_commit_count} commits · "
                 f"{len(app.context.branches)} branches · "
-                f"{expected_count} scanned files",
+                f"{expected_count} files",
             )
 
     async def test_main_screen_repo_refresh_updates_header_status_and_subtitle(self) -> None:
@@ -103,9 +103,9 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             )
             await pilot.pause()
 
-            self.assertIn("9 total commits", screen.sub_title)
+            self.assertIn("9 commits", screen.sub_title)
             self.assertIn("10 branches", screen.sub_title)
-            self.assertIn("0 scanned files", screen.sub_title)
+            self.assertIn("0 files", screen.sub_title)
 
     async def test_commit_detail_blocks_main_screen_bindings(self) -> None:
         app = make_app()

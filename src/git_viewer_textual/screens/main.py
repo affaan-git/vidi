@@ -665,9 +665,9 @@ class MainScreen(Screen[None]):
     def _build_repo_stats_sub_title(self) -> str:
         total_files = self.scanned_file_count
         return (
-            f"{self.context.repo_commit_count} total commits · "
+            f"{self.context.repo_commit_count} commits · "
             f"{len(self.context.branches)} branches · "
-            f"{total_files} scanned files"
+            f"{total_files} files"
         )
 
     def handle_repo_context_refresh(
