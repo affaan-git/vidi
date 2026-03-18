@@ -86,7 +86,8 @@ class CommitDetailScreen(ModalScreen[None]):
         height: auto;
     }
 
-    #commit-detail-files {
+    #commit-detail-files-diff,
+    #commit-detail-files-outline {
         height: 1fr;
         min-height: 3;
     }
@@ -185,7 +186,8 @@ class CommitDetailScreen(ModalScreen[None]):
                 ):
                     yield Static(id="commit-detail-files-title", classes="commit-detail-panel-title")
                     yield Static(id="commit-detail-files-meta")
-                    yield DataTable(id="commit-detail-files", show_row_labels=False)
+                    yield DataTable(id="commit-detail-files-diff", show_row_labels=False)
+                    yield DataTable(id="commit-detail-files-outline", show_row_labels=False)
             with Vertical(id="commit-detail-main"):
                 with Vertical(
                     id="commit-detail-patch-panel",
@@ -200,13 +202,16 @@ class CommitDetailScreen(ModalScreen[None]):
 
     def on_mount(self) -> None:
         self.watch(self.app, "theme", self._on_theme_change, init=False)
-        files_table = self.query_one("#commit-detail-files", DataTable)
+        diff_table = self.query_one("#commit-detail-files-diff", DataTable)
+        outline_table = self.query_one("#commit-detail-files-outline", DataTable)
         self.watch(self._full_patch_scroll(), "scroll_y", self._on_full_patch_scroll_y, init=False)
-        files_table.cursor_type = "row"
-        files_table.show_horizontal_scrollbar = False
-        files_table.add_column("File", width=18, key="file")
-        files_table.add_column("+", width=4, key="adds")
-        files_table.add_column("-", width=4, key="dels")
+        for table in (diff_table, outline_table):
+            table.cursor_type = "row"
+            table.show_horizontal_scrollbar = False
+        diff_table.add_column("File", width=18, key="file")
+        diff_table.add_column("+", width=4, key="adds")
+        diff_table.add_column("-", width=4, key="dels")
+        outline_table.add_column("File", width=18, key="file")
         self._apply_theme()
         self._render_detail_view(focus_target=self.DEFAULT_PANE)
 
@@ -233,7 +238,7 @@ class CommitDetailScreen(ModalScreen[None]):
     def _pane_target(self, pane: str) -> VerticalScroll | DataTable:
         targets: dict[str, VerticalScroll | DataTable] = {
             "overview": self.query_one("#commit-detail-overview-scroll", VerticalScroll),
-            "files": self.query_one("#commit-detail-files", DataTable),
+            "files": self._current_files_table(),
             "patch": self._active_patch_scroll(),
         }
         return targets[pane]
@@ -254,7 +259,8 @@ class CommitDetailScreen(ModalScreen[None]):
         focused_id = getattr(self.focused, "id", None)
         mapping = {
             "commit-detail-overview-scroll": "overview",
-            "commit-detail-files": "files",
+            "commit-detail-files-diff": "files",
+            "commit-detail-files-outline": "files",
             "commit-detail-selected-scroll": "patch",
             "commit-detail-full-scroll": "patch",
         }
@@ -352,14 +358,23 @@ class CommitDetailScreen(ModalScreen[None]):
         self._focus_active_pane()
 
     def _files_table_is_measured(self) -> bool:
-        table = self.query_one("#commit-detail-files", DataTable)
+        table = self._current_files_table()
         return bool(table.size.width or table.content_region.width)
+
+    def _diff_files_table(self) -> DataTable:
+        return self.query_one("#commit-detail-files-diff", DataTable)
+
+    def _outline_files_table(self) -> DataTable:
+        return self.query_one("#commit-detail-files-outline", DataTable)
+
+    def _current_files_table(self) -> DataTable:
+        return self._outline_files_table() if self.show_full_patch else self._diff_files_table()
 
     def _refresh_files_table(self, *, force: bool = False) -> None:
         if not self._files_table_is_measured():
             return
         signature = (self.show_full_patch, *self._files_table_layout())
-        table = self.query_one("#commit-detail-files", DataTable)
+        table = self._current_files_table()
         if (
             not force
             and signature == self._files_table_signature
@@ -376,7 +391,7 @@ class CommitDetailScreen(ModalScreen[None]):
         if name == "patch":
             return self._active_patch_scroll()
         if name == "files":
-            return self.query_one("#commit-detail-files", DataTable)
+            return self._current_files_table()
         return None
 
     def _schedule_reconcile(
@@ -402,7 +417,6 @@ class CommitDetailScreen(ModalScreen[None]):
         if not self.is_mounted or revision != self._reconcile_revision:
             return
 
-        self._configure_files_table()
         self._refresh_files_table()
         self._refresh_scroll_focusability()
 
@@ -454,6 +468,8 @@ class CommitDetailScreen(ModalScreen[None]):
         ):
             self.set_focus(None, scroll_visible=False)
         self._apply_detail_layout()
+        self._diff_files_table().styles.display = "none" if self.show_full_patch else "block"
+        self._outline_files_table().styles.display = "block" if self.show_full_patch else "none"
         self._selected_patch_scroll().styles.display = "none" if self.show_full_patch else "block"
         self._full_patch_scroll().styles.display = "block" if self.show_full_patch else "none"
         mark_scroll_focus_pending(
@@ -507,12 +523,11 @@ class CommitDetailScreen(ModalScreen[None]):
             )
         self.query_one("#commit-detail-overview", Static).update(overview)
 
-        columns_changed = self._configure_files_table()
         if not self._files_table_is_measured():
-            self.query_one("#commit-detail-files", DataTable).clear(columns=False)
+            self._current_files_table().clear(columns=False)
             self._files_table_signature = None
         else:
-            self._refresh_files_table(force=columns_changed)
+            self._refresh_files_table(force=False)
         file_word = "file" if len(self.detail.file_changes) == 1 else "files"
         files_title = (
             "Patch Outline"
@@ -555,11 +570,11 @@ class CommitDetailScreen(ModalScreen[None]):
         self._schedule_reconcile(
             focus_target=focus_target,
             scroll_to_selection=scroll_to_selection,
-            force_files_table_refresh=columns_changed,
+            force_files_table_refresh=False,
         )
 
     def _files_table_layout(self) -> tuple[int, int, int]:
-        table = self.query_one("#commit-detail-files", DataTable)
+        table = self._current_files_table()
         width = (
             table.scrollable_content_region.width
             or table.content_region.width
@@ -574,34 +589,11 @@ class CommitDetailScreen(ModalScreen[None]):
         file_width = max(8, width - (stats_width * 2) - padding)
         return file_width, stats_width, stats_width
 
-    def _files_table_has_stats(self) -> bool:
-        table = self.query_one("#commit-detail-files", DataTable)
-        try:
-            table.columns["adds"]
-            table.columns["dels"]
-        except KeyError:
-            return False
-        return True
-
-    def _configure_files_table(self) -> bool:
-        table = self.query_one("#commit-detail-files", DataTable)
-        has_stats = self._files_table_has_stats()
-        changed = False
-        if self.show_full_patch and has_stats:
-            table.remove_column("adds")
-            table.remove_column("dels")
-            changed = True
-        elif not self.show_full_patch and not has_stats:
-            table.add_column("+", width=4, key="adds")
-            table.add_column("-", width=4, key="dels")
-            changed = True
-        return changed
-
     def _apply_files_table_layout(self) -> int:
-        table = self.query_one("#commit-detail-files", DataTable)
+        table = self._current_files_table()
         file_width, adds_width, dels_width = self._files_table_layout()
         table.columns["file"].width = file_width
-        if self._files_table_has_stats():
+        if not self.show_full_patch:
             table.columns["adds"].width = adds_width
             table.columns["dels"].width = dels_width
         return file_width
@@ -843,7 +835,7 @@ class CommitDetailScreen(ModalScreen[None]):
     def _sync_outline_cursor(self, index: int) -> None:
         if not (0 <= index < len(self.detail.file_changes)):
             return
-        table = self.query_one("#commit-detail-files", DataTable)
+        table = self._current_files_table()
         if table.cursor_row == index:
             return
         self._suspend_file_events = True
@@ -881,16 +873,19 @@ class CommitDetailScreen(ModalScreen[None]):
         self._sync_selection_from_patch_scroll(new_value)
 
     def _update_files_table(self) -> None:
-        table = self.query_one("#commit-detail-files", DataTable)
+        table = self._current_files_table()
         file_width = self._apply_files_table_layout()
-        show_stats = self._files_table_has_stats()
         table.clear(columns=False)
         self._suspend_file_events = True
         try:
             for index, change in enumerate(self.detail.file_changes):
                 section = self._section_for_change(index, change)
-                label = display_label_for_change(change, section)
-                if show_stats:
+                if self.show_full_patch:
+                    table.add_row(
+                        self._build_outline_row_label(change, section, file_width),
+                        key=str(index),
+                    )
+                else:
                     additions = "-" if change.additions is None else str(change.additions)
                     deletions = "-" if change.deletions is None else str(change.deletions)
                     table.add_row(
@@ -899,18 +894,13 @@ class CommitDetailScreen(ModalScreen[None]):
                         deletions,
                         key=str(index),
                     )
-                else:
-                    table.add_row(
-                        self._build_outline_row_label(change, section, file_width),
-                        key=str(index),
-                    )
             if self.detail.file_changes:
                 table.move_cursor(row=self.selected_file_index, animate=False, scroll=True)
         finally:
             self._suspend_file_events = False
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
-        if event.data_table.id != "commit-detail-files" or self._suspend_file_events:
+        if event.data_table.id not in {"commit-detail-files-diff", "commit-detail-files-outline"} or self._suspend_file_events:
             return
         row_key = event.row_key.value if event.row_key else None
         if row_key is None:
@@ -926,7 +916,7 @@ class CommitDetailScreen(ModalScreen[None]):
                 self._schedule_reconcile()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        if event.data_table.id != "commit-detail-files" or self._suspend_file_events:
+        if event.data_table.id not in {"commit-detail-files-diff", "commit-detail-files-outline"} or self._suspend_file_events:
             return
         row_key = event.row_key.value if event.row_key else None
         if row_key is None:
