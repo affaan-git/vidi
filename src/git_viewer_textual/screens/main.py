@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import collections
 import datetime as dt
 
@@ -41,10 +40,6 @@ from .commit_detail import CommitDetailScreen
 
 class MainScreen(Screen[None]):
     """Primary analytics screen."""
-
-    FILE_COUNT_REFRESH_MIN_SECONDS = 10.0
-    FILE_COUNT_REFRESH_DEFAULT_SECONDS = 20.0
-    FILE_COUNT_REFRESH_MAX_SECONDS = 120.0
 
     MOVE_GROUP = Binding.Group("Move", compact=True)
     PANEL_GROUP = Binding.Group("Panel")
@@ -209,8 +204,6 @@ class MainScreen(Screen[None]):
         self._day_keys: list[dt.date] = []
         self._suspend_table_events = False
         self._mounted = False
-        self._file_count_refresh_in_flight = False
-        self._file_count_refresh_task: asyncio.Task[None] | None = None
 
     def compose(self) -> ComposeResult:
         yield StatusHeader(id="main-header")
@@ -254,12 +247,6 @@ class MainScreen(Screen[None]):
         self._update_header_status()
         self.refresh_view()
         self._focus_active_panel()
-        self._schedule_next_file_count_refresh(self.FILE_COUNT_REFRESH_DEFAULT_SECONDS)
-
-    def on_unmount(self) -> None:
-        if self._file_count_refresh_task is not None:
-            self._file_count_refresh_task.cancel()
-            self._file_count_refresh_task = None
 
     def _panel_target(self, panel: str) -> DataTable | VerticalScroll:
         targets: dict[str, DataTable | VerticalScroll] = {
@@ -691,38 +678,31 @@ class MainScreen(Screen[None]):
             return
         self.query_one("#main-header", StatusHeader).status = self._build_scanned_file_status()
 
-    def _schedule_next_file_count_refresh(self, delay_seconds: float) -> None:
-        if not self._mounted:
-            return
-        self.set_timer(delay_seconds, self._trigger_file_count_refresh)
-
-    def _next_file_count_refresh_delay(self, duration_seconds: float) -> float:
-        return min(
-            self.FILE_COUNT_REFRESH_MAX_SECONDS,
-            max(self.FILE_COUNT_REFRESH_MIN_SECONDS, duration_seconds * 30.0),
+    def handle_repo_context_refresh(
+        self,
+        previous_context: RepoContext,
+        new_context: RepoContext,
+        previous_snapshot: object,
+        new_snapshot: object,
+    ) -> None:
+        self.context = new_context
+        self.scanned_file_count = (
+            self.service.get_cached_scanned_file_count()
+            or sum(len(files) for files in new_context.files_by_language.values())
         )
-
-    def _trigger_file_count_refresh(self) -> None:
-        if self._file_count_refresh_in_flight:
-            self._schedule_next_file_count_refresh(self.FILE_COUNT_REFRESH_MIN_SECONDS)
-            return
-        self._file_count_refresh_task = asyncio.create_task(self._refresh_scanned_file_count())
-
-    async def _refresh_scanned_file_count(self) -> None:
-        self._file_count_refresh_in_flight = True
-        duration = self.FILE_COUNT_REFRESH_DEFAULT_SECONDS
-        try:
-            count, duration = await asyncio.to_thread(self.service.refresh_scanned_file_count)
-            if self._mounted and count != self.scanned_file_count:
-                self.scanned_file_count = count
-                self._update_header_status()
-        finally:
-            self._file_count_refresh_in_flight = False
-            self._file_count_refresh_task = None
-            if self._mounted:
-                self._schedule_next_file_count_refresh(
-                    self._next_file_count_refresh_delay(duration)
-                )
+        self._language_keys = [str(item["language"]) for item in new_context.language_stats]
+        if self.selected_branch not in new_context.branches:
+            self.selected_branch = (
+                new_context.current_branch
+                if new_context.current_branch in new_context.branches
+                else new_context.branches[0]
+            )
+        if self.selected_language not in self._language_keys and self._language_keys:
+            self.selected_language = self._language_keys[0]
+        self.sub_title = self._build_repo_stats_sub_title()
+        self._update_header_status()
+        self._refresh_year_options()
+        self.refresh_view()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         if self._suspend_table_events or event.data_table.id != "commits-table":
@@ -732,7 +712,13 @@ class MainScreen(Screen[None]):
             branch_data, commits = self._filtered_branch_data()
             commit_hash = str(row_key)
             self._set_selected_commit(commits, commit_hash, sync_table=False)
-            self.app.push_screen(CommitDetailScreen(self.service, commit_hash))
+            self.app.push_screen(
+                CommitDetailScreen(
+                    self.service,
+                    commit_hash,
+                    source_branch=self.selected_branch,
+                )
+            )
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         if self._suspend_table_events or event.data_table.id != "commits-table":

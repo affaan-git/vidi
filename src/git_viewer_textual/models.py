@@ -86,6 +86,15 @@ class RepoContext:
     project_name: str
     repo_commit_count: int
     branches: list[str]
+    branch_heads: tuple[tuple[str, str], ...]
     current_branch: str
     language_stats: list[LanguageStat]
     files_by_language: dict[str, list[str]]
+
+
+@dataclass(frozen=True)
+class RepoScanSnapshot:
+    branch_heads: tuple[tuple[str, str], ...]
+    current_branch: str
+    repo_commit_count: int
+    scanned_file_count: int

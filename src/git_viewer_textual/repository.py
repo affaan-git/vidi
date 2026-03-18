@@ -16,6 +16,7 @@ from .models import (
     CommitFileChange,
     CommitRecord,
     RepoContext,
+    RepoScanSnapshot,
 )
 from .utils import detect_language, parse_iso_datetime, random_color
 
@@ -137,16 +138,27 @@ def run_git(repo_dir: str, args: list[str]) -> str:
         raise RuntimeError(f"git {' '.join(args)} failed: {stderr}") from exc
 
 
-def get_branches(repo_dir: str) -> tuple[list[str], str]:
-    output = run_git(repo_dir, ["branch", "--format=%(refname:short)"])
-    branches = [line.strip() for line in output.splitlines() if line.strip()]
+def get_branch_heads(repo_dir: str) -> tuple[list[str], str, dict[str, str]]:
+    output = run_git(
+        repo_dir,
+        ["for-each-ref", "--format=%(refname:short)\t%(objectname)", "refs/heads"],
+    )
+    branch_heads: dict[str, str] = {}
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        name, _, object_name = line.partition("\t")
+        if name and object_name:
+            branch_heads[name] = object_name
     head = run_git(repo_dir, ["rev-parse", "--abbrev-ref", "HEAD"]).strip()
-    if head and head not in branches:
-        branches.append(head)
+    if head and head != "HEAD" and head not in branch_heads:
+        branch_heads[head] = run_git(repo_dir, ["rev-parse", head]).strip()
+    branches = sorted(branch_heads)
     branches = sorted(set(branches))
     if not branches:
         raise RuntimeError("No branches found in repository.")
-    return branches, head if head else branches[0]
+    return branches, head if head else branches[0], branch_heads
 
 
 def parse_gitignore(repo_dir: str) -> set[str]:
@@ -218,7 +230,7 @@ def build_repo_context(
     exclude_languages: set[str],
     extra_ignored_dirs: set[str],
 ) -> tuple[RepoContext, "RepoService"]:
-    branches, current_branch = get_branches(repo_dir)
+    branches, current_branch, branch_heads = get_branch_heads(repo_dir)
     ignore_dirs = set(DEFAULT_IGNORED_DIRS)
     ignore_dirs.update(parse_gitignore(repo_dir))
     ignore_dirs.update(extra_ignored_dirs)
@@ -233,6 +245,7 @@ def build_repo_context(
         project_name=os.path.basename(os.path.abspath(repo_dir)),
         repo_commit_count=int(run_git(repo_dir, ["rev-list", "--all", "--count"]).strip() or "0"),
         branches=branches,
+        branch_heads=tuple(sorted(branch_heads.items())),
         current_branch=current_branch,
         language_stats=language_stats,
         files_by_language=files_by_language,
@@ -264,20 +277,24 @@ class RepoService:
         self.ignore_dirs = set(ignore_dirs or set())
         self._cached_scanned_file_count = initial_scanned_file_count
 
+    def invalidate_cached_git_data(self) -> None:
+        self.get_branch_data.cache_clear()
+        self.get_commit_detail.cache_clear()
+
     def get_cached_scanned_file_count(self) -> int | None:
         return self._cached_scanned_file_count
 
-    def refresh_scanned_file_count(self) -> tuple[int, float]:
-        started = time.perf_counter()
+    def _list_scanned_paths(self) -> list[str]:
         output = run_git(
             self.repo_dir,
             ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
         )
+        return [path for path in output.split("\0") if path]
+
+    def _count_scanned_paths(self, paths: list[str]) -> int:
         count = 0
         repo_root = Path(self.repo_dir)
-        for raw_path in output.split("\0"):
-            if not raw_path:
-                continue
+        for raw_path in paths:
             path = Path(raw_path)
             if any(part in self.ignore_dirs for part in path.parts):
                 continue
@@ -288,9 +305,53 @@ class RepoService:
             if language in self.exclude_languages:
                 continue
             count += 1
+        return count
+
+    def refresh_scanned_file_count(self) -> tuple[int, float]:
+        started = time.perf_counter()
+        count = self._count_scanned_paths(self._list_scanned_paths())
         duration = time.perf_counter() - started
         self._cached_scanned_file_count = count
         return count, duration
+
+    def scan_repo_state(self) -> tuple[RepoScanSnapshot, float]:
+        started = time.perf_counter()
+        branches, current_branch, branch_heads = get_branch_heads(self.repo_dir)
+        repo_commit_count = int(
+            run_git(self.repo_dir, ["rev-list", "--all", "--count"]).strip() or "0"
+        )
+        scanned_file_count = self._count_scanned_paths(self._list_scanned_paths())
+        self._cached_scanned_file_count = scanned_file_count
+        snapshot = RepoScanSnapshot(
+            branch_heads=tuple(sorted(branch_heads.items())),
+            current_branch=current_branch,
+            repo_commit_count=repo_commit_count,
+            scanned_file_count=scanned_file_count,
+        )
+        return snapshot, time.perf_counter() - started
+
+    def refresh_context(self) -> RepoContext:
+        branches, current_branch, branch_heads = get_branch_heads(self.repo_dir)
+        language_stats, files_by_language = scan_languages(
+            self.repo_dir,
+            self.language_mode,
+            self.exclude_languages,
+            self.ignore_dirs,
+        )
+        scanned_file_count = sum(len(files) for files in files_by_language.values())
+        self._cached_scanned_file_count = scanned_file_count
+        return RepoContext(
+            repo_dir=self.repo_dir,
+            project_name=os.path.basename(os.path.abspath(self.repo_dir)),
+            repo_commit_count=int(
+                run_git(self.repo_dir, ["rev-list", "--all", "--count"]).strip() or "0"
+            ),
+            branches=branches,
+            branch_heads=tuple(sorted(branch_heads.items())),
+            current_branch=current_branch,
+            language_stats=language_stats,
+            files_by_language=files_by_language,
+        )
 
     @lru_cache(maxsize=64)
     def get_branch_data(self, branch: str) -> BranchData:

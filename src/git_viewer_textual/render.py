@@ -258,6 +258,10 @@ def build_language_bar(
     width: int,
 ) -> Text:
     bar_width = max(8, width)
+    if not language_stats:
+        bar = Text()
+        bar.append("█" * bar_width, style=make_style(palette.surface))
+        return bar
     total_percentage = sum(max(float(item["percentage"]), 0.0) for item in language_stats)
     if total_percentage <= 0:
         segment_widths = [0 for _item in language_stats]

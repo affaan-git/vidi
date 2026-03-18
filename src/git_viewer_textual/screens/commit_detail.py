@@ -19,7 +19,7 @@ from ..focus import (
     scroll_has_overflow,
     set_scroll_focusability,
 )
-from ..models import CommitFileChange, CommitPatchSection
+from ..models import CommitFileChange, CommitPatchSection, RepoContext, RepoScanSnapshot
 from ..repository import RepoService
 from ..theme import make_style, resolve_theme_palette
 from ..utils import rel_time, utc_now
@@ -140,10 +140,16 @@ class CommitDetailScreen(ModalScreen[None]):
 
     DEFAULT_PANE = "files"
 
-    def __init__(self, service: RepoService, commit_hash: str) -> None:
+    def __init__(
+        self,
+        service: RepoService,
+        commit_hash: str,
+        source_branch: str | None = None,
+    ) -> None:
         super().__init__()
         self.service = service
         self.commit_hash = commit_hash
+        self.source_branch = source_branch
         self.detail = service.get_commit_detail(commit_hash)
         self.show_full_patch = False
         self.active_pane = self.DEFAULT_PANE
@@ -1015,3 +1021,33 @@ class CommitDetailScreen(ModalScreen[None]):
 
     def action_close_screen(self) -> None:
         self.dismiss(None)
+
+    def handle_repo_context_refresh(
+        self,
+        previous_context: RepoContext,
+        new_context: RepoContext,
+        previous_snapshot: RepoScanSnapshot,
+        new_snapshot: RepoScanSnapshot,
+    ) -> None:
+        if self.source_branch is None:
+            return
+        old_heads = dict(previous_snapshot.branch_heads)
+        new_heads = dict(new_snapshot.branch_heads)
+        old_branch_head = old_heads.get(self.source_branch)
+        new_branch_head = new_heads.get(self.source_branch)
+        if (
+            old_branch_head is None
+            or new_branch_head is None
+            or old_branch_head == new_branch_head
+            or self.commit_hash != old_branch_head
+        ):
+            return
+        self.commit_hash = new_branch_head
+        self.detail = self.service.get_commit_detail(new_branch_head)
+        self.selected_file_index = 0
+        self._files_table_signature = None
+        self._ignore_next_patch_scroll_sync = False
+        self._render_detail_view(
+            focus_target="patch" if self.show_full_patch else self.DEFAULT_PANE,
+            scroll_to_selection=self.show_full_patch,
+        )

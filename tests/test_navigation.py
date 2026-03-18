@@ -15,7 +15,12 @@ from textual.widgets import Input
 
 from git_viewer_textual.app import GitViewerApp
 from git_viewer_textual.data import compact_label_for_change, filter_commits, resolve_graph_window
-from git_viewer_textual.models import CommitFileChange, CommitPatchSection, CommitRecord
+from git_viewer_textual.models import (
+    CommitFileChange,
+    CommitPatchSection,
+    CommitRecord,
+    RepoScanSnapshot,
+)
 from git_viewer_textual.render import (
     build_language_bar,
     build_language_summary,
@@ -60,6 +65,46 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             header = app.screen.query_one("#main-header", StatusHeader)
             expected_count = sum(len(files) for files in app.context.files_by_language.values())
             self.assertEqual(header.status, f"{expected_count} scanned files")
+
+    async def test_main_screen_repo_refresh_updates_header_status_and_subtitle(self) -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            screen = app.screen
+            previous_context = app.context
+            new_context = replace(
+                app.context,
+                repo_commit_count=9,
+                branches=[*app.context.branches, "release"],
+                branch_heads=(*app.context.branch_heads, ("release", "1234567")),
+                language_stats=[],
+                files_by_language={},
+            )
+            app.service._cached_scanned_file_count = 0
+            previous_snapshot = RepoScanSnapshot(
+                branch_heads=previous_context.branch_heads,
+                current_branch=previous_context.current_branch,
+                repo_commit_count=previous_context.repo_commit_count,
+                scanned_file_count=sum(len(files) for files in previous_context.files_by_language.values()),
+            )
+            new_snapshot = RepoScanSnapshot(
+                branch_heads=new_context.branch_heads,
+                current_branch=new_context.current_branch,
+                repo_commit_count=new_context.repo_commit_count,
+                scanned_file_count=0,
+            )
+
+            screen.handle_repo_context_refresh(
+                previous_context,
+                new_context,
+                previous_snapshot,
+                new_snapshot,
+            )
+            await pilot.pause()
+
+            header = screen.query_one("#main-header", StatusHeader)
+            self.assertEqual(header.status, "0 scanned files")
+            self.assertIn("9 total commits", screen.sub_title)
+            self.assertIn("10 branches", screen.sub_title)
 
     async def test_commit_detail_blocks_main_screen_bindings(self) -> None:
         app = make_app()
@@ -238,6 +283,44 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
                 "Files Changed",
             )
             self.assertEqual(getattr(app.focused, "id", None), "commit-detail-files")
+
+    async def test_commit_detail_retargets_rewritten_branch_head(self) -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.press("enter")
+            await pilot.pause()
+            screen = app.screen
+            self.assertEqual(type(screen).__name__, "CommitDetailScreen")
+            old_hash = screen.commit_hash
+
+            replacement_detail = replace(screen.detail, commit_hash="deadbeef1234", subject="amended")
+            app.service.get_commit_detail = lambda commit_hash: replace(
+                replacement_detail,
+                commit_hash=commit_hash,
+            )
+            previous_snapshot = RepoScanSnapshot(
+                branch_heads=(("main", old_hash),),
+                current_branch="main",
+                repo_commit_count=app.context.repo_commit_count,
+                scanned_file_count=sum(len(files) for files in app.context.files_by_language.values()),
+            )
+            new_snapshot = RepoScanSnapshot(
+                branch_heads=(("main", "deadbeef1234"),),
+                current_branch="main",
+                repo_commit_count=app.context.repo_commit_count + 1,
+                scanned_file_count=sum(len(files) for files in app.context.files_by_language.values()),
+            )
+
+            screen.handle_repo_context_refresh(
+                app.context,
+                app.context,
+                previous_snapshot,
+                new_snapshot,
+            )
+            await pilot.pause()
+
+            self.assertEqual(screen.commit_hash, "deadbeef1234")
+            self.assertEqual(screen.detail.subject, "amended")
 
     async def test_commit_detail_skips_non_scrollable_panels_without_focus_bounce(self) -> None:
         app = make_app()
