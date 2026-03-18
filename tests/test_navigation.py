@@ -252,6 +252,16 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertEqual(getattr(app.focused, "id", None), "commit-detail-files")
 
+    async def test_commit_detail_diff_files_table_has_no_phantom_horizontal_overflow(self) -> None:
+        app = make_app()
+        async with app.run_test(size=(56, 18)) as pilot:
+            await pilot.press("enter")
+            await pilot.pause()
+            self.assertEqual(type(app.screen).__name__, "CommitDetailScreen")
+
+            table = app.screen.query_one("#commit-detail-files", DataTable)
+            self.assertEqual(table.max_scroll_x, 0)
+
     async def test_commit_detail_restores_previous_full_patch_scroll_position(self) -> None:
         app = make_app()
         async with app.run_test(size=(100, 20)) as pilot:

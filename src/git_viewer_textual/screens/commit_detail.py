@@ -179,7 +179,7 @@ class CommitDetailScreen(ModalScreen[None]):
                 ):
                     yield Static(id="commit-detail-files-title", classes="commit-detail-panel-title")
                     yield Static(id="commit-detail-files-meta")
-                    yield DataTable(id="commit-detail-files")
+                    yield DataTable(id="commit-detail-files", show_row_labels=False)
             with Vertical(id="commit-detail-main"):
                 with Vertical(
                     id="commit-detail-patch-panel",
@@ -550,7 +550,12 @@ class CommitDetailScreen(ModalScreen[None]):
 
     def _files_table_layout(self) -> tuple[int, int, int]:
         table = self.query_one("#commit-detail-files", DataTable)
-        width = table.size.width or table.content_region.width or 28
+        width = (
+            table.scrollable_content_region.width
+            or table.content_region.width
+            or table.size.width
+            or 28
+        )
         padding = 6
         if self.show_full_patch:
             file_width = max(8, width - padding)
