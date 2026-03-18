@@ -100,6 +100,18 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Languages", language_title_text)
             self.assertRegex(language_title_text, r"\b\d+\b")
 
+    async def test_main_commit_details_shows_theme_aware_file_change_stats(self) -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            details_render = app.screen.query_one("#day-details").render()
+            details = getattr(details_render, "_renderable", details_render)
+            console = Console(file=io.StringIO(), record=True, width=140)
+            console.print(details)
+            details_text = console.export_text()
+            self.assertIn("Files changed", details_text)
+            self.assertRegex(details_text, r"\+\d+")
+            self.assertRegex(details_text, r"-\d+")
+
     async def test_main_footer_uses_grouped_builtin_footer(self) -> None:
         app = make_app()
         async with app.run_test() as pilot:

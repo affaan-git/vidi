@@ -498,7 +498,7 @@ class CommitDetailScreen(ModalScreen[None]):
         self.query_one("#commit-detail-overview", Static).update(overview)
 
         columns_changed = self._configure_files_table()
-        if not self._files_table_is_measured():
+        if columns_changed or not self._files_table_is_measured():
             self.query_one("#commit-detail-files", DataTable).clear(columns=False)
             self._files_table_signature = None
         else:
@@ -541,15 +541,8 @@ class CommitDetailScreen(ModalScreen[None]):
         )
 
     def _files_table_layout(self) -> tuple[int, int, int]:
-        panel = self.query_one("#commit-detail-files-panel", Vertical)
         table = self.query_one("#commit-detail-files", DataTable)
-        width = (
-            panel.content_region.width
-            or panel.size.width
-            or table.content_region.width
-            or table.size.width
-            or 28
-        )
+        width = table.size.width or table.content_region.width or 28
         padding = 6
         if self.show_full_patch:
             file_width = max(8, width - padding)

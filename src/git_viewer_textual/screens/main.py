@@ -15,9 +15,9 @@ from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Static
 
-from ..data import RANGE_PRESETS, filter_commits, resolve_graph_window
+from ..data import RANGE_PRESETS, display_label_for_change, filter_commits, resolve_graph_window
 from ..focus import mark_scroll_focus_pending, set_scroll_focusability
-from ..models import BranchData, CommitRecord, RepoContext
+from ..models import BranchData, CommitFileChange, CommitPatchSection, CommitRecord, RepoContext
 from ..render import (
     build_graph_title,
     build_language_bar,
@@ -539,16 +539,39 @@ class MainScreen(Screen[None]):
             style=make_style(palette.foreground),
         )
         details.append("\nFiles changed\n", style=make_style(palette.muted, bold=True))
-        for index, path in enumerate(selected_commit.changed_files):
-            suffix = "\n" if index < len(selected_commit.changed_files) - 1 else ""
+        commit_detail = self.service.get_commit_detail(selected_commit.commit_hash)
+        for index, change in enumerate(commit_detail.file_changes):
+            suffix = "\n" if index < len(commit_detail.file_changes) - 1 else ""
+            section = self._section_for_change(commit_detail.file_changes, commit_detail.patch_sections, change)
+            additions = "+-" if change.additions is None else f"+{change.additions}"
+            deletions = "--" if change.deletions is None else f"-{change.deletions}"
             details.append("  - ", style=make_style(palette.muted))
-            details.append(path, style=make_style(palette.foreground, bold=True))
+            details.append(
+                display_label_for_change(change, section),
+                style=make_style(palette.foreground, bold=True),
+            )
+            details.append("  ", style=make_style(palette.muted))
+            details.append(
+                additions,
+                style=make_style(
+                    palette.success if change.additions is not None else palette.muted,
+                    bold=change.additions is not None,
+                ),
+            )
+            details.append(" ", style=make_style(palette.muted))
+            details.append(
+                deletions,
+                style=make_style(
+                    palette.error if change.deletions is not None else palette.muted,
+                    bold=change.deletions is not None,
+                ),
+            )
             if suffix:
                 details.append(suffix, style=make_style(palette.muted))
         self.query_one("#day-details", Static).update(details)
         overflow_hint = (
             "Scroll for more"
-            if len(selected_commit.changed_files) > 4 or len(selected_commit.message) > 54
+            if len(commit_detail.file_changes) > 4 or len(selected_commit.message) > 54
             else ""
         )
         self.query_one("#day-scroll-hint", Static).update(overflow_hint)
@@ -556,6 +579,29 @@ class MainScreen(Screen[None]):
             self.query_one("#day-details-scroll", VerticalScroll).scroll_home(
                 animate=False
             )
+
+    def _section_for_change(
+        self,
+        changes: tuple[CommitFileChange, ...],
+        sections: tuple[CommitPatchSection, ...],
+        change: CommitFileChange,
+    ) -> CommitPatchSection | None:
+        for index, candidate in enumerate(changes):
+            if candidate != change:
+                continue
+            if 0 <= index < len(sections):
+                section = sections[index]
+                if section.path == change.path or section.new_path == change.path:
+                    return section
+                break
+        return next(
+            (
+                section
+                for section in sections
+                if section.path == change.path or section.new_path == change.path
+            ),
+            None,
+        )
 
     def _refresh_language_panel(self) -> None:
         panel = self.query_one("#languages-panel", Vertical)
