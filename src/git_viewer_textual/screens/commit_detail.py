@@ -13,7 +13,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import DataTable, Footer, Header, Static
 
-from ..data import display_label_for_change
+from ..data import compact_label_for_change, display_label_for_change
 from ..focus import (
     mark_scroll_focus_pending,
     scroll_has_overflow,
@@ -22,7 +22,7 @@ from ..focus import (
 from ..models import CommitFileChange, CommitPatchSection
 from ..repository import RepoService
 from ..theme import make_style, resolve_theme_palette
-from ..utils import rel_time, truncate_middle, utc_now
+from ..utils import rel_time, utc_now
 
 
 class CommitDetailScreen(ModalScreen[None]):
@@ -531,6 +531,14 @@ class CommitDetailScreen(ModalScreen[None]):
                 "Select to jump",
                 style=make_style(palette.muted),
             )
+        if self.detail.file_changes:
+            selected_change = self.detail.file_changes[self.selected_file_index]
+            selected_section = self._section_for_change(self.selected_file_index, selected_change)
+            files_meta.append("\n", style=make_style(palette.muted))
+            files_meta.append(
+                display_label_for_change(selected_change, selected_section),
+                style=make_style(palette.foreground),
+            )
         self.query_one("#commit-detail-files-meta", Static).update(files_meta)
 
         self._render_patch_panel(refresh_content=True)
@@ -612,12 +620,12 @@ class CommitDetailScreen(ModalScreen[None]):
             return "No file selected"
         change = self.detail.file_changes[index]
         section = self._section_for_change(index, change)
-        return truncate_middle(display_label_for_change(change, section), 56)
+        return compact_label_for_change(change, section, 56)
 
     def _build_outline_row_label(
         self,
-        label: str,
         change: CommitFileChange,
+        section: CommitPatchSection | None,
         width: int,
     ) -> Text:
         palette = resolve_theme_palette(self.app.current_theme)
@@ -625,7 +633,7 @@ class CommitDetailScreen(ModalScreen[None]):
         deletions = "--" if change.deletions is None else f"-{change.deletions}"
         stats_width = len(additions) + 1 + len(deletions)
         name_width = max(4, width - stats_width - 1)
-        display_name = truncate_middle(label, name_width)
+        display_name = compact_label_for_change(change, section, name_width)
         gap = max(width - len(display_name) - stats_width, 1)
 
         row = Text(display_name, style=make_style(palette.foreground))
@@ -871,14 +879,14 @@ class CommitDetailScreen(ModalScreen[None]):
                     additions = "-" if change.additions is None else str(change.additions)
                     deletions = "-" if change.deletions is None else str(change.deletions)
                     table.add_row(
-                        truncate_middle(label, file_width),
+                        compact_label_for_change(change, section, file_width),
                         additions,
                         deletions,
                         key=str(index),
                     )
                 else:
                     table.add_row(
-                        self._build_outline_row_label(label, change, file_width),
+                        self._build_outline_row_label(change, section, file_width),
                         key=str(index),
                     )
             if self.detail.file_changes:

@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import collections
 import datetime as dt
-from typing import Any
 
 from .models import CommitFileChange, CommitPatchSection, CommitRecord
-from .utils import utc_now
+from .utils import truncate_middle, utc_now
 
 
 RANGE_PRESETS = [
@@ -34,59 +33,6 @@ def filter_commits(
     if selected_year is not None:
         filtered = [item for item in filtered if item.authored_date.year == selected_year]
     return filtered
-
-
-def aggregate_file_activity(commits: list[CommitRecord]) -> dict[str, dict[str, Any]]:
-    file_activity: dict[str, dict[str, Any]] = {}
-    for commit in commits:
-        for path in commit.changed_files:
-            info = file_activity.setdefault(
-                path,
-                {
-                    "commits": 0,
-                    "last_modified": commit.authored_at,
-                    "authors": collections.Counter(),
-                },
-            )
-            info["commits"] += 1
-            if commit.authored_at > info["last_modified"]:
-                info["last_modified"] = commit.authored_at
-            info["authors"][commit.author_name] += 1
-    return file_activity
-
-
-def calc_streaks(counts: collections.Counter[dt.date]) -> tuple[int, int]:
-    if not counts:
-        return 0, 0
-    days = sorted(day for day, value in counts.items() if value > 0)
-    longest = 0
-    current = 0
-    previous = None
-    for day in days:
-        if previous is None or (day - previous).days == 1:
-            current += 1
-        else:
-            current = 1
-        longest = max(longest, current)
-        previous = day
-    latest = days[-1]
-    running = 0
-    day = latest
-    while counts.get(day, 0) > 0:
-        running += 1
-        day -= dt.timedelta(days=1)
-    return running, longest
-
-
-def build_year_grid(
-    commit_counts: collections.Counter[dt.date],
-    year: int,
-) -> tuple[list[list[int | None]], list[str], dt.date]:
-    return build_date_grid(
-        commit_counts,
-        dt.date(year, 1, 1),
-        dt.date(year, 12, 31),
-    )
 
 
 def resolve_graph_window(
@@ -211,3 +157,53 @@ def display_label_for_change(
     if change.additions is None or change.deletions is None:
         label += " [binary]"
     return label
+
+
+def compact_label_for_change(
+    change: CommitFileChange,
+    section: CommitPatchSection | None,
+    max_len: int,
+) -> str:
+    full_label = display_label_for_change(change, section)
+    if len(full_label) <= max_len:
+        return full_label
+
+    suffix = " [binary]" if change.additions is None or change.deletions is None else ""
+    label_budget = max(max_len - len(suffix), 4)
+    if section and section.is_rename:
+        arrow = " -> "
+        side_budget = max((label_budget - len(arrow)) // 2, 4)
+        old_label = compact_path_label(section.old_path, side_budget)
+        new_budget = max(label_budget - len(arrow) - len(old_label), 4)
+        new_label = compact_path_label(section.new_path, new_budget)
+        compact = f"{old_label}{arrow}{new_label}"
+        if len(compact) > label_budget:
+            compact = truncate_middle(compact, label_budget)
+    else:
+        compact = compact_path_label(change.path, label_budget)
+
+    return f"{compact}{suffix}"
+
+
+def compact_path_label(path: str, max_len: int) -> str:
+    if len(path) <= max_len:
+        return path
+    parts = [part for part in path.split("/") if part]
+    if not parts:
+        return truncate_middle(path, max_len)
+
+    filename = parts[-1]
+    if max_len <= 4:
+        return truncate_middle(filename, max_len)
+    if len(filename) >= max_len - 2:
+        return f"…/{truncate_middle(filename, max_len - 2)}"
+
+    label = filename
+    for parent in reversed(parts[:-1]):
+        candidate = f"{parent}/{label}"
+        if len(candidate) + 2 > max_len:
+            break
+        label = candidate
+    if label == path:
+        return label
+    return f"…/{label}"

@@ -15,7 +15,12 @@ from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Static
 
-from ..data import RANGE_PRESETS, display_label_for_change, filter_commits, resolve_graph_window
+from ..data import (
+    RANGE_PRESETS,
+    compact_label_for_change,
+    filter_commits,
+    resolve_graph_window,
+)
 from ..focus import mark_scroll_focus_pending, set_scroll_focusability
 from ..models import BranchData, CommitFileChange, CommitPatchSection, CommitRecord, RepoContext
 from ..render import (
@@ -540,14 +545,23 @@ class MainScreen(Screen[None]):
         )
         details.append("\nFiles changed\n", style=make_style(palette.muted, bold=True))
         commit_detail = self.service.get_commit_detail(selected_commit.commit_hash)
+        details_scroll = self.query_one("#day-details-scroll", VerticalScroll)
+        label_width = max(
+            18,
+            (details_scroll.content_region.width or details_scroll.size.width or 56) - 12,
+        )
         for index, change in enumerate(commit_detail.file_changes):
             suffix = "\n" if index < len(commit_detail.file_changes) - 1 else ""
-            section = self._section_for_change(commit_detail.file_changes, commit_detail.patch_sections, change)
+            section = self._section_for_change(
+                commit_detail.file_changes,
+                commit_detail.patch_sections,
+                change,
+            )
             additions = "+-" if change.additions is None else f"+{change.additions}"
             deletions = "--" if change.deletions is None else f"-{change.deletions}"
             details.append("  - ", style=make_style(palette.muted))
             details.append(
-                display_label_for_change(change, section),
+                compact_label_for_change(change, section, label_width),
                 style=make_style(palette.foreground, bold=True),
             )
             details.append("  ", style=make_style(palette.muted))

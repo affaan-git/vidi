@@ -14,8 +14,8 @@ from textual.widgets import DataTable, Footer
 from textual.widgets import Input
 
 from git_viewer_textual.app import GitViewerApp
-from git_viewer_textual.data import filter_commits, resolve_graph_window
-from git_viewer_textual.models import CommitRecord
+from git_viewer_textual.data import compact_label_for_change, filter_commits, resolve_graph_window
+from git_viewer_textual.models import CommitFileChange, CommitPatchSection, CommitRecord
 from git_viewer_textual.render import (
     build_language_bar,
     build_language_summary,
@@ -377,6 +377,25 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
 
 
 class FilterTests(unittest.TestCase):
+    def test_compact_label_for_change_preserves_filename_and_rename_shape(self) -> None:
+        rename_change = CommitFileChange(
+            path="src/components/very/long/new_component_name.tsx",
+            additions=12,
+            deletions=3,
+        )
+        rename_section = CommitPatchSection(
+            path="src/components/very/long/new_component_name.tsx",
+            old_path="src/components/very/long/old_component_name.tsx",
+            new_path="src/components/very/long/new_component_name.tsx",
+            patch="",
+            is_binary=False,
+            is_rename=True,
+        )
+        compact = compact_label_for_change(rename_change, rename_section, 32)
+        self.assertIn("->", compact)
+        self.assertIn(".tsx", compact)
+        self.assertLessEqual(len(compact), 32)
+
     def test_build_language_title_stays_compact_but_keeps_top_language_when_width_allows(self) -> None:
         app = make_app()
         title = build_language_title(
