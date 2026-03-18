@@ -21,7 +21,7 @@ from ..focus import (
 )
 from ..models import CommitFileChange, CommitPatchSection, RepoContext, RepoScanSnapshot
 from ..repository import RepoService
-from ..theme import make_style, resolve_theme_palette
+from ..theme import make_change_stat_style, make_style, resolve_theme_palette
 from ..utils import rel_time, utc_now
 
 
@@ -549,12 +549,12 @@ class CommitDetailScreen(ModalScreen[None]):
         files_meta.append("  ", style=make_style(palette.muted))
         files_meta.append(
             f"+{total_additions}",
-            style=make_style(palette.success, bold=True),
+            style=make_change_stat_style(palette, total_additions, positive=True),
         )
         files_meta.append("  ", style=make_style(palette.muted))
         files_meta.append(
             f"-{total_deletions}",
-            style=make_style(palette.error, bold=True),
+            style=make_change_stat_style(palette, total_deletions, positive=False),
         )
         if self.show_full_patch:
             files_meta.append("  ", style=make_style(palette.muted))
@@ -644,10 +644,7 @@ class CommitDetailScreen(ModalScreen[None]):
             return Text("-", style=make_style(palette.muted))
         return Text(
             str(value),
-            style=make_style(
-                palette.success if positive else palette.error,
-                bold=True,
-            ),
+            style=make_change_stat_style(palette, value, positive=positive),
         )
 
     def _visible_patch_sections(self) -> tuple[CommitPatchSection, ...]:

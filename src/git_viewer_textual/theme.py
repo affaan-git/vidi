@@ -24,6 +24,17 @@ def make_style(
     )
 
 
+def make_change_stat_style(
+    palette: ThemePalette,
+    value: int | None,
+    *,
+    positive: bool,
+) -> Style:
+    if value is None or value == 0:
+        return make_style(palette.muted)
+    return make_style(palette.success if positive else palette.error, bold=True)
+
+
 def resolve_theme_palette(theme: Theme) -> ThemePalette:
     primary = Color.parse(theme.primary)
     success = Color.parse(theme.success)

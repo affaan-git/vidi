@@ -31,7 +31,7 @@ from ..render import (
     render_contribution_graph,
 )
 from ..repository import RepoService
-from ..theme import make_style, resolve_theme_palette
+from ..theme import make_change_stat_style, make_style, resolve_theme_palette
 from ..utils import rel_time, truncate_middle, utc_now
 from .branch_picker import BranchPickerScreen
 from .commit_detail import CommitDetailScreen
@@ -572,18 +572,12 @@ class MainScreen(Screen[None]):
             details.append("  ", style=make_style(palette.muted))
             details.append(
                 additions,
-                style=make_style(
-                    palette.success if change.additions is not None else palette.muted,
-                    bold=change.additions is not None,
-                ),
+                style=make_change_stat_style(palette, change.additions, positive=True),
             )
             details.append(" ", style=make_style(palette.muted))
             details.append(
                 deletions,
-                style=make_style(
-                    palette.error if change.deletions is not None else palette.muted,
-                    bold=change.deletions is not None,
-                ),
+                style=make_change_stat_style(palette, change.deletions, positive=False),
             )
             if suffix:
                 details.append(suffix, style=make_style(palette.muted))

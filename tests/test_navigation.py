@@ -29,7 +29,7 @@ from git_viewer_textual.render import (
     resolve_heatmap_colors,
 )
 from git_viewer_textual.repository import build_repo_context
-from git_viewer_textual.theme import resolve_theme_palette
+from git_viewer_textual.theme import make_change_stat_style, resolve_theme_palette
 
 
 def make_app() -> GitViewerApp:
@@ -643,6 +643,27 @@ class FilterTests(unittest.TestCase):
             color_distance(styles_b[-1], alternate_palette.success),
             color_distance(inactive_b, alternate_palette.success),
         )
+
+    def test_make_change_stat_style_mutes_zero_and_placeholder_values(self) -> None:
+        app = make_app()
+        palette = resolve_theme_palette(app.current_theme)
+
+        zero_add_style = make_change_stat_style(palette, 0, positive=True)
+        zero_del_style = make_change_stat_style(palette, 0, positive=False)
+        none_style = make_change_stat_style(palette, None, positive=True)
+        add_style = make_change_stat_style(palette, 3, positive=True)
+        del_style = make_change_stat_style(palette, 2, positive=False)
+
+        self.assertEqual(zero_add_style.color, palette.muted.rich_color)
+        self.assertEqual(zero_del_style.color, palette.muted.rich_color)
+        self.assertEqual(none_style.color, palette.muted.rich_color)
+        self.assertFalse(zero_add_style.bold)
+        self.assertFalse(zero_del_style.bold)
+        self.assertFalse(none_style.bold)
+        self.assertEqual(add_style.color, palette.success.rich_color)
+        self.assertEqual(del_style.color, palette.error.rich_color)
+        self.assertTrue(add_style.bold)
+        self.assertTrue(del_style.bold)
 
     def test_filter_commits_uses_current_time_window(self) -> None:
         now = dt.datetime(2026, 3, 16, 12, 0, 0)
