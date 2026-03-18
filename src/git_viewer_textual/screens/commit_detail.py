@@ -243,6 +243,8 @@ class CommitDetailScreen(ModalScreen[None]):
         return tuple(panes)
 
     def _sync_active_pane_from_focus(self) -> None:
+        if self._mode_transition_active or self._pending_focus_target is not None:
+            return
         focused_id = getattr(self.focused, "id", None)
         mapping = {
             "commit-detail-overview-scroll": "overview",
@@ -282,7 +284,12 @@ class CommitDetailScreen(ModalScreen[None]):
         )
         available = self._available_panes()
         preferred = "patch" if self.show_full_patch else self.DEFAULT_PANE
+        pending = self._pending_focus_target
+        if pending == self.active_pane:
+            preferred = pending
         if self.active_pane not in available:
+            if preferred == pending and pending is not None:
+                return
             self.active_pane = preferred if preferred in available else available[0]
 
     def _apply_theme(self) -> None:
@@ -431,6 +438,11 @@ class CommitDetailScreen(ModalScreen[None]):
             0 <= self.selected_file_index < len(self.detail.file_changes)
         ):
             self.selected_file_index = 0
+        if focus_target is not None:
+            self.active_pane = focus_target
+            self._refresh_focus_styles()
+        if self._mode_transition_active and focus_target is not None:
+            self.set_focus(None, scroll_visible=False)
         self._apply_detail_layout()
         self._selected_patch_scroll().styles.display = "none" if self.show_full_patch else "block"
         self._full_patch_scroll().styles.display = "block" if self.show_full_patch else "none"
