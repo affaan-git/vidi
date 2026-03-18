@@ -671,7 +671,7 @@ class MainScreen(Screen[None]):
         )
 
     def _build_scanned_file_status(self) -> str:
-        return f"{self.scanned_file_count} scanned files"
+        return f"{self.scanned_file_count} scanned"
 
     def _update_header_status(self) -> None:
         if not self._mounted:

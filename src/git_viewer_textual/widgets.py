@@ -21,8 +21,7 @@ class HeaderStatus(HeaderClockSpace):
     DEFAULT_CSS = """
     HeaderStatus {
         dock: right;
-        width: auto;
-        min-width: 16;
+        width: 10;
         padding: 0 1;
         background: $foreground-darken-1 5%;
         color: $foreground;
@@ -34,7 +33,7 @@ class HeaderStatus(HeaderClockSpace):
     status: reactive[str] = reactive("")
 
     def render(self) -> Text:
-        return Text(self.status)
+        return Text(self.status, no_wrap=True, overflow="ellipsis")
 
 
 class StatusHeader(Header):
