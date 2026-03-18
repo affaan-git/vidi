@@ -119,7 +119,8 @@ class CommitDetailScreen(ModalScreen[None]):
     """
 
     BINDINGS = [
-        Binding("escape", "close_screen", "Back", group=BACK_GROUP),
+        Binding("up", "cursor_up", "Up", priority=True, group=MOVE_GROUP),
+        Binding("down", "cursor_down", "Down", priority=True, group=MOVE_GROUP),
         Binding("tab", "focus_next_pane", "Next Pane", priority=True, group=PANE_GROUP),
         Binding(
             "shift+tab",
@@ -129,13 +130,12 @@ class CommitDetailScreen(ModalScreen[None]):
             key_display="S-Tab",
             group=PANE_GROUP,
         ),
-        Binding("up", "cursor_up", "Up", priority=True, group=MOVE_GROUP),
-        Binding("down", "cursor_down", "Down", priority=True, group=MOVE_GROUP),
         Binding("pageup", "page_up", "Page Up", priority=True, group=PAGE_GROUP),
         Binding("pagedown", "page_down", "Page Down", priority=True, group=PAGE_GROUP),
         Binding("home", "scroll_top", "Top", priority=True, group=JUMP_GROUP),
         Binding("end", "scroll_bottom", "Bottom", priority=True, group=JUMP_GROUP),
         Binding("p", "toggle_patch_scope", "Patch"),
+        Binding("escape", "close_screen", "Back", group=BACK_GROUP),
     ]
 
     DEFAULT_PANE = "files"

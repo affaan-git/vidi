@@ -61,11 +61,11 @@ class BranchPickerScreen(ModalScreen[str | None]):
     """
 
     BINDINGS = [
-        Binding("escape", "cancel", "Back", group=BACK_GROUP),
-        Binding("q", "cancel", "Back", group=BACK_GROUP),
         Binding("up", "cursor_up", "Up", priority=True, group=MOVE_GROUP),
         Binding("down", "cursor_down", "Down", priority=True, group=MOVE_GROUP),
         Binding("enter", "choose_branch", "Choose", priority=True),
+        Binding("escape", "cancel", "Back", group=BACK_GROUP),
+        Binding("q", "cancel", "Back", group=BACK_GROUP),
     ]
 
     def __init__(self, branches: list[str], current_branch: str) -> None:
