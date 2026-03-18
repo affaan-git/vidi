@@ -447,7 +447,11 @@ class CommitDetailScreen(ModalScreen[None]):
         if focus_target is not None:
             self.active_pane = focus_target
             self._refresh_focus_styles()
-        if self._mode_transition_active and focus_target is not None:
+        if (
+            self._mode_transition_active
+            and focus_target == "patch"
+            and self.show_full_patch
+        ):
             self.set_focus(None, scroll_visible=False)
         self._apply_detail_layout()
         self._selected_patch_scroll().styles.display = "none" if self.show_full_patch else "block"
@@ -504,7 +508,7 @@ class CommitDetailScreen(ModalScreen[None]):
         self.query_one("#commit-detail-overview", Static).update(overview)
 
         columns_changed = self._configure_files_table()
-        if columns_changed or not self._files_table_is_measured():
+        if not self._files_table_is_measured():
             self.query_one("#commit-detail-files", DataTable).clear(columns=False)
             self._files_table_signature = None
         else:
