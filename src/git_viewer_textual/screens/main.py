@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import collections
 import datetime as dt
 
@@ -185,9 +186,11 @@ class MainScreen(Screen[None]):
         self.service = service
         self.selected_branch = context.current_branch
         self.selected_range = "all"
-        initial_branch = service.get_branch_data(context.current_branch)
+        initial_branch = context.initial_branch_data
         self.selected_year = (
-            max(initial_branch.years) if initial_branch.years else dt.date.today().year
+            max(initial_branch.years)
+            if initial_branch is not None and initial_branch.years
+            else dt.date.today().year
         )
         self.selected_day = None
         self.selected_language = (
@@ -205,6 +208,10 @@ class MainScreen(Screen[None]):
         self._language_keys: list[str] = [
             str(item["language"]) for item in context.language_stats
         ]
+        self._branch_data_cache: dict[str, BranchData] = {}
+        if initial_branch is not None:
+            self._branch_data_cache[initial_branch.branch] = initial_branch
+        self._branch_load_tasks: dict[str, asyncio.Task[None]] = {}
         self._day_keys: list[dt.date] = []
         self._suspend_table_events = False
         self._mounted = False
@@ -250,6 +257,7 @@ class MainScreen(Screen[None]):
         self.sub_title = self._build_repo_stats_sub_title()
         self.refresh_view()
         self._focus_active_panel()
+        self._ensure_branch_loaded(self.selected_branch)
 
     def _panel_target(self, panel: str) -> DataTable | VerticalScroll:
         targets: dict[str, DataTable | VerticalScroll] = {
@@ -316,6 +324,11 @@ class MainScreen(Screen[None]):
         branch_data, commits, counts = self._current_view_state(normalize_selection=False)
         self._render_view(commits, counts, include_table=False, reset_scroll=False)
 
+    def on_unmount(self) -> None:
+        for task in self._branch_load_tasks.values():
+            task.cancel()
+        self._branch_load_tasks.clear()
+
     def _apply_theme(self) -> None:
         palette = resolve_theme_palette(self.app.current_theme)
         self._theme_palette = palette
@@ -349,20 +362,47 @@ class MainScreen(Screen[None]):
         self._refresh_panel_styles()
 
     def _refresh_year_options(self) -> None:
-        branch_data = self.service.get_branch_data(self.selected_branch)
+        branch_data = self._get_branch_data(self.selected_branch)
+        if branch_data is None:
+            self._ensure_branch_loaded(self.selected_branch)
+            return
         commits = filter_commits(branch_data.commits, self.selected_range, None)
         years = sorted({commit.authored_date.year for commit in commits}) or branch_data.years
         if self.selected_year not in years and years:
             self.selected_year = max(years)
 
     def _filtered_branch_data(self) -> tuple[BranchData, list[CommitRecord]]:
-        branch_data = self.service.get_branch_data(self.selected_branch)
+        branch_data = self._get_branch_data(self.selected_branch)
+        if branch_data is None:
+            self._ensure_branch_loaded(self.selected_branch)
+            return BranchData(branch=self.selected_branch, commits=[], years=[]), []
         commits = filter_commits(
             branch_data.commits,
             self.selected_range,
             self.selected_year,
         )
         return branch_data, commits
+
+    def _get_branch_data(self, branch: str) -> BranchData | None:
+        return self._branch_data_cache.get(branch)
+
+    def _ensure_branch_loaded(self, branch: str) -> None:
+        if branch in self._branch_data_cache or branch in self._branch_load_tasks or not self.is_mounted:
+            return
+        self._branch_load_tasks[branch] = asyncio.create_task(self._load_branch_data(branch))
+
+    async def _load_branch_data(self, branch: str) -> None:
+        try:
+            branch_data = await asyncio.to_thread(self.service.get_branch_data, branch)
+        finally:
+            self._branch_load_tasks.pop(branch, None)
+        self._branch_data_cache[branch] = branch_data
+        if not self.is_mounted or branch != self.selected_branch:
+            return
+        years = branch_data.years
+        if years and self.selected_year not in years:
+            self.selected_year = max(years)
+        self.refresh_view()
 
     def _current_view_state(
         self,
@@ -500,6 +540,19 @@ class MainScreen(Screen[None]):
     def _update_day_details(self, commits: list[CommitRecord], *, reset_scroll: bool) -> None:
         palette = self._theme_palette
         details = Text()
+        if self.selected_branch not in self._branch_data_cache:
+            self.query_one("#details-title", Static).update("Commit Details")
+            details.append(
+                f"Loading {self.selected_branch} history...",
+                style=make_style(palette.muted, bold=True),
+            )
+            self.query_one("#day-details", Static).update(details)
+            self.query_one("#day-scroll-hint", Static).update("")
+            if reset_scroll:
+                self.query_one("#day-details-scroll", VerticalScroll).scroll_home(
+                    animate=False
+                )
+            return
         if self.selected_day is None:
             self.query_one("#details-title", Static).update("Commit Details")
             details.append(
@@ -672,11 +725,15 @@ class MainScreen(Screen[None]):
                 if new_context.current_branch in new_context.branches
                 else new_context.branches[0]
             )
+        stale_branches = set(self._branch_data_cache) - set(new_context.branches)
+        for branch in stale_branches:
+            self._branch_data_cache.pop(branch, None)
         if self.selected_language not in self._language_keys and self._language_keys:
             self.selected_language = self._language_keys[0]
         self.sub_title = self._build_repo_stats_sub_title()
         self._refresh_year_options()
         self.refresh_view()
+        self._ensure_branch_loaded(self.selected_branch)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         if self._suspend_table_events or event.data_table.id != "commits-table":
@@ -739,7 +796,10 @@ class MainScreen(Screen[None]):
             self.action_day_down()
 
     def action_prev_year(self) -> None:
-        branch_data = self.service.get_branch_data(self.selected_branch)
+        branch_data = self._get_branch_data(self.selected_branch)
+        if branch_data is None:
+            self._ensure_branch_loaded(self.selected_branch)
+            return
         years = sorted(branch_data.years)
         if self.selected_year in years:
             idx = years.index(self.selected_year)
@@ -748,7 +808,10 @@ class MainScreen(Screen[None]):
                 self.refresh_view()
 
     def action_next_year(self) -> None:
-        branch_data = self.service.get_branch_data(self.selected_branch)
+        branch_data = self._get_branch_data(self.selected_branch)
+        if branch_data is None:
+            self._ensure_branch_loaded(self.selected_branch)
+            return
         years = sorted(branch_data.years)
         if self.selected_year in years:
             idx = years.index(self.selected_year)
@@ -777,6 +840,7 @@ class MainScreen(Screen[None]):
         self.selected_commit_hash = None
         self._refresh_year_options()
         self.refresh_view()
+        self._ensure_branch_loaded(branch)
 
     def action_day_down(self) -> None:
         if not self._day_keys:

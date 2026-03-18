@@ -90,6 +90,7 @@ class RepoContext:
     current_branch: str
     language_stats: list[LanguageStat]
     files_by_language: dict[str, list[str]]
+    initial_branch_data: BranchData | None = None
 
 
 @dataclass(frozen=True)

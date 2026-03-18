@@ -7,7 +7,7 @@ import os
 import sys
 
 from .app import GitViewerApp
-from .repository import build_repo_context
+from .repository import build_initial_repo_context
 
 
 def parse_args() -> argparse.Namespace:
@@ -50,7 +50,7 @@ def main() -> None:
     ignore_dirs = {item.strip() for item in args.ignore_dirs.split(",") if item.strip()}
 
     try:
-        context, service = build_repo_context(
+        context, service = build_initial_repo_context(
             repo_dir=repo_dir,
             language_mode=args.language_mode,
             exclude_languages=exclude_languages,

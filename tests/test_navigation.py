@@ -33,13 +33,24 @@ from git_viewer_textual.render import (
     render_contribution_graph,
     resolve_heatmap_colors,
 )
-from git_viewer_textual.repository import build_repo_context
+from git_viewer_textual.repository import build_initial_repo_context, build_repo_context
 from git_viewer_textual.theme import make_change_stat_style, resolve_theme_palette
 
 
 def make_app() -> GitViewerApp:
     repo_dir = Path(__file__).resolve().parents[2] / "example-repo"
     context, service = build_repo_context(
+        repo_dir=str(repo_dir),
+        language_mode="bytes",
+        exclude_languages=set(),
+        extra_ignored_dirs=set(),
+    )
+    return GitViewerApp(context, service)
+
+
+def make_lightweight_app() -> GitViewerApp:
+    repo_dir = Path(__file__).resolve().parents[2] / "example-repo"
+    context, service = build_initial_repo_context(
         repo_dir=str(repo_dir),
         language_mode="bytes",
         exclude_languages=set(),
@@ -72,6 +83,20 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
                 f"{len(app.context.branches)} branches · "
                 f"{expected_count} files",
             )
+
+    def test_build_initial_repo_context_skips_eager_language_and_branch_loading(self) -> None:
+        repo_dir = Path(__file__).resolve().parents[2] / "example-repo"
+        context, service = build_initial_repo_context(
+            repo_dir=str(repo_dir),
+            language_mode="bytes",
+            exclude_languages=set(),
+            extra_ignored_dirs=set(),
+        )
+
+        self.assertEqual(context.language_stats, [])
+        self.assertEqual(context.files_by_language, {})
+        self.assertIsNone(context.initial_branch_data)
+        self.assertIsNone(service.get_cached_scanned_file_count())
 
     async def test_commit_detail_uses_same_builtin_header_without_clock(self) -> None:
         app = make_app()

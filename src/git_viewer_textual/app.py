@@ -34,17 +34,23 @@ class GitViewerApp(App[None]):
         )
         self._repo_scan_in_flight = False
         self._repo_scan_task: asyncio.Task[None] | None = None
+        self._initial_context_task: asyncio.Task[None] | None = None
 
     def on_mount(self) -> None:
         self.title = f"{self.context.project_name} - Git Viewer"
         print(f"\033]0;{self.context.project_name} - Git Viewer\007", end="", flush=True)
         self.push_screen(MainScreen(self.context, self.service))
+        if not self.context.language_stats or not self.context.files_by_language:
+            self._initial_context_task = asyncio.create_task(self._warm_initial_context())
         self._schedule_next_repo_scan(self.REPO_SCAN_DEFAULT_SECONDS)
 
     def on_unmount(self) -> None:
         if self._repo_scan_task is not None:
             self._repo_scan_task.cancel()
             self._repo_scan_task = None
+        if self._initial_context_task is not None:
+            self._initial_context_task.cancel()
+            self._initial_context_task = None
 
     def _schedule_next_repo_scan(self, delay_seconds: float) -> None:
         self.set_timer(delay_seconds, self._trigger_repo_scan)
@@ -61,6 +67,43 @@ class GitViewerApp(App[None]):
             return
         self._repo_scan_task = asyncio.create_task(self._scan_repo_state())
 
+    def _apply_refreshed_context(
+        self,
+        previous_context: RepoContext,
+        new_context: RepoContext,
+        previous_snapshot: RepoScanSnapshot,
+        new_snapshot: RepoScanSnapshot,
+    ) -> None:
+        self.context = new_context
+        self._repo_scan_snapshot = new_snapshot
+        for screen in list(self.screen_stack):
+            handler = getattr(screen, "handle_repo_context_refresh", None)
+            if callable(handler):
+                handler(previous_context, new_context, previous_snapshot, new_snapshot)
+
+    async def _warm_initial_context(self) -> None:
+        try:
+            previous_context = self.context
+            previous_snapshot = self._repo_scan_snapshot
+            new_context = await asyncio.to_thread(self.service.refresh_context)
+            new_snapshot = RepoScanSnapshot(
+                branch_heads=new_context.branch_heads,
+                current_branch=new_context.current_branch,
+                repo_commit_count=new_context.repo_commit_count,
+                scanned_file_count=(
+                    self.service.get_cached_scanned_file_count()
+                    or sum(len(files) for files in new_context.files_by_language.values())
+                ),
+            )
+            self._apply_refreshed_context(
+                previous_context,
+                new_context,
+                previous_snapshot,
+                new_snapshot,
+            )
+        finally:
+            self._initial_context_task = None
+
     async def _scan_repo_state(self) -> None:
         self._repo_scan_in_flight = True
         duration = self.REPO_SCAN_DEFAULT_SECONDS
@@ -72,11 +115,12 @@ class GitViewerApp(App[None]):
                 self.service.invalidate_cached_git_data()
                 previous_context = self.context
                 new_context = await asyncio.to_thread(self.service.refresh_context)
-                self.context = new_context
-                for screen in list(self.screen_stack):
-                    handler = getattr(screen, "handle_repo_context_refresh", None)
-                    if callable(handler):
-                        handler(previous_context, new_context, previous_snapshot, snapshot)
+                self._apply_refreshed_context(
+                    previous_context,
+                    new_context,
+                    previous_snapshot,
+                    snapshot,
+                )
         finally:
             self._repo_scan_in_flight = False
             self._repo_scan_task = None
