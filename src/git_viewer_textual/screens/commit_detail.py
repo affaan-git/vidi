@@ -121,8 +121,10 @@ class CommitDetailScreen(ModalScreen[None]):
     """
 
     BINDINGS = [
-        Binding("up", "cursor_up", "Up", priority=True, group=MOVE_GROUP),
         Binding("down", "cursor_down", "Down", priority=True, group=MOVE_GROUP),
+        Binding("up", "cursor_up", "Up", priority=True, group=MOVE_GROUP),
+        Binding("j", "cursor_down", "Down", priority=True, show=False),
+        Binding("k", "cursor_up", "Up", priority=True, show=False),
         Binding("tab", "focus_next_pane", "Next Pane", priority=True, group=PANE_GROUP),
         Binding(
             "shift+tab",
@@ -138,6 +140,7 @@ class CommitDetailScreen(ModalScreen[None]):
         Binding("end", "scroll_bottom", "Bottom", priority=True, group=JUMP_GROUP),
         Binding("p", "toggle_patch_scope", "Patch"),
         Binding("escape", "close_screen", "Back", group=BACK_GROUP),
+        Binding("q", "close_screen", "Back", show=False, group=BACK_GROUP),
     ]
 
     DEFAULT_PANE = "files"
@@ -171,6 +174,7 @@ class CommitDetailScreen(ModalScreen[None]):
         self._mode_transition_active = False
         self._full_patch_ready = False
         self._force_requested_focus = False
+        self._theme_palette = resolve_theme_palette(self.app.current_theme)
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -313,7 +317,8 @@ class CommitDetailScreen(ModalScreen[None]):
             self.active_pane = preferred if preferred in available else available[0]
 
     def _apply_theme(self) -> None:
-        palette = resolve_theme_palette(self.app.current_theme)
+        self._theme_palette = resolve_theme_palette(self.app.current_theme)
+        palette = self._theme_palette
         self.styles.background = palette.background
 
         summary_bar = self.query_one("#commit-detail-summary-bar", Static)
@@ -330,7 +335,7 @@ class CommitDetailScreen(ModalScreen[None]):
         self._refresh_focus_styles()
 
     def _refresh_focus_styles(self) -> None:
-        palette = resolve_theme_palette(self.app.current_theme)
+        palette = self._theme_palette
         panel_ids = {
             "overview": "#commit-detail-overview-panel",
             "files": "#commit-detail-files-panel",
@@ -484,7 +489,7 @@ class CommitDetailScreen(ModalScreen[None]):
             self._full_patch_scroll(),
         )
 
-        palette = resolve_theme_palette(self.app.current_theme)
+        palette = self._theme_palette
         now = utc_now()
         total_additions = sum(change.additions or 0 for change in self.detail.file_changes)
         total_deletions = sum(change.deletions or 0 for change in self.detail.file_changes)
@@ -597,9 +602,12 @@ class CommitDetailScreen(ModalScreen[None]):
             or table.size.width
             or 28
         )
-        padding = 6
+        # Reserve the table's own chrome: one cell of padding on each side of
+        # the three columns (6) plus the stable scrollbar gutter (2). Undercount
+        # here and the file column overflows, leaving a phantom horizontal scroll.
+        chrome = 8
         stats_width = 4
-        file_width = max(8, width - (stats_width * 2) - padding)
+        file_width = max(8, width - (stats_width * 2) - chrome)
         return file_width, stats_width, stats_width
 
     def _apply_files_table_layout(self) -> int:
@@ -649,7 +657,7 @@ class CommitDetailScreen(ModalScreen[None]):
         *,
         positive: bool,
     ) -> Text:
-        palette = resolve_theme_palette(self.app.current_theme)
+        palette = self._theme_palette
         if value is None:
             return Text("-", style=make_style(palette.muted))
         return Text(
@@ -672,7 +680,7 @@ class CommitDetailScreen(ModalScreen[None]):
         return text.plain.count("\n") + 1
 
     def _build_patch_title(self) -> Table:
-        palette = resolve_theme_palette(self.app.current_theme)
+        palette = self._theme_palette
         title = Table.grid(expand=True)
         title.add_column(ratio=1)
         title.add_column(no_wrap=True, justify="right")
@@ -714,7 +722,7 @@ class CommitDetailScreen(ModalScreen[None]):
         return title
 
     def _render_patch_text(self, patch_text: str) -> Text:
-        palette = resolve_theme_palette(self.app.current_theme)
+        palette = self._theme_palette
         text = Text()
         patch_lines = patch_text.splitlines()
         for index, raw in enumerate(patch_lines):
@@ -746,7 +754,7 @@ class CommitDetailScreen(ModalScreen[None]):
         *,
         refresh_content: bool,
     ) -> None:
-        palette = resolve_theme_palette(self.app.current_theme)
+        palette = self._theme_palette
         self.query_one("#commit-detail-patch-title", Static).update(self._build_patch_title())
 
         if refresh_content:

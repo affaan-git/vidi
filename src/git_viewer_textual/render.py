@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import collections
 import datetime as dt
-from typing import Any
 
 from rich.console import Group
 from rich.table import Table
@@ -17,7 +16,7 @@ from .theme import make_style
 from .utils import truncate_middle
 
 
-def resolve_heatmap_colors(palette: ThemePalette) -> tuple[str, str, list[str]]:
+def resolve_heatmap_colors(palette: ThemePalette) -> tuple[str, list[str]]:
     is_dark = palette.background.brightness < 0.5
     inactive_style = palette.background.blend(
         palette.foreground,
@@ -32,7 +31,8 @@ def resolve_heatmap_colors(palette: ThemePalette) -> tuple[str, str, list[str]]:
         Color.parse(inactive_style).blend(palette.success, step).hex6
         for step in blend_steps
     ]
-    return inactive_style, padding_style, [inactive_style, *active_styles]
+    # heatmap_styles[0] is the inactive (zero-commit) color; [1:] ramp toward success.
+    return padding_style, [inactive_style, *active_styles]
 
 
 def render_contribution_graph(
@@ -55,17 +55,19 @@ def render_contribution_graph(
         and end_date.day == 31
         and start_date.year == end_date.year
     )
-    common_year_month_lengths = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    # Month labels sit on a fixed 365-day axis so columns line up the same way
+    # every year. A leap day would push every later month one slot to the right,
+    # so fold Feb 29 into Feb 28's offset instead of giving it its own.
+    month_lengths = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
     month_offsets = [0]
-    for month_length in common_year_month_lengths:
+    for month_length in month_lengths:
         month_offsets.append(month_offsets[-1] + month_length)
     total_days = max(1, (end_date - start_date).days)
 
-    def canonical_day_offset(day: dt.date) -> int:
-        offset = month_offsets[day.month - 1] + day.day - 1
+    def day_offset(day: dt.date) -> int:
         if day.month == 2 and day.day == 29:
             return month_offsets[2] - 1
-        return offset
+        return month_offsets[day.month - 1] + day.day - 1
 
     month_cursor = dt.date(start_date.year, start_date.month, 1)
     while month_cursor <= end_date:
@@ -80,11 +82,11 @@ def render_contribution_graph(
         label = month_cursor.strftime("%b")
         if is_full_year:
             projected_start = round(
-                (canonical_day_offset(visible_start) / (month_offsets[-1] - 1))
+                (day_offset(visible_start) / (month_offsets[-1] - 1))
                 * (header_width - 1)
             )
             projected_end = round(
-                (canonical_day_offset(visible_end) / (month_offsets[-1] - 1))
+                (day_offset(visible_end) / (month_offsets[-1] - 1))
                 * (header_width - 1)
             )
         else:
@@ -117,7 +119,7 @@ def render_contribution_graph(
     lines: list[Text] = [header]
     day_labels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
     max_value = max((value for row in grid for value in row if value is not None), default=0)
-    _inactive_style, padding_style, heatmap_styles = resolve_heatmap_colors(palette)
+    padding_style, heatmap_styles = resolve_heatmap_colors(palette)
     cell_char = "■"
 
     for row_index, day_name in enumerate(day_labels):
@@ -179,8 +181,6 @@ def build_graph_title(
 def build_language_title(
     language_stats: list[LanguageStat],
     palette: ThemePalette,
-    *,
-    width: int,
 ) -> Text:
     title = Text()
     title.append("Languages", style=make_style(palette.muted, bold=True))

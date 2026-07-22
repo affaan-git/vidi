@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 
 from textual.app import App
+from textual.binding import Binding
 
 from .models import RepoContext, RepoScanSnapshot
 from .repository import RepoService
-from .screens import MainScreen
+from .screens import HelpScreen, MainScreen
 
 
 class GitViewerApp(App[None]):
@@ -19,7 +20,8 @@ class GitViewerApp(App[None]):
     REPO_SCAN_MAX_SECONDS = 120.0
 
     BINDINGS = [
-        ("q", "quit", "Quit"),
+        Binding("q", "quit", "Quit"),
+        Binding("question_mark", "show_help", "Help"),
     ]
 
     def __init__(self, context: RepoContext, service: RepoService) -> None:
@@ -38,7 +40,6 @@ class GitViewerApp(App[None]):
 
     def on_mount(self) -> None:
         self.title = f"{self.context.project_name} - Git Viewer"
-        print(f"\033]0;{self.context.project_name} - Git Viewer\007", end="", flush=True)
         self.push_screen(MainScreen(self.context, self.service))
         if not self.context.language_stats or not self.context.files_by_language:
             self._initial_context_task = asyncio.create_task(self._warm_initial_context())
@@ -125,3 +126,8 @@ class GitViewerApp(App[None]):
             self._repo_scan_in_flight = False
             self._repo_scan_task = None
             self._schedule_next_repo_scan(self._next_repo_scan_delay(duration))
+
+    def action_show_help(self) -> None:
+        if isinstance(self.screen, HelpScreen):
+            return
+        self.push_screen(HelpScreen())

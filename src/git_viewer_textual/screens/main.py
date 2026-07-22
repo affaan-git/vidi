@@ -12,7 +12,6 @@ from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Static
 
@@ -152,8 +151,11 @@ class MainScreen(Screen[None]):
     """
 
     BINDINGS = [
-        Binding("up", "cursor_up", "Up", priority=True, group=MOVE_GROUP),
         Binding("down", "cursor_down", "Down", priority=True, group=MOVE_GROUP),
+        Binding("up", "cursor_up", "Up", priority=True, group=MOVE_GROUP),
+        Binding("j", "cursor_down", "Down", priority=True, show=False),
+        Binding("k", "cursor_up", "Up", priority=True, show=False),
+        Binding("enter", "open_commit", "Open"),
         Binding("tab", "focus_next_panel", "Next Panel", priority=True, group=PANEL_GROUP),
         Binding(
             "shift+tab",
@@ -164,21 +166,21 @@ class MainScreen(Screen[None]):
             group=PANEL_GROUP,
         ),
         Binding("b", "open_branch_picker", "Branch"),
+        Binding("h", "day_down", "Older Day", group=DAY_GROUP),
+        Binding("l", "day_up", "Newer Day", group=DAY_GROUP),
         Binding("[", "prev_year", "Prev Year", group=YEAR_GROUP),
         Binding("]", "next_year", "Next Year", group=YEAR_GROUP),
         Binding("r", "cycle_range", "Range"),
-        Binding("j", "day_down", "Next Day", group=DAY_GROUP),
-        Binding("k", "day_up", "Prev Day", group=DAY_GROUP),
     ]
 
-    selected_branch: reactive[str]
-    selected_range: reactive[str]
-    selected_year: reactive[int]
-    selected_day: reactive[dt.date | None]
-    selected_language: reactive[str]
-    selected_commit_hash: reactive[str | None]
-    active_panel: reactive[str]
-    scanned_file_count: reactive[int]
+    selected_branch: str
+    selected_range: str
+    selected_year: int
+    selected_day: dt.date | None
+    selected_language: str
+    selected_commit_hash: str | None
+    active_panel: str
+    scanned_file_count: int
 
     def __init__(self, context: RepoContext, service: RepoService) -> None:
         super().__init__()
@@ -671,7 +673,6 @@ class MainScreen(Screen[None]):
             build_language_title(
                 self.context.language_stats,
                 self._theme_palette,
-                width=max(18, panel_width - 2),
             )
         )
         bar_widget = self.query_one("#language-bar", Static)
@@ -759,6 +760,18 @@ class MainScreen(Screen[None]):
             branch_data, commits = self._filtered_branch_data()
             self._set_selected_commit(commits, str(row_key), sync_table=False)
 
+    def action_open_commit(self) -> None:
+        commit_hash = self.selected_commit_hash
+        if not commit_hash:
+            return
+        self.app.push_screen(
+            CommitDetailScreen(
+                self.service,
+                commit_hash,
+                source_branch=self.selected_branch,
+            )
+        )
+
     def action_focus_next_panel(self) -> None:
         panels = self._available_panels()
         if not panels:
@@ -783,8 +796,6 @@ class MainScreen(Screen[None]):
             focused.action_cursor_up()
         elif isinstance(focused, VerticalScroll):
             focused.scroll_up(animate=False)
-        else:
-            self.action_day_up()
 
     def action_cursor_down(self) -> None:
         focused = self._panel_target(self.active_panel)
@@ -792,8 +803,6 @@ class MainScreen(Screen[None]):
             focused.action_cursor_down()
         elif isinstance(focused, VerticalScroll):
             focused.scroll_down(animate=False)
-        else:
-            self.action_day_down()
 
     def action_prev_year(self) -> None:
         branch_data = self._get_branch_data(self.selected_branch)
@@ -879,17 +888,3 @@ class MainScreen(Screen[None]):
             day_commits[0].commit_hash if day_commits else None,
             sync_table=True,
         )
-
-    def action_next_language(self) -> None:
-        if not self._language_keys:
-            return
-        index = self._language_keys.index(self.selected_language)
-        self.selected_language = self._language_keys[(index + 1) % len(self._language_keys)]
-        self._refresh_language_panel()
-
-    def action_prev_language(self) -> None:
-        if not self._language_keys:
-            return
-        index = self._language_keys.index(self.selected_language)
-        self.selected_language = self._language_keys[(index - 1) % len(self._language_keys)]
-        self._refresh_language_panel()

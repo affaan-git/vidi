@@ -5,7 +5,6 @@ import datetime as dt
 import io
 import unittest
 from dataclasses import replace
-from pathlib import Path
 
 from rich.console import Console
 from rich.text import Text
@@ -36,11 +35,12 @@ from git_viewer_textual.render import (
 from git_viewer_textual.repository import build_initial_repo_context, build_repo_context
 from git_viewer_textual.theme import make_change_stat_style, resolve_theme_palette
 
+from sample_repo import sample_repo
+
 
 def make_app() -> GitViewerApp:
-    repo_dir = Path(__file__).resolve().parents[2] / "example-repo"
     context, service = build_repo_context(
-        repo_dir=str(repo_dir),
+        repo_dir=sample_repo(),
         language_mode="bytes",
         exclude_languages=set(),
         extra_ignored_dirs=set(),
@@ -49,9 +49,8 @@ def make_app() -> GitViewerApp:
 
 
 def make_lightweight_app() -> GitViewerApp:
-    repo_dir = Path(__file__).resolve().parents[2] / "example-repo"
     context, service = build_initial_repo_context(
-        repo_dir=str(repo_dir),
+        repo_dir=sample_repo(),
         language_mode="bytes",
         exclude_languages=set(),
         extra_ignored_dirs=set(),
@@ -85,9 +84,8 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             )
 
     def test_build_initial_repo_context_skips_eager_language_and_branch_loading(self) -> None:
-        repo_dir = Path(__file__).resolve().parents[2] / "example-repo"
         context, service = build_initial_repo_context(
-            repo_dir=str(repo_dir),
+            repo_dir=sample_repo(),
             language_mode="bytes",
             exclude_languages=set(),
             extra_ignored_dirs=set(),
@@ -182,6 +180,34 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertEqual(getattr(app.focused, "id", None), "commits-table")
 
+    async def test_help_overlay_opens_and_closes(self) -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.press("question_mark")
+            await pilot.pause()
+            self.assertEqual(type(app.screen).__name__, "HelpScreen")
+
+            await pilot.press("escape")
+            await pilot.pause()
+            self.assertEqual(type(app.screen).__name__, "MainScreen")
+
+    async def test_main_commit_list_moves_with_j_and_k(self) -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.press("left_square_bracket")
+            await pilot.pause()
+            table = app.screen.query_one("#commits-table", DataTable)
+            self.assertGreaterEqual(table.row_count, 2)
+            self.assertEqual(table.cursor_row, 0)
+
+            await pilot.press("j")
+            await pilot.pause()
+            self.assertEqual(table.cursor_row, 1)
+
+            await pilot.press("k")
+            await pilot.pause()
+            self.assertEqual(table.cursor_row, 0)
+
     async def test_graph_title_shows_commit_count_and_language_panel_shows_language_count(self) -> None:
         app = make_app()
         async with app.run_test() as pilot:
@@ -246,7 +272,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
                 grouped_descriptions,
                 {"Back", "Pane", "Move", "Page", "Jump"},
             )
-            self.assertNotIn(
+            self.assertIn(
                 ("q", "close_screen"),
                 {
                     (binding.key, binding.action)
@@ -558,7 +584,6 @@ class FilterTests(unittest.TestCase):
         title = build_language_title(
             app.context.language_stats,
             resolve_theme_palette(app.current_theme),
-            width=44,
         )
         console = Console(file=io.StringIO(), record=True, width=140)
         console.print(title)
@@ -670,23 +695,23 @@ class FilterTests(unittest.TestCase):
         )
         alternate_palette = replace(base_palette, success=alternate_success)
 
-        inactive_a, padding_a, styles_a = resolve_heatmap_colors(base_palette)
-        inactive_b, padding_b, styles_b = resolve_heatmap_colors(alternate_palette)
+        padding_a, styles_a = resolve_heatmap_colors(base_palette)
+        padding_b, styles_b = resolve_heatmap_colors(alternate_palette)
 
         self.assertEqual(len(styles_a), 5)
         self.assertEqual(len(styles_b), 5)
         self.assertEqual(len(set(styles_a)), 5)
         self.assertEqual(len(set(styles_b)), 5)
-        self.assertNotEqual(inactive_a, padding_a)
-        self.assertNotEqual(inactive_b, padding_b)
+        self.assertNotEqual(styles_a[0], padding_a)
+        self.assertNotEqual(styles_b[0], padding_b)
         self.assertNotEqual(styles_a[1:], styles_b[1:])
         self.assertLess(
             color_distance(styles_a[-1], base_palette.success),
-            color_distance(inactive_a, base_palette.success),
+            color_distance(styles_a[0], base_palette.success),
         )
         self.assertLess(
             color_distance(styles_b[-1], alternate_palette.success),
-            color_distance(inactive_b, alternate_palette.success),
+            color_distance(styles_b[0], alternate_palette.success),
         )
 
     def test_make_change_stat_style_mutes_zero_and_placeholder_values(self) -> None:
