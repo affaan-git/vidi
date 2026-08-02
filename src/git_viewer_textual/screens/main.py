@@ -94,7 +94,7 @@ class MainScreen(Screen[None]):
 
     #details-panel {
         height: 3fr;
-        min-height: 12;
+        min-height: 8;
     }
 
     #day-details-scroll {
@@ -110,7 +110,7 @@ class MainScreen(Screen[None]):
 
     #commits-panel {
         height: 1fr;
-        min-height: 10;
+        min-height: 5;
     }
 
     #languages-panel {
