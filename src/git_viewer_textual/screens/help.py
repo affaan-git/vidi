@@ -32,6 +32,7 @@ SHORTCUTS: list[tuple[str, list[tuple[str, str]]]] = [
         [
             ("j / k  or  up / down", "Move within the focused pane"),
             ("tab / shift+tab", "Switch between panes"),
+            ("[ / ]", "Previous / next commit"),
             ("p", "Toggle file diff and full patch"),
             ("page up / page down", "Scroll by a page"),
             ("home / end", "Jump to the top or bottom"),

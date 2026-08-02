@@ -252,10 +252,9 @@ class MainScreen(Screen[None]):
         commits_table.add_column("When", width=7)
         commits_table.add_column("Files", width=5)
 
-        # Scroll panels are always focus stops so Tab cycles every panel,
-        # whether or not it currently overflows.
+        # The details scroll is a Tab stop; the languages summary is read-only.
         self.query_one("#day-details-scroll", VerticalScroll).can_focus = True
-        self.query_one("#language-summary-scroll", VerticalScroll).can_focus = True
+        self.query_one("#language-summary-scroll", VerticalScroll).can_focus = False
 
         self._mounted = True
         self._apply_theme()
@@ -274,7 +273,9 @@ class MainScreen(Screen[None]):
         return targets[panel]
 
     def _available_panels(self) -> tuple[str, ...]:
-        return ("commits", "details", "languages")
+        # Languages is a read-only summary (no selection action), so it is not a
+        # Tab stop; Tab cycles the interactive panels only.
+        return ("commits", "details")
 
     def _focus_targets(self) -> tuple[DataTable | VerticalScroll, ...]:
         return tuple(self._panel_target(panel) for panel in self._available_panels())
@@ -303,7 +304,7 @@ class MainScreen(Screen[None]):
 
     def _refresh_scroll_focusability(self) -> None:
         self.query_one("#day-details-scroll", VerticalScroll).can_focus = True
-        self.query_one("#language-summary-scroll", VerticalScroll).can_focus = True
+        self.query_one("#language-summary-scroll", VerticalScroll).can_focus = False
         if self.focused not in self._focus_targets():
             self._focus_active_panel()
         else:
@@ -740,6 +741,7 @@ class MainScreen(Screen[None]):
                     self.service,
                     commit_hash,
                     source_branch=self.selected_branch,
+                    commit_hashes=[commit.commit_hash for commit in commits],
                 )
             )
 
@@ -755,11 +757,13 @@ class MainScreen(Screen[None]):
         commit_hash = self.selected_commit_hash
         if not commit_hash:
             return
+        _, commits = self._filtered_branch_data()
         self.app.push_screen(
             CommitDetailScreen(
                 self.service,
                 commit_hash,
                 source_branch=self.selected_branch,
+                commit_hashes=[commit.commit_hash for commit in commits],
             )
         )
 

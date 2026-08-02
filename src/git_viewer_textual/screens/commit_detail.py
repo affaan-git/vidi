@@ -29,6 +29,7 @@ class CommitDetailScreen(ModalScreen[None]):
     MOVE_GROUP = Binding.Group("Move", compact=True)
     PAGE_GROUP = Binding.Group("Page", compact=True)
     JUMP_GROUP = Binding.Group("Jump", compact=True)
+    COMMIT_GROUP = Binding.Group("Commit", compact=True)
 
     CSS = """
     #commit-detail-summary-bar {
@@ -130,6 +131,8 @@ class CommitDetailScreen(ModalScreen[None]):
             key_display="S-Tab",
             group=PANE_GROUP,
         ),
+        Binding("[", "prev_commit", "Prev Commit", group=COMMIT_GROUP),
+        Binding("]", "next_commit", "Next Commit", group=COMMIT_GROUP),
         Binding("pageup", "page_up", "Page Up", priority=True, group=PAGE_GROUP),
         Binding("pagedown", "page_down", "Page Down", priority=True, group=PAGE_GROUP),
         Binding("home", "scroll_top", "Top", priority=True, group=JUMP_GROUP),
@@ -146,13 +149,22 @@ class CommitDetailScreen(ModalScreen[None]):
         service: RepoService,
         commit_hash: str,
         source_branch: str | None = None,
+        commit_hashes: list[str] | None = None,
+        show_full_patch: bool = False,
     ) -> None:
         super().__init__()
         self.service = service
         self.commit_hash = commit_hash
         self.source_branch = source_branch
+        # ordered sibling commits (newest first) so [ / ] can step between them
+        self._commit_hashes = list(commit_hashes) if commit_hashes else [commit_hash]
+        if commit_hash in self._commit_hashes:
+            self._commit_index = self._commit_hashes.index(commit_hash)
+        else:
+            self._commit_hashes = [commit_hash]
+            self._commit_index = 0
         self.detail = service.get_commit_detail(commit_hash)
-        self.show_full_patch = False
+        self.show_full_patch = show_full_patch
         self.active_pane = self.DEFAULT_PANE
         self.selected_file_index = 0
         self._suspend_file_events = False
@@ -171,6 +183,27 @@ class CommitDetailScreen(ModalScreen[None]):
         self._full_patch_ready = False
         self._force_requested_focus = False
         self._theme_palette = resolve_theme_palette(self.app.current_theme)
+
+    def action_next_commit(self) -> None:
+        # the list is newest-first, so "next" (newer) steps toward index 0,
+        # matching the main screen where ] moves to the newer year
+        self._go_to_commit(self._commit_index - 1)
+
+    def action_prev_commit(self) -> None:
+        self._go_to_commit(self._commit_index + 1)
+
+    def _go_to_commit(self, index: int) -> None:
+        if not 0 <= index < len(self._commit_hashes):
+            return
+        self.app.switch_screen(
+            CommitDetailScreen(
+                self.service,
+                self._commit_hashes[index],
+                source_branch=self.source_branch,
+                commit_hashes=self._commit_hashes,
+                show_full_patch=self.show_full_patch,
+            )
+        )
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -221,7 +254,9 @@ class CommitDetailScreen(ModalScreen[None]):
         outline_table.add_column("-", width=4, key="dels")
         self.sub_title = self._build_repo_stats_sub_title()
         self._apply_theme()
-        self._render_detail_view(focus_target=self.DEFAULT_PANE)
+        self._render_detail_view(
+            focus_target="patch" if self.show_full_patch else self.DEFAULT_PANE
+        )
 
     def _on_theme_change(self, old_value: str, new_value: str) -> None:
         self._apply_theme()

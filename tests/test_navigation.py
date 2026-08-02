@@ -161,13 +161,14 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertEqual(type(app.screen).__name__, "CommitDetailScreen")
 
-    async def test_main_screen_tab_cycles_all_side_panels(self) -> None:
+    async def test_main_screen_tab_cycles_interactive_panels(self) -> None:
         app = make_app()
         async with app.run_test() as pilot:
             self.assertEqual(getattr(app.focused, "id", None), "commits-table")
             self.assertEqual(app.screen.active_panel, "commits")
             self.assertTrue(app.screen.query_one("#day-details-scroll").can_focus)
-            self.assertTrue(app.screen.query_one("#language-summary-scroll").can_focus)
+            # languages is a read-only summary, not a Tab stop
+            self.assertFalse(app.screen.query_one("#language-summary-scroll").can_focus)
 
             await pilot.press("tab")
             await pilot.pause()
@@ -175,15 +176,11 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
 
             await pilot.press("tab")
             await pilot.pause()
-            self.assertEqual(getattr(app.focused, "id", None), "language-summary-scroll")
-
-            await pilot.press("tab")
-            await pilot.pause()
             self.assertEqual(getattr(app.focused, "id", None), "commits-table")
 
             await pilot.press("shift+tab")
             await pilot.pause()
-            self.assertEqual(getattr(app.focused, "id", None), "language-summary-scroll")
+            self.assertEqual(getattr(app.focused, "id", None), "day-details-scroll")
 
     async def test_help_overlay_opens_and_closes(self) -> None:
         app = make_app()
@@ -275,7 +272,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             }
             self.assertEqual(
                 grouped_descriptions,
-                {"Back", "Pane", "Move", "Page", "Jump"},
+                {"Back", "Pane", "Move", "Page", "Jump", "Commit"},
             )
             self.assertIn(
                 ("q", "close_screen"),
@@ -429,6 +426,60 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertEqual(getattr(app.focused, "id", None), "commit-detail-overview-scroll")
 
+    async def test_commit_detail_steps_between_commits(self) -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.press("left_square_bracket")  # land on a year with 2+ commits
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.pause()
+            self.assertEqual(type(app.screen).__name__, "CommitDetailScreen")
+            self.assertGreater(len(app.screen._commit_hashes), 1)
+            first = app.screen.commit_hash
+            # step to whichever sibling exists ( [ = older, ] = newer ), then back
+            older_exists = app.screen._commit_index + 1 < len(app.screen._commit_hashes)
+            step, back = ("[", "]") if older_exists else ("]", "[")
+
+            await pilot.press(step)
+            await pilot.pause()
+            await pilot.pause()
+            self.assertEqual(type(app.screen).__name__, "CommitDetailScreen")
+            self.assertNotEqual(app.screen.commit_hash, first)
+
+            await pilot.press(back)
+            await pilot.pause()
+            await pilot.pause()
+            self.assertEqual(app.screen.commit_hash, first)
+
+            await pilot.press("escape")
+            await pilot.pause()
+            self.assertEqual(type(app.screen).__name__, "MainScreen")
+
+    async def test_commit_detail_keeps_patch_mode_when_stepping(self) -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.press("left_square_bracket")
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.pause()
+            self.assertEqual(type(app.screen).__name__, "CommitDetailScreen")
+            self.assertFalse(app.screen.show_full_patch)
+            older_exists = app.screen._commit_index + 1 < len(app.screen._commit_hashes)
+            step = "[" if older_exists else "]"
+
+            await pilot.press("p")
+            await pilot.pause()
+            await pilot.pause()
+            self.assertTrue(app.screen.show_full_patch)
+
+            await pilot.press(step)
+            await pilot.pause()
+            await pilot.pause()
+            self.assertEqual(type(app.screen).__name__, "CommitDetailScreen")
+            self.assertTrue(app.screen.show_full_patch)  # mode carries to the new commit
+
     async def test_commit_detail_diff_files_table_has_no_phantom_horizontal_overflow(self) -> None:
         app = make_app()
         async with app.run_test(size=(56, 18)) as pilot:
@@ -520,11 +571,11 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(app.screen.query("#language-meta")), 0)
             self.assertEqual(len(app.screen.query("#language-details")), 0)
             self.assertEqual(len(app.screen.query("#language-details-scroll")), 0)
-            self.assertTrue(app.screen.query_one("#language-summary-scroll").can_focus)
+            self.assertFalse(app.screen.query_one("#language-summary-scroll").can_focus)
             await pilot.press("tab")
             await pilot.press("tab")
             await pilot.pause()
-            self.assertEqual(getattr(app.focused, "id", None), "language-summary-scroll")
+            self.assertEqual(getattr(app.focused, "id", None), "commits-table")
 
     async def test_branch_picker_restores_current_branch_when_filter_is_cleared(self) -> None:
         app = make_app()

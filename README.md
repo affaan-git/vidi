@@ -28,9 +28,10 @@ built around reading a repository at a glance.
 +-----------------------------------+---------------------------+
 ```
 
-Move between the commit table, details, and languages panels with `Tab`.
-Selecting a day on the graph, or highlighting a row in the commit table, updates
-the details panel. Press `Enter` on a commit to open its diff.
+Move between the commit table and details panel with `Tab`. Selecting a day on
+the graph, or highlighting a row in the commit table, updates the details panel.
+Press `Enter` on a commit to open its diff, then `[` / `]` to step to the
+previous / next commit without leaving the detail view.
 
 ## Install
 
@@ -79,6 +80,7 @@ Press `?` at any time for the in-app reference.
 | --- | --- |
 | `j` / `k` (or arrows) | Move within the focused pane |
 | `Tab` / `Shift+Tab` | Switch between panes |
+| `[` / `]` | Previous / next commit |
 | `p` | Toggle file diff and full patch |
 | `PageUp` / `PageDown` | Scroll by a page |
 | `Home` / `End` | Jump to the top or bottom |
