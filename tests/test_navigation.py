@@ -10,7 +10,7 @@ from rich.console import Console
 from rich.text import Text
 from textual.color import Color
 from textual.binding import Binding
-from textual.widgets import DataTable, Footer, Header
+from textual.widgets import DataTable, Footer, Header, OptionList
 from textual.widgets import Input
 
 from git_viewer_textual.app import GitViewerApp
@@ -27,7 +27,6 @@ from git_viewer_textual.models import (
 )
 from git_viewer_textual.render import (
     build_language_bar,
-    build_language_summary,
     build_language_title,
     render_contribution_graph,
     resolve_heatmap_colors,
@@ -161,18 +160,21 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertEqual(type(app.screen).__name__, "CommitDetailScreen")
 
-    async def test_main_screen_tab_cycles_interactive_panels(self) -> None:
+    async def test_main_screen_tab_cycles_all_panels(self) -> None:
         app = make_app()
         async with app.run_test() as pilot:
             self.assertEqual(getattr(app.focused, "id", None), "commits-table")
             self.assertEqual(app.screen.active_panel, "commits")
             self.assertTrue(app.screen.query_one("#day-details-scroll").can_focus)
-            # languages is a read-only summary, not a Tab stop
-            self.assertFalse(app.screen.query_one("#language-summary-scroll").can_focus)
+            self.assertTrue(app.screen.query_one("#language-list").can_focus)
 
             await pilot.press("tab")
             await pilot.pause()
             self.assertEqual(getattr(app.focused, "id", None), "day-details-scroll")
+
+            await pilot.press("tab")
+            await pilot.pause()
+            self.assertEqual(getattr(app.focused, "id", None), "language-list")
 
             await pilot.press("tab")
             await pilot.pause()
@@ -180,7 +182,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
 
             await pilot.press("shift+tab")
             await pilot.pause()
-            self.assertEqual(getattr(app.focused, "id", None), "day-details-scroll")
+            self.assertEqual(getattr(app.focused, "id", None), "language-list")
 
     async def test_help_overlay_opens_and_closes(self) -> None:
         app = make_app()
@@ -561,21 +563,31 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(app.screen.query(Footer)), 1)
             self.assertEqual(len(app.screen.query("#branch-picker-help")), 0)
 
-    async def test_languages_panel_uses_summary_widget_instead_of_duplicate_list(self) -> None:
+    async def test_languages_panel_is_selectable_and_opens_files_modal(self) -> None:
         app = make_app()
         async with app.run_test() as pilot:
             self.assertEqual(len(app.screen.query("#language-bar")), 1)
-            self.assertEqual(len(app.screen.query("#language-list")), 0)
-            self.assertEqual(len(app.screen.query("#language-summary")), 1)
-            self.assertEqual(len(app.screen.query("#language-summary-scroll")), 1)
-            self.assertEqual(len(app.screen.query("#language-meta")), 0)
-            self.assertEqual(len(app.screen.query("#language-details")), 0)
-            self.assertEqual(len(app.screen.query("#language-details-scroll")), 0)
-            self.assertFalse(app.screen.query_one("#language-summary-scroll").can_focus)
+            self.assertEqual(len(app.screen.query("#language-list")), 1)
+            self.assertEqual(len(app.screen.query("#language-summary")), 0)
+            self.assertEqual(len(app.screen.query("#language-summary-scroll")), 0)
+            option_list = app.screen.query_one("#language-list", OptionList)
+            self.assertTrue(option_list.can_focus)
+            self.assertGreater(option_list.option_count, 0)
+
             await pilot.press("tab")
             await pilot.press("tab")
             await pilot.pause()
-            self.assertEqual(getattr(app.focused, "id", None), "commits-table")
+            self.assertEqual(getattr(app.focused, "id", None), "language-list")
+            self.assertEqual(option_list.highlighted, 0)
+
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.pause()
+            self.assertEqual(type(app.screen).__name__, "LanguageFilesScreen")
+
+            await pilot.press("escape")
+            await pilot.pause()
+            self.assertEqual(type(app.screen).__name__, "MainScreen")
 
     async def test_branch_picker_restores_current_branch_when_filter_is_cleared(self) -> None:
         app = make_app()
@@ -645,21 +657,6 @@ class FilterTests(unittest.TestCase):
         self.assertIn("Languages", title_text)
         self.assertIn("10", title_text)
         self.assertNotIn("Top", title_text)
-
-    def test_build_language_summary_renders_all_languages_without_placeholder(self) -> None:
-        app = make_app()
-        summary = build_language_summary(
-            app.context.language_stats,
-            selected_language=str(app.context.language_stats[0]["language"]),
-            palette=resolve_theme_palette(app.current_theme),
-            width=44,
-        )
-        console = Console(file=io.StringIO(), record=True, width=80)
-        console.print(summary)
-        summary_text = console.export_text()
-        self.assertIn("JavaScript", summary_text)
-        self.assertIn("Other", summary_text)
-        self.assertNotIn("more languages", summary_text)
 
     def test_build_language_bar_respects_requested_width(self) -> None:
         app = make_app()

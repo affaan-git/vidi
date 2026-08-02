@@ -18,7 +18,7 @@ SHORTCUTS: list[tuple[str, list[tuple[str, str]]]] = [
         [
             ("j / k  or  up / down", "Move within the focused panel"),
             ("tab / shift+tab", "Switch between panels"),
-            ("enter", "Open the highlighted commit"),
+            ("enter", "Open the commit, or the highlighted language's files"),
             ("h / l", "Select the older / newer active day"),
             ("[ / ]", "Step through years"),
             ("r", "Cycle the date range"),
@@ -46,6 +46,12 @@ SHORTCUTS: list[tuple[str, list[tuple[str, str]]]] = [
             ("up / down", "Move the highlight"),
             ("enter", "Switch to the highlighted branch"),
             ("esc / q", "Cancel"),
+        ],
+    ),
+    (
+        "Language files",
+        [
+            ("esc / q", "Back to the main screen"),
         ],
     ),
 ]

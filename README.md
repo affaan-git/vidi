@@ -28,10 +28,11 @@ built around reading a repository at a glance.
 +-----------------------------------+---------------------------+
 ```
 
-Move between the commit table and details panel with `Tab`. Selecting a day on
-the graph, or highlighting a row in the commit table, updates the details panel.
-Press `Enter` on a commit to open its diff, then `[` / `]` to step to the
-previous / next commit without leaving the detail view.
+Move between the commit table, details, and languages panels with `Tab`.
+Selecting a day on the graph, or highlighting a row in the commit table, updates
+the details panel. Press `Enter` on a commit to open its diff, then `[` / `]` to
+step to the previous / next commit without leaving the detail view. Press `Enter`
+on a language to list the files that make it up.
 
 ## Install
 
@@ -66,7 +67,7 @@ Press `?` at any time for the in-app reference.
 | --- | --- |
 | `j` / `k` (or arrows) | Move within the focused panel |
 | `Tab` / `Shift+Tab` | Switch between panels |
-| `Enter` | Open the highlighted commit |
+| `Enter` | Open the commit, or the highlighted language's files |
 | `h` / `l` | Select the older / newer active day |
 | `[` / `]` | Step through years |
 | `r` | Cycle the date range |

@@ -13,7 +13,6 @@ from textual.color import Color
 from .data import RANGE_PRESETS, build_date_grid
 from .models import LanguageStat, ThemePalette
 from .theme import make_style
-from .utils import truncate_middle
 
 
 def resolve_heatmap_colors(palette: ThemePalette) -> tuple[str, list[str]]:
@@ -192,63 +191,13 @@ def build_language_title(
     return title
 
 
-def build_language_summary(
-    language_stats: list[LanguageStat],
-    selected_language: str,
-    palette: ThemePalette,
-    *,
-    width: int,
-    max_legend_lines: int = 3,
-) -> Group:
-    if not language_stats:
-        return Group(Text("No language data", style=make_style(palette.muted)))
-
-    legend_lines: list[Text] = []
-
-    def build_entry(item: LanguageStat) -> Text:
-        percentage_text = f"{float(item['percentage']):.1f}%"
-        label_width = max(6, min(16, width // 3))
-        cell = Text()
-        is_selected = item["language"] == selected_language
-        cell.append("● ", style=str(item["color"]))
-        label_style = (
-            make_style(palette.foreground, bold=True)
-            if is_selected
-            else make_style(palette.foreground)
-        )
-        cell.append(
-            truncate_middle(str(item["language"]), label_width),
-            style=label_style,
-        )
-        cell.append(" ", style=make_style(palette.muted))
-        cell.append(percentage_text, style=make_style(palette.muted))
-        return cell
-
-    entry_separator = 3
-    current_line = Text()
-    current_width = 0
-    for item in language_stats:
-        entry = build_entry(item)
-        entry_width = len(entry.plain)
-        separator_width = entry_separator if current_width else 0
-        would_overflow = current_width and (current_width + separator_width + entry_width > width)
-        if would_overflow:
-            legend_lines.append(current_line)
-            current_line = Text()
-            current_width = 0
-            separator_width = 0
-
-        if current_width:
-            current_line.append(" " * entry_separator, style=make_style(palette.muted))
-            current_width += entry_separator
-
-        current_line.append(entry)
-        current_width += entry_width
-
-    if current_line:
-        legend_lines.append(current_line)
-
-    return Group(*legend_lines)
+def build_language_option(item: LanguageStat, palette: ThemePalette) -> Text:
+    """Render one selectable language row: a colored dot, the name, and share."""
+    text = Text()
+    text.append("● ", style=str(item["color"]))
+    text.append(str(item["language"]), style=make_style(palette.foreground))
+    text.append(f"  {float(item['percentage']):.1f}%", style=make_style(palette.muted))
+    return text
 
 
 def build_language_bar(

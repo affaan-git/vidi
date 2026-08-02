@@ -13,7 +13,8 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import DataTable, Footer, Header, Static
+from textual.widgets import DataTable, Footer, Header, OptionList, Static
+from textual.widgets.option_list import Option
 
 from ..data import (
     RANGE_PRESETS,
@@ -30,7 +31,7 @@ from ..models import BranchData, CommitFileChange, CommitPatchSection, CommitRec
 from ..render import (
     build_graph_title,
     build_language_bar,
-    build_language_summary,
+    build_language_option,
     build_language_title,
     render_contribution_graph,
 )
@@ -39,6 +40,7 @@ from ..theme import make_style, resolve_theme_palette
 from ..utils import rel_time, truncate_middle, utc_now
 from .branch_picker import BranchPickerScreen
 from .commit_detail import CommitDetailScreen
+from .language_files import LanguageFilesScreen
 
 
 class MainScreen(Screen[None]):
@@ -127,15 +129,9 @@ class MainScreen(Screen[None]):
         margin-bottom: 1;
     }
 
-    #language-summary-scroll {
+    #language-list {
         height: 1fr;
-        overflow-y: auto;
         scrollbar-gutter: stable;
-    }
-
-    #language-summary {
-        height: auto;
-        min-height: 1;
     }
 
     #day-details {
@@ -176,7 +172,6 @@ class MainScreen(Screen[None]):
     selected_range: str
     selected_year: int
     selected_day: dt.date | None
-    selected_language: str
     selected_commit_hash: str | None
     active_panel: str
     scanned_file_count: int
@@ -194,11 +189,6 @@ class MainScreen(Screen[None]):
             else dt.date.today().year
         )
         self.selected_day = None
-        self.selected_language = (
-            str(context.language_stats[0]["language"])
-            if context.language_stats
-            else "Other"
-        )
         self.selected_commit_hash = None
         self.active_panel = "commits"
         self.scanned_file_count = (
@@ -206,9 +196,6 @@ class MainScreen(Screen[None]):
             or sum(len(files) for files in context.files_by_language.values())
         )
         self._theme_palette = resolve_theme_palette(self.app.current_theme)
-        self._language_keys: list[str] = [
-            str(item["language"]) for item in context.language_stats
-        ]
         self._branch_data_cache: dict[str, BranchData] = {}
         if initial_branch is not None:
             self._branch_data_cache[initial_branch.branch] = initial_branch
@@ -236,8 +223,7 @@ class MainScreen(Screen[None]):
                 with Vertical(id="languages-panel", classes="panel"):
                     yield Static(id="language-title", classes="panel-title")
                     yield Static(id="language-bar")
-                    with VerticalScroll(id="language-summary-scroll"):
-                        yield Static(id="language-summary")
+                    yield OptionList(id="language-list")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -252,9 +238,8 @@ class MainScreen(Screen[None]):
         commits_table.add_column("When", width=7)
         commits_table.add_column("Files", width=5)
 
-        # The details scroll is a Tab stop; the languages summary is read-only.
+        # The details scroll and the languages list are both Tab stops.
         self.query_one("#day-details-scroll", VerticalScroll).can_focus = True
-        self.query_one("#language-summary-scroll", VerticalScroll).can_focus = False
 
         self._mounted = True
         self._apply_theme()
@@ -264,20 +249,18 @@ class MainScreen(Screen[None]):
         self._focus_active_panel()
         self._ensure_branch_loaded(self.selected_branch)
 
-    def _panel_target(self, panel: str) -> DataTable | VerticalScroll:
-        targets: dict[str, DataTable | VerticalScroll] = {
+    def _panel_target(self, panel: str) -> DataTable | VerticalScroll | OptionList:
+        targets: dict[str, DataTable | VerticalScroll | OptionList] = {
             "commits": self.query_one("#commits-table", DataTable),
             "details": self.query_one("#day-details-scroll", VerticalScroll),
-            "languages": self.query_one("#language-summary-scroll", VerticalScroll),
+            "languages": self.query_one("#language-list", OptionList),
         }
         return targets[panel]
 
     def _available_panels(self) -> tuple[str, ...]:
-        # Languages is a read-only summary (no selection action), so it is not a
-        # Tab stop; Tab cycles the interactive panels only.
-        return ("commits", "details")
+        return ("commits", "details", "languages")
 
-    def _focus_targets(self) -> tuple[DataTable | VerticalScroll, ...]:
+    def _focus_targets(self) -> tuple[DataTable | VerticalScroll | OptionList, ...]:
         return tuple(self._panel_target(panel) for panel in self._available_panels())
 
     def _sync_active_panel_from_focus(self) -> None:
@@ -285,7 +268,7 @@ class MainScreen(Screen[None]):
         mapping = {
             "commits-table": "commits",
             "day-details-scroll": "details",
-            "language-summary-scroll": "languages",
+            "language-list": "languages",
         }
         focused_panel = mapping.get(focused_id)
         if focused_panel in self._available_panels():
@@ -305,7 +288,6 @@ class MainScreen(Screen[None]):
     def _refresh_scroll_focusability(self) -> None:
         details_scroll = self.query_one("#day-details-scroll", VerticalScroll)
         details_scroll.can_focus = True
-        self.query_one("#language-summary-scroll", VerticalScroll).can_focus = False
         self.query_one("#day-scroll-hint", Static).update(
             "Scroll for more" if details_scroll.max_scroll_y else ""
         )
@@ -678,21 +660,28 @@ class MainScreen(Screen[None]):
                 width=bar_width,
             )
         )
-        summary_scroll = self.query_one("#language-summary-scroll", VerticalScroll)
-        summary_widget = self.query_one("#language-summary", Static)
-        summary_width = (
-            summary_widget.content_region.width
-            or summary_widget.size.width
-            or max(18, (summary_scroll.content_region.width or panel_width) - 2)
-        )
-        summary_widget.update(
-            build_language_summary(
-                self.context.language_stats,
-                self.selected_language,
-                self._theme_palette,
-                width=summary_width,
+        self._populate_language_list()
+
+    def _populate_language_list(self) -> None:
+        option_list = self.query_one("#language-list", OptionList)
+        if option_list.option_count == len(self.context.language_stats):
+            return
+        option_list.clear_options()
+        for item in self.context.language_stats:
+            option_list.add_option(
+                Option(
+                    build_language_option(item, self._theme_palette),
+                    id=str(item["language"]),
+                )
             )
-        )
+        if option_list.option_count:
+            option_list.highlighted = 0
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        if event.option_list.id != "language-list" or event.option.id is None:
+            return
+        files = sorted(self.context.files_by_language.get(event.option.id, []))
+        self.app.push_screen(LanguageFilesScreen(event.option.id, files))
 
     def _build_repo_stats_sub_title(self) -> str:
         return build_repo_stats_sub_title(self.context, self.scanned_file_count)
@@ -709,7 +698,6 @@ class MainScreen(Screen[None]):
             self.service.get_cached_scanned_file_count()
             or sum(len(files) for files in new_context.files_by_language.values())
         )
-        self._language_keys = [str(item["language"]) for item in new_context.language_stats]
         if self.selected_branch not in new_context.branches:
             self.selected_branch = (
                 new_context.current_branch
@@ -719,8 +707,6 @@ class MainScreen(Screen[None]):
         stale_branches = set(self._branch_data_cache) - set(new_context.branches)
         for branch in stale_branches:
             self._branch_data_cache.pop(branch, None)
-        if self.selected_language not in self._language_keys and self._language_keys:
-            self.selected_language = self._language_keys[0]
         self.sub_title = self._build_repo_stats_sub_title()
         self._refresh_year_options()
         self.refresh_view()
@@ -785,14 +771,14 @@ class MainScreen(Screen[None]):
 
     def action_cursor_up(self) -> None:
         focused = self._panel_target(self.active_panel)
-        if isinstance(focused, DataTable):
+        if isinstance(focused, (DataTable, OptionList)):
             focused.action_cursor_up()
         elif isinstance(focused, VerticalScroll):
             focused.scroll_up(animate=False)
 
     def action_cursor_down(self) -> None:
         focused = self._panel_target(self.active_panel)
-        if isinstance(focused, DataTable):
+        if isinstance(focused, (DataTable, OptionList)):
             focused.action_cursor_down()
         elif isinstance(focused, VerticalScroll):
             focused.scroll_down(animate=False)
