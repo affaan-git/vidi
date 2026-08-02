@@ -161,24 +161,29 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertEqual(type(app.screen).__name__, "CommitDetailScreen")
 
-    async def test_main_screen_skips_non_scrollable_side_panels_in_focus_cycle(self) -> None:
+    async def test_main_screen_tab_cycles_all_side_panels(self) -> None:
         app = make_app()
         async with app.run_test() as pilot:
             self.assertEqual(getattr(app.focused, "id", None), "commits-table")
             self.assertEqual(app.screen.active_panel, "commits")
-            self.assertFalse(app.screen.query_one("#day-details-scroll").can_focus)
-            self.assertFalse(app.screen.query_one("#language-summary-scroll").can_focus)
+            self.assertTrue(app.screen.query_one("#day-details-scroll").can_focus)
+            self.assertTrue(app.screen.query_one("#language-summary-scroll").can_focus)
 
             await pilot.press("tab")
             await pilot.pause()
+            self.assertEqual(getattr(app.focused, "id", None), "day-details-scroll")
+
+            await pilot.press("tab")
+            await pilot.pause()
+            self.assertEqual(getattr(app.focused, "id", None), "language-summary-scroll")
+
+            await pilot.press("tab")
             await pilot.pause()
             self.assertEqual(getattr(app.focused, "id", None), "commits-table")
-            self.assertEqual(app.screen.active_panel, "commits")
 
             await pilot.press("shift+tab")
             await pilot.pause()
-            await pilot.pause()
-            self.assertEqual(getattr(app.focused, "id", None), "commits-table")
+            self.assertEqual(getattr(app.focused, "id", None), "language-summary-scroll")
 
     async def test_help_overlay_opens_and_closes(self) -> None:
         app = make_app()
@@ -293,7 +298,6 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("enter")
             await pilot.pause()
             self.assertEqual(type(app.screen).__name__, "CommitDetailScreen")
-            self.assertFalse(app.screen.query_one("#commit-detail-overview-scroll").can_focus)
 
             await pilot.press("p")
             await pilot.pause()
@@ -402,28 +406,28 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(screen.commit_hash, "deadbeef1234")
             self.assertEqual(screen.detail.subject, "amended")
 
-    async def test_commit_detail_skips_non_scrollable_panels_without_focus_bounce(self) -> None:
+    async def test_commit_detail_tab_cycles_panes(self) -> None:
         app = make_app()
         async with app.run_test() as pilot:
             await pilot.press("enter")
             await pilot.pause()
             await pilot.pause()
             self.assertEqual(type(app.screen).__name__, "CommitDetailScreen")
-            self.assertFalse(app.screen.query_one("#commit-detail-overview-scroll").can_focus)
             self.assertEqual(getattr(app.focused, "id", None), "commit-detail-files-diff")
             self.assertEqual(app.screen.active_pane, "files")
-            self.assertFalse(app.screen.query_one("#commit-detail-selected-scroll").can_focus)
+            self.assertTrue(app.screen.query_one("#commit-detail-overview-scroll").can_focus)
+            self.assertTrue(app.screen.query_one("#commit-detail-selected-scroll").can_focus)
 
             await pilot.press("tab")
             await pilot.pause()
             await pilot.pause()
-            self.assertEqual(getattr(app.focused, "id", None), "commit-detail-files-diff")
-            self.assertEqual(app.screen.active_pane, "files")
+            self.assertEqual(getattr(app.focused, "id", None), "commit-detail-selected-scroll")
+            self.assertEqual(app.screen.active_pane, "patch")
 
-            await pilot.press("shift+tab")
+            await pilot.press("tab")
             await pilot.pause()
             await pilot.pause()
-            self.assertEqual(getattr(app.focused, "id", None), "commit-detail-files-diff")
+            self.assertEqual(getattr(app.focused, "id", None), "commit-detail-overview-scroll")
 
     async def test_commit_detail_diff_files_table_has_no_phantom_horizontal_overflow(self) -> None:
         app = make_app()
@@ -516,12 +520,11 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(app.screen.query("#language-meta")), 0)
             self.assertEqual(len(app.screen.query("#language-details")), 0)
             self.assertEqual(len(app.screen.query("#language-details-scroll")), 0)
-            self.assertEqual(app.screen.query_one("#language-summary-scroll").max_scroll_y, 0)
-            self.assertFalse(app.screen.query_one("#language-summary-scroll").can_focus)
+            self.assertTrue(app.screen.query_one("#language-summary-scroll").can_focus)
             await pilot.press("tab")
             await pilot.press("tab")
             await pilot.pause()
-            self.assertEqual(getattr(app.focused, "id", None), "commits-table")
+            self.assertEqual(getattr(app.focused, "id", None), "language-summary-scroll")
 
     async def test_branch_picker_restores_current_branch_when_filter_is_cleared(self) -> None:
         app = make_app()

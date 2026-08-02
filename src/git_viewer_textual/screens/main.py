@@ -26,7 +26,6 @@ from ..formatting import (
     build_commit_identity_line,
     build_repo_stats_sub_title,
 )
-from ..focus import mark_scroll_focus_pending, set_scroll_focusability
 from ..models import BranchData, CommitFileChange, CommitPatchSection, CommitRecord, RepoContext
 from ..render import (
     build_graph_title,
@@ -253,6 +252,11 @@ class MainScreen(Screen[None]):
         commits_table.add_column("When", width=7)
         commits_table.add_column("Files", width=5)
 
+        # Scroll panels are always focus stops so Tab cycles every panel,
+        # whether or not it currently overflows.
+        self.query_one("#day-details-scroll", VerticalScroll).can_focus = True
+        self.query_one("#language-summary-scroll", VerticalScroll).can_focus = True
+
         self._mounted = True
         self._apply_theme()
         self._refresh_year_options()
@@ -270,12 +274,7 @@ class MainScreen(Screen[None]):
         return targets[panel]
 
     def _available_panels(self) -> tuple[str, ...]:
-        ordered = ("commits", "details", "languages")
-        return tuple(
-            panel
-            for panel in ordered
-            if panel == "commits" or self._panel_target(panel).can_focus
-        )
+        return ("commits", "details", "languages")
 
     def _focus_targets(self) -> tuple[DataTable | VerticalScroll, ...]:
         return tuple(self._panel_target(panel) for panel in self._available_panels())
@@ -303,12 +302,8 @@ class MainScreen(Screen[None]):
             target.focus()
 
     def _refresh_scroll_focusability(self) -> None:
-        details_scroll = self.query_one("#day-details-scroll", VerticalScroll)
-        languages_scroll = self.query_one("#language-summary-scroll", VerticalScroll)
-        set_scroll_focusability(details_scroll, languages_scroll)
-        available = self._available_panels()
-        if self.active_panel not in available:
-            self.active_panel = available[0]
+        self.query_one("#day-details-scroll", VerticalScroll).can_focus = True
+        self.query_one("#language-summary-scroll", VerticalScroll).can_focus = True
         if self.focused not in self._focus_targets():
             self._focus_active_panel()
         else:
@@ -445,10 +440,6 @@ class MainScreen(Screen[None]):
         include_table: bool,
         reset_scroll: bool,
     ) -> None:
-        mark_scroll_focus_pending(
-            self.query_one("#day-details-scroll", VerticalScroll),
-            self.query_one("#language-summary-scroll", VerticalScroll),
-        )
         self.query_one("#graph-title", Static).update(
             build_graph_title(
                 self.selected_branch,

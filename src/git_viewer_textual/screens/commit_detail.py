@@ -13,13 +13,8 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import DataTable, Footer, Header, Static
 
-from ..data import compact_label_for_change, display_label_for_change
+from ..data import compact_label_for_change
 from ..formatting import build_repo_stats_sub_title
-from ..focus import (
-    mark_scroll_focus_pending,
-    scroll_has_overflow,
-    set_scroll_focusability,
-)
 from ..models import CommitFileChange, CommitPatchSection, RepoContext, RepoScanSnapshot
 from ..repository import RepoService
 from ..theme import make_change_stat_style, make_style, resolve_theme_palette
@@ -62,8 +57,9 @@ class CommitDetailScreen(ModalScreen[None]):
     }
 
     #commit-detail-overview-panel {
-        height: 12;
-        min-height: 7;
+        height: 1fr;
+        max-height: 12;
+        min-height: 5;
         margin-bottom: 1;
     }
 
@@ -83,8 +79,8 @@ class CommitDetailScreen(ModalScreen[None]):
     }
 
     #commit-detail-files-meta {
-        margin-bottom: 1;
-        height: auto;
+        margin-bottom: 0;
+        height: 1;
     }
 
     #commit-detail-files-diff,
@@ -256,14 +252,11 @@ class CommitDetailScreen(ModalScreen[None]):
         return targets[pane]
 
     def _available_panes(self) -> tuple[str, ...]:
-        panes = ["files"]
-        overview_scroll = self.query_one("#commit-detail-overview-scroll", VerticalScroll)
-        patch_scroll = self._active_patch_scroll()
-        if not self.show_full_patch and overview_scroll.can_focus:
-            panes.insert(0, "overview")
-        if patch_scroll.can_focus:
-            panes.append("patch")
-        return tuple(panes)
+        # Fixed focus stops per mode; Tab cycles them whether or not a scroll
+        # currently overflows. The overview is hidden in full-patch mode.
+        if self.show_full_patch:
+            return ("files", "patch")
+        return ("overview", "files", "patch")
 
     def _sync_active_pane_from_focus(self) -> None:
         if self._mode_transition_active or self._pending_focus_target is not None:
@@ -296,16 +289,11 @@ class CommitDetailScreen(ModalScreen[None]):
         selected_patch_scroll = self._selected_patch_scroll()
         full_patch_scroll = self._full_patch_scroll()
 
-        set_scroll_focusability(overview_scroll, selected_patch_scroll, full_patch_scroll)
-        overview_scroll.can_focus = (
-            not self.show_full_patch and scroll_has_overflow(overview_scroll)
-        )
-        selected_patch_scroll.can_focus = (
-            not self.show_full_patch and scroll_has_overflow(selected_patch_scroll)
-        )
-        full_patch_scroll.can_focus = (
-            self.show_full_patch and scroll_has_overflow(full_patch_scroll)
-        )
+        # Only the panes for the current mode are focus stops; the inactive
+        # patch scroll stays unfocusable so Tab never lands on the hidden one.
+        overview_scroll.can_focus = not self.show_full_patch
+        selected_patch_scroll.can_focus = not self.show_full_patch
+        full_patch_scroll.can_focus = self.show_full_patch
         available = self._available_panes()
         preferred = "patch" if self.show_full_patch else self.DEFAULT_PANE
         pending = self._pending_focus_target
@@ -483,11 +471,6 @@ class CommitDetailScreen(ModalScreen[None]):
         self._outline_files_table().styles.display = "block" if self.show_full_patch else "none"
         self._selected_patch_scroll().styles.display = "none" if self.show_full_patch else "block"
         self._full_patch_scroll().styles.display = "block" if self.show_full_patch else "none"
-        mark_scroll_focus_pending(
-            self.query_one("#commit-detail-overview-scroll", VerticalScroll),
-            self._selected_patch_scroll(),
-            self._full_patch_scroll(),
-        )
 
         palette = self._theme_palette
         now = utc_now()
@@ -568,14 +551,6 @@ class CommitDetailScreen(ModalScreen[None]):
             files_meta.append(
                 "Select to jump",
                 style=make_style(palette.muted),
-            )
-        if self.detail.file_changes:
-            selected_change = self.detail.file_changes[self.selected_file_index]
-            selected_section = self._section_for_change(self.selected_file_index, selected_change)
-            files_meta.append("\n", style=make_style(palette.muted))
-            files_meta.append(
-                display_label_for_change(selected_change, selected_section),
-                style=make_style(palette.foreground),
             )
         self.query_one("#commit-detail-files-meta", Static).update(files_meta)
 
