@@ -69,7 +69,7 @@ class MainScreen(Screen[None]):
 
     .panel {
         margin-bottom: 0;
-        padding: 1 1;
+        padding: 0 1 1 1;
     }
 
     .panel-title {

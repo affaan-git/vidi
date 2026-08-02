@@ -43,7 +43,7 @@ class CommitDetailScreen(ModalScreen[None]):
     }
 
     .commit-detail-panel {
-        padding: 1 1;
+        padding: 0 1 1 1;
     }
 
     .commit-detail-panel-title {
