@@ -115,6 +115,12 @@ class CommitDetailScreen(ModalScreen[None]):
     DataTable {
         height: 1fr;
     }
+
+    #commit-detail-overview-hint,
+    #commit-detail-patch-hint {
+        height: 1;
+        content-align: right middle;
+    }
     """
 
     BINDINGS = [
@@ -218,6 +224,7 @@ class CommitDetailScreen(ModalScreen[None]):
                     yield Static("Commit Overview", classes="commit-detail-panel-title")
                     with VerticalScroll(id="commit-detail-overview-scroll"):
                         yield Static(id="commit-detail-overview")
+                    yield Static(id="commit-detail-overview-hint")
                 with Vertical(
                     id="commit-detail-files-panel",
                     classes="commit-detail-panel",
@@ -236,6 +243,7 @@ class CommitDetailScreen(ModalScreen[None]):
                         yield Static(id="commit-detail-selected-content")
                     with VerticalScroll(id="commit-detail-full-scroll"):
                         yield Static(id="commit-detail-full-content")
+                    yield Static(id="commit-detail-patch-hint")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -329,6 +337,12 @@ class CommitDetailScreen(ModalScreen[None]):
         overview_scroll.can_focus = not self.show_full_patch
         selected_patch_scroll.can_focus = not self.show_full_patch
         full_patch_scroll.can_focus = self.show_full_patch
+        self.query_one("#commit-detail-overview-hint", Static).update(
+            "Scroll for more" if (not self.show_full_patch and overview_scroll.max_scroll_y) else ""
+        )
+        self.query_one("#commit-detail-patch-hint", Static).update(
+            "Scroll for more" if self._active_patch_scroll().max_scroll_y else ""
+        )
         available = self._available_panes()
         preferred = "patch" if self.show_full_patch else self.DEFAULT_PANE
         pending = self._pending_focus_target
@@ -354,6 +368,8 @@ class CommitDetailScreen(ModalScreen[None]):
 
         for title in self.query(".commit-detail-panel-title"):
             title.styles.color = palette.muted
+        for hint_id in ("#commit-detail-overview-hint", "#commit-detail-patch-hint"):
+            self.query_one(hint_id, Static).styles.color = palette.muted
 
         self._refresh_focus_styles()
 

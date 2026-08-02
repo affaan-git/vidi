@@ -303,8 +303,12 @@ class MainScreen(Screen[None]):
             target.focus()
 
     def _refresh_scroll_focusability(self) -> None:
-        self.query_one("#day-details-scroll", VerticalScroll).can_focus = True
+        details_scroll = self.query_one("#day-details-scroll", VerticalScroll)
+        details_scroll.can_focus = True
         self.query_one("#language-summary-scroll", VerticalScroll).can_focus = False
+        self.query_one("#day-scroll-hint", Static).update(
+            "Scroll for more" if details_scroll.max_scroll_y else ""
+        )
         if self.focused not in self._focus_targets():
             self._focus_active_panel()
         else:
@@ -623,12 +627,6 @@ class MainScreen(Screen[None]):
             if suffix:
                 details.append(suffix, style=make_style(palette.muted))
         self.query_one("#day-details", Static).update(details)
-        overflow_hint = (
-            "Scroll for more"
-            if len(commit_detail.file_changes) > 4 or len(selected_commit.message) > 54
-            else ""
-        )
-        self.query_one("#day-scroll-hint", Static).update(overflow_hint)
         if reset_scroll:
             self.query_one("#day-details-scroll", VerticalScroll).scroll_home(
                 animate=False
