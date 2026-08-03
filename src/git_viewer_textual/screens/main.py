@@ -109,6 +109,10 @@ class MainScreen(Screen[None]):
     DAY_GROUP = Binding.Group("Day", compact=True)
 
     CSS = """
+    MainScreen {
+        background: $background;
+    }
+
     #body {
         layout: horizontal;
         height: 1fr;
@@ -129,6 +133,14 @@ class MainScreen(Screen[None]):
     .panel {
         margin-bottom: 0;
         padding: 0 1 1 1;
+        background: $panel;
+        border: solid $border;
+    }
+
+    #commits-panel:focus-within,
+    #details-panel:focus-within,
+    #languages-panel:focus-within {
+        border: solid $primary;
     }
 
     .panel-title {
@@ -229,7 +241,6 @@ class MainScreen(Screen[None]):
     selected_year: int
     selected_day: dt.date | None
     selected_commit_hash: str | None
-    active_panel: str
     scanned_file_count: int
 
     def __init__(self, context: RepoContext, service: RepoService) -> None:
@@ -246,7 +257,6 @@ class MainScreen(Screen[None]):
         )
         self.selected_day = None
         self.selected_commit_hash = None
-        self.active_panel = "commits"
         self._language_index = 0
         self._resize_timer = None
         self.scanned_file_count = service.scanned_file_count(context)
@@ -302,8 +312,19 @@ class MainScreen(Screen[None]):
         self._refresh_year_options()
         self.sub_title = self._build_repo_stats_sub_title()
         self.refresh_view()
-        self._focus_active_panel()
+        self.query_one("#commits-table", CommitTable).focus()
         self._ensure_branch_loaded(self.selected_branch)
+
+    @property
+    def active_panel(self) -> str:
+        # Derive the active panel from focus so it never drifts out of sync; the
+        # focused panel's border is driven by CSS :focus-within.
+        focused = self.focused
+        if isinstance(focused, LanguageList):
+            return "languages"
+        if isinstance(focused, DetailsScroll):
+            return "details"
+        return "commits"
 
     def _panel_target(self, panel: str) -> DataTable | VerticalScroll:
         targets: dict[str, DataTable | VerticalScroll] = {
@@ -312,43 +333,6 @@ class MainScreen(Screen[None]):
             "languages": self.query_one("#language-scroll", VerticalScroll),
         }
         return targets[panel]
-
-    def _available_panels(self) -> tuple[str, ...]:
-        return ("commits", "details", "languages")
-
-    def _focus_targets(self) -> tuple[DataTable | VerticalScroll, ...]:
-        return tuple(self._panel_target(panel) for panel in self._available_panels())
-
-    def _sync_active_panel_from_focus(self) -> None:
-        focused_id = getattr(self.focused, "id", None)
-        mapping = {
-            "commits-table": "commits",
-            "day-details-scroll": "details",
-            "language-scroll": "languages",
-        }
-        focused_panel = mapping.get(focused_id)
-        if focused_panel in self._available_panels():
-            self.active_panel = focused_panel
-
-    def _focus_active_panel(self) -> None:
-        available = self._available_panels()
-        if not available:
-            return
-        if self.active_panel not in available:
-            self.active_panel = available[0]
-        target = self._panel_target(self.active_panel)
-        self._refresh_panel_styles()
-        if self.focused is not target:
-            target.focus()
-
-    def _refresh_scroll_focusability(self) -> None:
-        self.query_one("#day-details-scroll", VerticalScroll).can_focus = True
-        self.query_one("#language-scroll", VerticalScroll).can_focus = True
-        if self.focused not in self._focus_targets():
-            self._focus_active_panel()
-        else:
-            self._sync_active_panel_from_focus()
-        self._refresh_panel_styles()
 
     def _on_theme_change(self, old_value: str, new_value: str) -> None:
         self._apply_theme()
@@ -377,35 +361,17 @@ class MainScreen(Screen[None]):
         self._branch_load_tasks.clear()
 
     def _apply_theme(self) -> None:
+        # Panel backgrounds and borders (including the :focus-within highlight)
+        # come from the registered theme via CSS; only the muted title color is
+        # not a standard theme variable, so it is set here.
         palette = resolve_theme_palette(self.app.current_theme)
         self._theme_palette = palette
-        self.styles.background = palette.background
-
-        for panel in self.query(".panel"):
-            panel.styles.background = palette.panel
-            panel.styles.border = ("solid", palette.border)
-
         for title in self.query(".panel-title"):
             title.styles.color = palette.muted
 
-        self._refresh_panel_styles()
-
-    def _refresh_panel_styles(self) -> None:
-        palette = self._theme_palette
-        panel_ids = {
-            "graph": "#graph-panel",
-            "commits": "#commits-panel",
-            "details": "#details-panel",
-            "languages": "#languages-panel",
-        }
-        for panel_name, selector in panel_ids.items():
-            panel = self.query_one(selector, Vertical)
-            border_color = palette.primary if panel_name == self.active_panel else palette.border
-            panel.styles.border = ("solid", border_color)
-
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
-        self._sync_active_panel_from_focus()
-        self._refresh_panel_styles()
+        # Re-render the legend so the language caret appears only while the
+        # languages panel holds focus.
         self._render_language_summary()
 
     def _refresh_year_options(self) -> None:
@@ -514,7 +480,6 @@ class MainScreen(Screen[None]):
         )
         self._update_day_details(commits, reset_scroll=reset_scroll)
         self._refresh_language_panel()
-        self.call_after_refresh(self._refresh_scroll_focusability)
 
     def _set_selected_commit(
         self,
@@ -837,22 +802,10 @@ class MainScreen(Screen[None]):
         )
 
     def action_focus_next_panel(self) -> None:
-        panels = self._available_panels()
-        if not panels:
-            return
-        current = self.active_panel if self.active_panel in panels else panels[0]
-        index = panels.index(current)
-        self.active_panel = panels[(index + 1) % len(panels)]
-        self._focus_active_panel()
+        self.focus_next()
 
     def action_focus_prev_panel(self) -> None:
-        panels = self._available_panels()
-        if not panels:
-            return
-        current = self.active_panel if self.active_panel in panels else panels[0]
-        index = panels.index(current)
-        self.active_panel = panels[(index - 1) % len(panels)]
-        self._focus_active_panel()
+        self.focus_previous()
 
     def action_cursor_up(self) -> None:
         if self.active_panel == "languages":
