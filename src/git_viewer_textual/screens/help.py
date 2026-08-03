@@ -19,7 +19,7 @@ SHORTCUTS: list[tuple[str, list[tuple[str, str]]]] = [
             ("j / k  or  up / down", "Move within the focused panel"),
             ("tab / shift+tab", "Switch between panels"),
             ("enter", "Open the commit, or the highlighted language's files"),
-            ("left / right", "Move between languages (Languages panel)"),
+            ("left / right", "Languages: prev / next; Graph: back / forward a week"),
             ("h / l", "Select the older / newer active day"),
             ("[ / ]", "Step through years"),
             ("r", "Cycle the date range"),

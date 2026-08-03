@@ -52,6 +52,34 @@ COMMIT_MESSAGE_WIDTH = 28
 COMMIT_AUTHOR_WIDTH = 12
 
 
+class GraphView(Static):
+    """Focusable contribution graph.
+
+    Owns week-stepping (left/right) and Open like the other panels; the screen's
+    up/down handle day-stepping. Navigation moves the selected day across the
+    heatmap grid (rows = weekdays, columns = weeks), the same idea as the
+    languages legend's grid navigation.
+    """
+
+    can_focus = True
+
+    WEEK_GROUP = Binding.Group("Week", compact=True)
+    BINDINGS = [
+        Binding("enter", "open_selection", "Open"),
+        Binding("left", "prev_week", "Prev", group=WEEK_GROUP),
+        Binding("right", "next_week", "Next", group=WEEK_GROUP),
+    ]
+
+    def action_open_selection(self) -> None:
+        self.screen.action_open()
+
+    def action_prev_week(self) -> None:
+        self.screen._move_selected_day(-7)
+
+    def action_next_week(self) -> None:
+        self.screen._move_selected_day(7)
+
+
 class CommitTable(DataTable):
     """Commit table that owns the Open binding.
 
@@ -137,6 +165,7 @@ class MainScreen(Screen[None]):
         border: solid $border;
     }
 
+    #graph-panel:focus-within,
     #commits-panel:focus-within,
     #details-panel:focus-within,
     #languages-panel:focus-within {
@@ -275,7 +304,7 @@ class MainScreen(Screen[None]):
             with Vertical(classes="left-column"):
                 with Vertical(id="graph-panel", classes="panel"):
                     yield Static("Contribution Activity", id="graph-title", classes="panel-title")
-                    yield Static(id="graph-content")
+                    yield GraphView(id="graph-content")
                 with Vertical(id="commits-panel", classes="panel"):
                     yield Static("Year Commits", classes="panel-title")
                     yield CommitTable(id="commits-table")
@@ -320,14 +349,17 @@ class MainScreen(Screen[None]):
         # Derive the active panel from focus so it never drifts out of sync; the
         # focused panel's border is driven by CSS :focus-within.
         focused = self.focused
+        if isinstance(focused, GraphView):
+            return "graph"
         if isinstance(focused, LanguageList):
             return "languages"
         if isinstance(focused, DetailsScroll):
             return "details"
         return "commits"
 
-    def _panel_target(self, panel: str) -> DataTable | VerticalScroll:
-        targets: dict[str, DataTable | VerticalScroll] = {
+    def _panel_target(self, panel: str) -> Static | DataTable | VerticalScroll:
+        targets: dict[str, Static | DataTable | VerticalScroll] = {
+            "graph": self.query_one("#graph-content", GraphView),
             "commits": self.query_one("#commits-table", DataTable),
             "details": self.query_one("#day-details-scroll", VerticalScroll),
             "languages": self.query_one("#language-scroll", VerticalScroll),
@@ -808,24 +840,52 @@ class MainScreen(Screen[None]):
         self.focus_previous()
 
     def action_cursor_up(self) -> None:
-        if self.active_panel == "languages":
+        panel = self.active_panel
+        if panel == "languages":
             self._move_language_row(-1)
             return
-        focused = self._panel_target(self.active_panel)
+        if panel == "graph":
+            self._move_selected_day(-1)
+            return
+        focused = self._panel_target(panel)
         if isinstance(focused, DataTable):
             focused.action_cursor_up()
         elif isinstance(focused, VerticalScroll):
             focused.scroll_up(animate=False)
 
     def action_cursor_down(self) -> None:
-        if self.active_panel == "languages":
+        panel = self.active_panel
+        if panel == "languages":
             self._move_language_row(1)
             return
-        focused = self._panel_target(self.active_panel)
+        if panel == "graph":
+            self._move_selected_day(1)
+            return
+        focused = self._panel_target(panel)
         if isinstance(focused, DataTable):
             focused.action_cursor_down()
         elif isinstance(focused, VerticalScroll):
             focused.scroll_down(animate=False)
+
+    def _move_selected_day(self, delta_days: int) -> None:
+        # Move the selected day across the heatmap grid: up/down = +/-1 day,
+        # left/right = +/-1 week. Stays within the current graph window and may
+        # land on a day with no commits (the details panel handles that).
+        graph_start, graph_end = resolve_graph_window(self.selected_range, self.selected_year)
+        _, commits = self._filtered_branch_data()
+        base = self.selected_day
+        if base is None:
+            base = self._day_keys[0] if self._day_keys else graph_end
+        new_day = base + dt.timedelta(days=delta_days)
+        if new_day < graph_start or new_day > graph_end:
+            return
+        self.selected_day = new_day
+        day_commits = [commit for commit in commits if commit.authored_date == new_day]
+        self._set_selected_commit(
+            commits,
+            day_commits[0].commit_hash if day_commits else None,
+            sync_table=True,
+        )
 
     def action_prev_year(self) -> None:
         branch_data = self._get_branch_data(self.selected_branch)

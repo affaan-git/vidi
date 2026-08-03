@@ -165,9 +165,11 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
         async with app.run_test() as pilot:
             self.assertEqual(getattr(app.focused, "id", None), "commits-table")
             self.assertEqual(app.screen.active_panel, "commits")
+            self.assertTrue(app.screen.query_one("#graph-content").can_focus)
             self.assertTrue(app.screen.query_one("#day-details-scroll").can_focus)
             self.assertTrue(app.screen.query_one("#language-scroll").can_focus)
 
+            # Tab cycles commits -> details -> languages -> graph -> commits
             await pilot.press("tab")
             await pilot.pause()
             self.assertEqual(getattr(app.focused, "id", None), "day-details-scroll")
@@ -178,11 +180,35 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
 
             await pilot.press("tab")
             await pilot.pause()
+            self.assertEqual(getattr(app.focused, "id", None), "graph-content")
+            self.assertEqual(app.screen.active_panel, "graph")
+
+            await pilot.press("tab")
+            await pilot.pause()
             self.assertEqual(getattr(app.focused, "id", None), "commits-table")
 
             await pilot.press("shift+tab")
             await pilot.pause()
-            self.assertEqual(getattr(app.focused, "id", None), "language-scroll")
+            self.assertEqual(getattr(app.focused, "id", None), "graph-content")
+
+    async def test_graph_panel_navigates_days_with_arrows(self) -> None:
+        app = make_app()
+        async with app.run_test(size=(160, 44)) as pilot:
+            await pilot.press("shift+tab")  # commits -> graph (graph is the prior stop)
+            await pilot.pause()
+            self.assertEqual(getattr(app.focused, "id", None), "graph-content")
+            self.assertEqual(app.screen.active_panel, "graph")
+            start = app.screen.selected_day
+            self.assertIsNotNone(start)
+
+            await pilot.press("down")  # +1 day
+            await pilot.pause()
+            self.assertEqual((app.screen.selected_day - start).days, 1)
+
+            after_day = app.screen.selected_day
+            await pilot.press("right")  # +1 week
+            await pilot.pause()
+            self.assertEqual((app.screen.selected_day - after_day).days, 7)
 
     async def test_help_overlay_opens_and_closes(self) -> None:
         app = make_app()

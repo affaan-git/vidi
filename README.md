@@ -68,7 +68,7 @@ Press `?` at any time for the in-app reference.
 | `j` / `k` (or arrows) | Move within the focused panel |
 | `Tab` / `Shift+Tab` | Switch between panels |
 | `Enter` | Open the commit, or the highlighted language's files |
-| `Left` / `Right` | Move between languages (Languages panel) |
+| `Left` / `Right` | Languages: prev / next language; Graph: back / forward a week |
 | `h` / `l` | Select the older / newer active day |
 | `[` / `]` | Step through years |
 | `r` | Cycle the date range |
