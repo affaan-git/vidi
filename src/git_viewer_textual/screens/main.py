@@ -160,7 +160,7 @@ class MainScreen(Screen[None]):
 
     .panel {
         margin-bottom: 0;
-        padding: 0 1 1 1;
+        padding: 1 1;
         background: $panel;
         border: solid $border;
     }
