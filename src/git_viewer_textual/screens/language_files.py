@@ -30,6 +30,7 @@ class LanguageFilesScreen(ModalScreen[None]):
         max-height: 80%;
         padding: 0 2 1 2;
         border: round $primary;
+        background: $panel;
     }
 
     #language-files-title {
@@ -65,10 +66,9 @@ class LanguageFilesScreen(ModalScreen[None]):
 
     def on_mount(self) -> None:
         palette = resolve_theme_palette(self.app.current_theme)
-        # Match the branch picker and main panels: the app's own panel color, not
-        # Textual's built-in $panel, so every modal frame renders identically.
+        # Frame color comes from the registered theme via CSS ($panel); only the
+        # alpha-blended screen dim needs the palette here.
         self.styles.background = palette.overlay
-        self.query_one("#language-files-box", Vertical).styles.background = palette.panel
         count = len(self._files)
         word = "file" if count == 1 else "files"
 

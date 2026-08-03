@@ -74,6 +74,7 @@ class HelpScreen(ModalScreen[None]):
         max-height: 90%;
         padding: 1 2;
         border: round $primary;
+        background: $panel;
     }
 
     #help-title {
@@ -100,11 +101,9 @@ class HelpScreen(ModalScreen[None]):
 
     def on_mount(self) -> None:
         palette = resolve_theme_palette(self.app.current_theme)
-        # Match the branch picker and main panels: the app's own panel/overlay
-        # colors, not Textual's built-in $panel, so every modal frame renders the
-        # same against the same dim.
+        # Frame color comes from the registered theme via CSS ($panel); only the
+        # alpha-blended screen dim needs the palette here.
         self.styles.background = palette.overlay
-        self.query_one("#help-box", Vertical).styles.background = palette.panel
         self.query_one("#help-title", Static).styles.color = palette.foreground
         self.query_one("#help-hint", Static).styles.color = palette.muted
 

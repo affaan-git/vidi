@@ -28,6 +28,9 @@ class BranchPickerScreen(ModalScreen[str | None]):
         width: 56;
         height: 20;
         padding: 1 1;
+        background: $panel;
+        color: $text;
+        border: round $primary;
     }
 
     #branch-picker-title {
@@ -37,7 +40,7 @@ class BranchPickerScreen(ModalScreen[str | None]):
 
     #branch-picker-filter {
         margin: 0 1 1 1;
-        border: solid $border-blurred;
+        border: solid $border;
         background: $surface;
         color: $text;
         outline: none;
@@ -50,12 +53,13 @@ class BranchPickerScreen(ModalScreen[str | None]):
 
     #branch-picker-options {
         margin: 0 1;
-        border: solid $border-blurred;
+        border: solid $border;
         height: 1fr;
+        background: $surface;
     }
 
     #branch-picker-options:focus {
-        border: solid $border;
+        border: solid $primary;
     }
 
     """
@@ -76,6 +80,7 @@ class BranchPickerScreen(ModalScreen[str | None]):
         self.highlighted_branch = current_branch if current_branch in branches else (
             branches[0] if branches else ""
         )
+        self._theme_palette = resolve_theme_palette(self.app.current_theme)
 
     def compose(self) -> ComposeResult:
         with Static(id="branch-picker"):
@@ -95,23 +100,13 @@ class BranchPickerScreen(ModalScreen[str | None]):
         self._refresh_options()
 
     def _apply_theme(self) -> None:
-        palette = resolve_theme_palette(self.app.current_theme)
-        self.styles.background = palette.overlay
-
-        container = self.query_one("#branch-picker", Static)
-        container.styles.background = palette.panel
-        container.styles.color = palette.foreground
-        container.styles.border = ("round", palette.primary)
-
-        branch_filter = self.query_one("#branch-picker-filter", Input)
-        branch_filter.styles.background = palette.surface
-        branch_filter.styles.color = palette.foreground
-
-        options = self.query_one("#branch-picker-options", OptionList)
-        options.styles.background = palette.surface
+        # Frame colors now come from the registered theme via CSS $vars; only the
+        # screen dim needs the palette's alpha-blended overlay.
+        self._theme_palette = resolve_theme_palette(self.app.current_theme)
+        self.styles.background = self._theme_palette.overlay
 
     def _build_option(self, branch: str) -> Option:
-        palette = resolve_theme_palette(self.app.current_theme)
+        palette = self._theme_palette
         prompt = Text()
         prompt.append(truncate_middle(branch, 42), style=make_style(palette.foreground))
         if branch == self.current_branch:
@@ -121,7 +116,7 @@ class BranchPickerScreen(ModalScreen[str | None]):
     def _refresh_options(self) -> None:
         options = self.query_one("#branch-picker-options", OptionList)
         if not self.filtered_branches:
-            palette = resolve_theme_palette(self.app.current_theme)
+            palette = self._theme_palette
             options.set_options(
                 [Option(Text("No matching branches", style=make_style(palette.muted)), disabled=True)]
             )
