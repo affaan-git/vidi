@@ -115,12 +115,6 @@ class CommitDetailScreen(ModalScreen[None]):
     DataTable {
         height: 1fr;
     }
-
-    #commit-detail-overview-hint,
-    #commit-detail-patch-hint {
-        height: 1;
-        content-align: right middle;
-    }
     """
 
     BINDINGS = [
@@ -188,6 +182,7 @@ class CommitDetailScreen(ModalScreen[None]):
         self._mode_transition_active = False
         self._full_patch_ready = False
         self._force_requested_focus = False
+        self._resize_timer = None
         self._theme_palette = resolve_theme_palette(self.app.current_theme)
 
     def action_next_commit(self) -> None:
@@ -199,17 +194,31 @@ class CommitDetailScreen(ModalScreen[None]):
         self._go_to_commit(self._commit_index + 1)
 
     def _go_to_commit(self, index: int) -> None:
-        if not 0 <= index < len(self._commit_hashes):
+        # Step in place rather than swapping in a fresh screen: the commit detail
+        # is already cached, so reusing this screen avoids a full compose/mount
+        # rebuild on every keypress and keeps fast [ / ] stepping responsive.
+        if not 0 <= index < len(self._commit_hashes) or index == self._commit_index:
             return
-        self.app.switch_screen(
-            CommitDetailScreen(
-                self.service,
-                self._commit_hashes[index],
-                source_branch=self.source_branch,
-                commit_hashes=self._commit_hashes,
-                show_full_patch=self.show_full_patch,
-            )
+        self._commit_index = index
+        self.commit_hash = self._commit_hashes[index]
+        self.detail = self.service.get_commit_detail(self.commit_hash)
+        self.selected_file_index = 0
+        for table_id in self._files_table_signatures:
+            self._files_table_signatures[table_id] = None
+        self._ignore_next_patch_scroll_sync = False
+        self._full_patch_ready = False
+        self._render_detail_view(
+            focus_target="patch" if self.show_full_patch else self.DEFAULT_PANE,
+            scroll_to_selection=self.show_full_patch,
         )
+        self._reset_detail_scroll()
+
+    def _reset_detail_scroll(self) -> None:
+        self.query_one("#commit-detail-overview-scroll", VerticalScroll).scroll_home(
+            animate=False
+        )
+        self._selected_patch_scroll().scroll_home(animate=False)
+        self._full_patch_scroll().scroll_home(animate=False)
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -224,7 +233,6 @@ class CommitDetailScreen(ModalScreen[None]):
                     yield Static("Commit Overview", classes="commit-detail-panel-title")
                     with VerticalScroll(id="commit-detail-overview-scroll"):
                         yield Static(id="commit-detail-overview")
-                    yield Static(id="commit-detail-overview-hint")
                 with Vertical(
                     id="commit-detail-files-panel",
                     classes="commit-detail-panel",
@@ -243,7 +251,6 @@ class CommitDetailScreen(ModalScreen[None]):
                         yield Static(id="commit-detail-selected-content")
                     with VerticalScroll(id="commit-detail-full-scroll"):
                         yield Static(id="commit-detail-full-content")
-                    yield Static(id="commit-detail-patch-hint")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -271,8 +278,18 @@ class CommitDetailScreen(ModalScreen[None]):
         self._render_detail_view()
 
     def on_resize(self, event: events.Resize) -> None:
+        if not self.is_mounted:
+            return
+        # Coalesce the resize burst, and don't rebuild the (width-independent)
+        # patch text on resize; only the layout and table columns need to react.
+        if self._resize_timer is not None:
+            self._resize_timer.stop()
+        self._resize_timer = self.set_timer(0.05, self._render_after_resize)
+
+    def _render_after_resize(self) -> None:
+        self._resize_timer = None
         if self.is_mounted:
-            self._render_detail_view()
+            self._render_detail_view(refresh_patch_content=False)
 
     def _focus_targets(self) -> tuple[VerticalScroll | DataTable, ...]:
         return tuple(self._pane_target(pane) for pane in self._available_panes())
@@ -337,12 +354,6 @@ class CommitDetailScreen(ModalScreen[None]):
         overview_scroll.can_focus = not self.show_full_patch
         selected_patch_scroll.can_focus = not self.show_full_patch
         full_patch_scroll.can_focus = self.show_full_patch
-        self.query_one("#commit-detail-overview-hint", Static).update(
-            "Scroll for more" if (not self.show_full_patch and overview_scroll.max_scroll_y) else ""
-        )
-        self.query_one("#commit-detail-patch-hint", Static).update(
-            "Scroll for more" if self._active_patch_scroll().max_scroll_y else ""
-        )
         available = self._available_panes()
         preferred = "patch" if self.show_full_patch else self.DEFAULT_PANE
         pending = self._pending_focus_target
@@ -368,8 +379,6 @@ class CommitDetailScreen(ModalScreen[None]):
 
         for title in self.query(".commit-detail-panel-title"):
             title.styles.color = palette.muted
-        for hint_id in ("#commit-detail-overview-hint", "#commit-detail-patch-hint"):
-            self.query_one(hint_id, Static).styles.color = palette.muted
 
         self._refresh_focus_styles()
 
@@ -509,6 +518,7 @@ class CommitDetailScreen(ModalScreen[None]):
         *,
         focus_target: str | None = None,
         scroll_to_selection: bool = False,
+        refresh_patch_content: bool = True,
     ) -> None:
         if self.detail.file_changes and not (
             0 <= self.selected_file_index < len(self.detail.file_changes)
@@ -605,7 +615,7 @@ class CommitDetailScreen(ModalScreen[None]):
             )
         self.query_one("#commit-detail-files-meta", Static).update(files_meta)
 
-        self._render_patch_panel(refresh_content=True)
+        self._render_patch_panel(refresh_content=refresh_patch_content)
         self._schedule_reconcile(
             focus_target=focus_target,
             scroll_to_selection=scroll_to_selection,

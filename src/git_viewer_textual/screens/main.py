@@ -13,8 +13,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import DataTable, Footer, Header, OptionList, Static
-from textual.widgets.option_list import Option
+from textual.widgets import DataTable, Footer, Header, Static
 
 from ..data import (
     RANGE_PRESETS,
@@ -31,8 +30,9 @@ from ..models import BranchData, CommitFileChange, CommitPatchSection, CommitRec
 from ..render import (
     build_graph_title,
     build_language_bar,
-    build_language_option,
+    build_language_summary,
     build_language_title,
+    language_legend_rows,
     render_contribution_graph,
 )
 from ..repository import RepoService
@@ -41,6 +41,54 @@ from ..utils import rel_time, truncate_middle, utc_now
 from .branch_picker import BranchPickerScreen
 from .commit_detail import CommitDetailScreen
 from .language_files import LanguageFilesScreen
+
+
+class CommitTable(DataTable):
+    """Commit table that owns the Open binding.
+
+    Each panel's focus widget declares its own Open so `enter` is sourced from
+    the same place on every panel; otherwise the footer's Open would sit at a
+    different spot per panel and shove the neighbouring keys around.
+    """
+
+    BINDINGS = [Binding("enter", "open_selection", "Open")]
+
+    def action_open_selection(self) -> None:
+        self.screen.action_open()
+
+
+class DetailsScroll(VerticalScroll):
+    """Commit-details panel that owns the Open binding (see CommitTable)."""
+
+    BINDINGS = [Binding("enter", "open_selection", "Open")]
+
+    def action_open_selection(self) -> None:
+        self.screen.action_open()
+
+
+class LanguageList(VerticalScroll):
+    """Focusable languages panel.
+
+    It owns the left/right legend navigation so the footer advertises those keys
+    only while this panel is focused, matching how the rest of the footer adds
+    and drops entries as focus moves. It also owns Open, like the other panels.
+    """
+
+    LANGUAGE_GROUP = Binding.Group("Language", compact=True)
+    BINDINGS = [
+        Binding("enter", "open_selection", "Open"),
+        Binding("left", "prev_language", "Prev", group=LANGUAGE_GROUP),
+        Binding("right", "next_language", "Next", group=LANGUAGE_GROUP),
+    ]
+
+    def action_open_selection(self) -> None:
+        self.screen.action_open()
+
+    def action_prev_language(self) -> None:
+        self.screen._move_language_linear(-1)
+
+    def action_next_language(self) -> None:
+        self.screen._move_language_linear(1)
 
 
 class MainScreen(Screen[None]):
@@ -105,11 +153,6 @@ class MainScreen(Screen[None]):
         scrollbar-gutter: stable;
     }
 
-    #day-scroll-hint {
-        height: 1;
-        content-align: right middle;
-    }
-
     #commits-panel {
         height: 1fr;
         min-height: 5;
@@ -129,9 +172,14 @@ class MainScreen(Screen[None]):
         margin-bottom: 1;
     }
 
-    #language-list {
+    #language-scroll {
         height: 1fr;
-        scrollbar-gutter: stable;
+        overflow-y: auto;
+    }
+
+    #language-list {
+        height: auto;
+        min-height: 1;
     }
 
     #day-details {
@@ -150,7 +198,6 @@ class MainScreen(Screen[None]):
         Binding("up", "cursor_up", "Up", priority=True, group=MOVE_GROUP),
         Binding("j", "cursor_down", "Down", priority=True, show=False),
         Binding("k", "cursor_up", "Up", priority=True, show=False),
-        Binding("enter", "open_commit", "Open"),
         Binding("tab", "focus_next_panel", "Next Panel", priority=True, group=PANEL_GROUP),
         Binding(
             "shift+tab",
@@ -191,6 +238,8 @@ class MainScreen(Screen[None]):
         self.selected_day = None
         self.selected_commit_hash = None
         self.active_panel = "commits"
+        self._language_index = 0
+        self._resize_timer = None
         self.scanned_file_count = (
             service.get_cached_scanned_file_count()
             or sum(len(files) for files in context.files_by_language.values())
@@ -213,17 +262,17 @@ class MainScreen(Screen[None]):
                     yield Static(id="graph-content")
                 with Vertical(id="commits-panel", classes="panel"):
                     yield Static("Year Commits", classes="panel-title")
-                    yield DataTable(id="commits-table")
+                    yield CommitTable(id="commits-table")
             with Vertical(classes="right-column"):
                 with Vertical(id="details-panel", classes="panel"):
                     yield Static("Commit Details", id="details-title", classes="panel-title")
-                    with VerticalScroll(id="day-details-scroll"):
+                    with DetailsScroll(id="day-details-scroll"):
                         yield Static(id="day-details")
-                    yield Static(id="day-scroll-hint")
                 with Vertical(id="languages-panel", classes="panel"):
                     yield Static(id="language-title", classes="panel-title")
                     yield Static(id="language-bar")
-                    yield OptionList(id="language-list")
+                    with LanguageList(id="language-scroll"):
+                        yield Static(id="language-list")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -240,6 +289,7 @@ class MainScreen(Screen[None]):
 
         # The details scroll and the languages list are both Tab stops.
         self.query_one("#day-details-scroll", VerticalScroll).can_focus = True
+        self.query_one("#language-scroll", VerticalScroll).can_focus = True
 
         self._mounted = True
         self._apply_theme()
@@ -249,18 +299,18 @@ class MainScreen(Screen[None]):
         self._focus_active_panel()
         self._ensure_branch_loaded(self.selected_branch)
 
-    def _panel_target(self, panel: str) -> DataTable | VerticalScroll | OptionList:
-        targets: dict[str, DataTable | VerticalScroll | OptionList] = {
+    def _panel_target(self, panel: str) -> DataTable | VerticalScroll:
+        targets: dict[str, DataTable | VerticalScroll] = {
             "commits": self.query_one("#commits-table", DataTable),
             "details": self.query_one("#day-details-scroll", VerticalScroll),
-            "languages": self.query_one("#language-list", OptionList),
+            "languages": self.query_one("#language-scroll", VerticalScroll),
         }
         return targets[panel]
 
     def _available_panels(self) -> tuple[str, ...]:
         return ("commits", "details", "languages")
 
-    def _focus_targets(self) -> tuple[DataTable | VerticalScroll | OptionList, ...]:
+    def _focus_targets(self) -> tuple[DataTable | VerticalScroll, ...]:
         return tuple(self._panel_target(panel) for panel in self._available_panels())
 
     def _sync_active_panel_from_focus(self) -> None:
@@ -268,7 +318,7 @@ class MainScreen(Screen[None]):
         mapping = {
             "commits-table": "commits",
             "day-details-scroll": "details",
-            "language-list": "languages",
+            "language-scroll": "languages",
         }
         focused_panel = mapping.get(focused_id)
         if focused_panel in self._available_panels():
@@ -286,11 +336,8 @@ class MainScreen(Screen[None]):
             target.focus()
 
     def _refresh_scroll_focusability(self) -> None:
-        details_scroll = self.query_one("#day-details-scroll", VerticalScroll)
-        details_scroll.can_focus = True
-        self.query_one("#day-scroll-hint", Static).update(
-            "Scroll for more" if details_scroll.max_scroll_y else ""
-        )
+        self.query_one("#day-details-scroll", VerticalScroll).can_focus = True
+        self.query_one("#language-scroll", VerticalScroll).can_focus = True
         if self.focused not in self._focus_targets():
             self._focus_active_panel()
         else:
@@ -304,6 +351,16 @@ class MainScreen(Screen[None]):
 
     def on_resize(self, event: events.Resize) -> None:
         if not self._mounted:
+            return
+        # Resize fires a burst of events during a drag; coalesce them so the
+        # graph and details only re-render once the size settles.
+        if self._resize_timer is not None:
+            self._resize_timer.stop()
+        self._resize_timer = self.set_timer(0.05, self._render_after_resize)
+
+    def _render_after_resize(self) -> None:
+        self._resize_timer = None
+        if not self._mounted or not self.is_mounted:
             return
         branch_data, commits, counts = self._current_view_state(normalize_selection=False)
         self._render_view(commits, counts, include_table=False, reset_scroll=False)
@@ -325,7 +382,6 @@ class MainScreen(Screen[None]):
         for title in self.query(".panel-title"):
             title.styles.color = palette.muted
 
-        self.query_one("#day-scroll-hint", Static).styles.color = palette.muted
         self._refresh_panel_styles()
 
     def _refresh_panel_styles(self) -> None:
@@ -344,6 +400,7 @@ class MainScreen(Screen[None]):
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
         self._sync_active_panel_from_focus()
         self._refresh_panel_styles()
+        self._render_language_summary()
 
     def _refresh_year_options(self) -> None:
         branch_data = self._get_branch_data(self.selected_branch)
@@ -527,7 +584,6 @@ class MainScreen(Screen[None]):
                 style=make_style(palette.muted, bold=True),
             )
             self.query_one("#day-details", Static).update(details)
-            self.query_one("#day-scroll-hint", Static).update("")
             if reset_scroll:
                 self.query_one("#day-details-scroll", VerticalScroll).scroll_home(
                     animate=False
@@ -540,7 +596,6 @@ class MainScreen(Screen[None]):
                 style=make_style(palette.muted, bold=True),
             )
             self.query_one("#day-details", Static).update(details)
-            self.query_one("#day-scroll-hint", Static).update("")
             if reset_scroll:
                 self.query_one("#day-details-scroll", VerticalScroll).scroll_home(
                     animate=False
@@ -556,7 +611,6 @@ class MainScreen(Screen[None]):
             self.query_one("#details-title", Static).update("Commit Details")
             details.append("No commit selected.", style=make_style(palette.muted))
             self.query_one("#day-details", Static).update(details)
-            self.query_one("#day-scroll-hint", Static).update("")
             if reset_scroll:
                 self.query_one("#day-details-scroll", VerticalScroll).scroll_home(
                     animate=False
@@ -638,50 +692,102 @@ class MainScreen(Screen[None]):
         )
 
     def _refresh_language_panel(self) -> None:
-        panel = self.query_one("#languages-panel", Vertical)
-        panel_width = panel.content_region.width or panel.size.width or 40
-        title_widget = self.query_one("#language-title", Static)
-        title_widget.update(
+        self.query_one("#language-title", Static).update(
             build_language_title(
                 self.context.language_stats,
                 self._theme_palette,
             )
         )
-        bar_widget = self.query_one("#language-bar", Static)
-        bar_width = (
-            bar_widget.content_region.width
-            or bar_widget.size.width
-            or max(8, panel_width - 2)
-        )
-        bar_widget.update(
-            build_language_bar(
-                self.context.language_stats,
-                self._theme_palette,
-                width=bar_width,
-            )
-        )
         self._populate_language_list()
 
     def _populate_language_list(self) -> None:
-        option_list = self.query_one("#language-list", OptionList)
-        if option_list.option_count == len(self.context.language_stats):
-            return
-        option_list.clear_options()
-        for item in self.context.language_stats:
-            option_list.add_option(
-                Option(
-                    build_language_option(item, self._theme_palette),
-                    id=str(item["language"]),
-                )
-            )
-        if option_list.option_count:
-            option_list.highlighted = 0
+        stats = self.context.language_stats
+        if stats:
+            self._language_index = max(0, min(self._language_index, len(stats) - 1))
+        else:
+            self._language_index = 0
+        self._render_language_summary()
 
-    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        if event.option_list.id != "language-list" or event.option.id is None:
+    def _render_language_summary(self) -> None:
+        # Only mark the active entry while the languages panel is focused, so the
+        # panel reads as a plain summary until it is the thing you are steering.
+        # The bar and legend share the highlight so the selected language lights
+        # up in both places at once.
+        stats = self.context.language_stats
+        highlighted = (
+            self._language_index if stats and self.active_panel == "languages" else None
+        )
+        scroll = self.query_one("#language-scroll", VerticalScroll)
+        width = scroll.content_region.width or scroll.size.width or 32
+        self.query_one("#language-list", Static).update(
+            build_language_summary(
+                stats,
+                self._theme_palette,
+                width=width,
+                highlighted_index=highlighted,
+            )
+        )
+        bar_widget = self.query_one("#language-bar", Static)
+        bar_width = bar_widget.content_region.width or bar_widget.size.width or max(8, width)
+        bar_widget.update(
+            build_language_bar(
+                stats,
+                self._theme_palette,
+                width=bar_width,
+                highlighted_index=highlighted,
+            )
+        )
+
+    def _language_rows(self) -> list[list[int]]:
+        scroll = self.query_one("#language-scroll", VerticalScroll)
+        width = scroll.content_region.width or scroll.size.width or 32
+        return language_legend_rows(self.context.language_stats, width)
+
+    def _set_language_index(self, new_index: int) -> None:
+        if new_index == self._language_index:
             return
-        files = sorted(self.context.files_by_language.get(event.option.id, []))
-        self.app.push_screen(LanguageFilesScreen(event.option.id, files))
+        self._language_index = new_index
+        self._render_language_summary()
+
+    def _move_language_linear(self, delta: int) -> None:
+        # left/right step through the legend in reading order, so every entry is
+        # reachable no matter how the rows wrap.
+        stats = self.context.language_stats
+        if not stats:
+            return
+        self._set_language_index(max(0, min(self._language_index + delta, len(stats) - 1)))
+
+    def _move_language_row(self, delta: int) -> None:
+        # up/down move between wrapped rows at the same column, so the highlight
+        # travels vertically the way the legend looks. With no row to land on we
+        # fall back to a linear step so the arrows always respond.
+        stats = self.context.language_stats
+        if not stats:
+            return
+        rows = self._language_rows()
+        row_index = next(
+            (r for r, row in enumerate(rows) if self._language_index in row), 0
+        )
+        column = (
+            rows[row_index].index(self._language_index)
+            if rows and self._language_index in rows[row_index]
+            else 0
+        )
+        target_row = row_index + delta
+        if 0 <= target_row < len(rows):
+            row = rows[target_row]
+            self._set_language_index(row[min(column, len(row) - 1)])
+        else:
+            self._move_language_linear(delta)
+
+    def _open_language_files(self) -> None:
+        stats = self.context.language_stats
+        if not stats:
+            return
+        item = stats[self._language_index]
+        language = str(item["language"])
+        files = sorted(self.context.files_by_language.get(language, []))
+        self.app.push_screen(LanguageFilesScreen(language, files))
 
     def _build_repo_stats_sub_title(self) -> str:
         return build_repo_stats_sub_title(self.context, self.scanned_file_count)
@@ -737,7 +843,10 @@ class MainScreen(Screen[None]):
             branch_data, commits = self._filtered_branch_data()
             self._set_selected_commit(commits, str(row_key), sync_table=False)
 
-    def action_open_commit(self) -> None:
+    def action_open(self) -> None:
+        if self.active_panel == "languages":
+            self._open_language_files()
+            return
         commit_hash = self.selected_commit_hash
         if not commit_hash:
             return
@@ -770,15 +879,21 @@ class MainScreen(Screen[None]):
         self._focus_active_panel()
 
     def action_cursor_up(self) -> None:
+        if self.active_panel == "languages":
+            self._move_language_row(-1)
+            return
         focused = self._panel_target(self.active_panel)
-        if isinstance(focused, (DataTable, OptionList)):
+        if isinstance(focused, DataTable):
             focused.action_cursor_up()
         elif isinstance(focused, VerticalScroll):
             focused.scroll_up(animate=False)
 
     def action_cursor_down(self) -> None:
+        if self.active_panel == "languages":
+            self._move_language_row(1)
+            return
         focused = self._panel_target(self.active_panel)
-        if isinstance(focused, (DataTable, OptionList)):
+        if isinstance(focused, DataTable):
             focused.action_cursor_down()
         elif isinstance(focused, VerticalScroll):
             focused.scroll_down(animate=False)

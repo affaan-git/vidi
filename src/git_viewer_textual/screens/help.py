@@ -19,6 +19,7 @@ SHORTCUTS: list[tuple[str, list[tuple[str, str]]]] = [
             ("j / k  or  up / down", "Move within the focused panel"),
             ("tab / shift+tab", "Switch between panels"),
             ("enter", "Open the commit, or the highlighted language's files"),
+            ("left / right", "Move between languages (Languages panel)"),
             ("h / l", "Select the older / newer active day"),
             ("[ / ]", "Step through years"),
             ("r", "Cycle the date range"),
@@ -51,6 +52,7 @@ SHORTCUTS: list[tuple[str, list[tuple[str, str]]]] = [
     (
         "Language files",
         [
+            ("up / down", "Scroll the file list"),
             ("esc / q", "Back to the main screen"),
         ],
     ),
@@ -72,7 +74,6 @@ class HelpScreen(ModalScreen[None]):
         max-height: 90%;
         padding: 1 2;
         border: round $primary;
-        background: $panel;
     }
 
     #help-title {
@@ -99,6 +100,11 @@ class HelpScreen(ModalScreen[None]):
 
     def on_mount(self) -> None:
         palette = resolve_theme_palette(self.app.current_theme)
+        # Match the branch picker and main panels: the app's own panel/overlay
+        # colors, not Textual's built-in $panel, so every modal frame renders the
+        # same against the same dim.
+        self.styles.background = palette.overlay
+        self.query_one("#help-box", Vertical).styles.background = palette.panel
         self.query_one("#help-title", Static).styles.color = palette.foreground
         self.query_one("#help-hint", Static).styles.color = palette.muted
 

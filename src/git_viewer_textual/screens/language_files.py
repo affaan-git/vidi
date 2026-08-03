@@ -7,13 +7,15 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Static
+from textual.widgets import Footer, Static
 
 from ..theme import make_style, resolve_theme_palette
 
 
 class LanguageFilesScreen(ModalScreen[None]):
     """Show the file list for one language."""
+
+    BACK_GROUP = Binding.Group("Back", compact=True)
 
     CSS = """
     LanguageFilesScreen {
@@ -27,7 +29,6 @@ class LanguageFilesScreen(ModalScreen[None]):
         max-height: 80%;
         padding: 0 2 1 2;
         border: round $primary;
-        background: $panel;
     }
 
     #language-files-title {
@@ -40,15 +41,13 @@ class LanguageFilesScreen(ModalScreen[None]):
         max-height: 22;
         scrollbar-gutter: stable;
     }
-
-    #language-files-hint {
-        margin-top: 1;
-    }
     """
 
     BINDINGS = [
-        Binding("escape", "close", "Close"),
-        Binding("q", "close", "Close"),
+        Binding("down", "scroll_down", "Down", show=False),
+        Binding("up", "scroll_up", "Up", show=False),
+        Binding("escape", "close", "Close", group=BACK_GROUP),
+        Binding("q", "close", "Close", show=False, group=BACK_GROUP),
     ]
 
     def __init__(self, language: str, files: list[str]) -> None:
@@ -61,16 +60,20 @@ class LanguageFilesScreen(ModalScreen[None]):
             yield Static(id="language-files-title")
             with VerticalScroll(id="language-files-scroll"):
                 yield Static(id="language-files-list")
-            yield Static("Press Esc to close", id="language-files-hint")
+        yield Footer()
 
     def on_mount(self) -> None:
         palette = resolve_theme_palette(self.app.current_theme)
+        # Match the branch picker and main panels: the app's own panel color, not
+        # Textual's built-in $panel, so every modal frame renders identically.
+        self.styles.background = palette.overlay
+        self.query_one("#language-files-box", Vertical).styles.background = palette.panel
         count = len(self._files)
         word = "file" if count == 1 else "files"
 
         title = Text()
         title.append(f"{self._language}  ", style=make_style(palette.foreground, bold=True))
-        title.append(f"{count} {word}", style=make_style(palette.muted))
+        title.append(f"{count} {word} across the repository", style=make_style(palette.muted))
         self.query_one("#language-files-title", Static).update(title)
 
         body = Text()
@@ -79,7 +82,16 @@ class LanguageFilesScreen(ModalScreen[None]):
                 body.append("\n")
             body.append(path, style=make_style(palette.foreground))
         self.query_one("#language-files-list", Static).update(body)
-        self.query_one("#language-files-hint", Static).styles.color = palette.muted
+
+        scroll = self.query_one("#language-files-scroll", VerticalScroll)
+        scroll.can_focus = True
+        scroll.focus()
+
+    def action_scroll_down(self) -> None:
+        self.query_one("#language-files-scroll", VerticalScroll).scroll_down(animate=False)
+
+    def action_scroll_up(self) -> None:
+        self.query_one("#language-files-scroll", VerticalScroll).scroll_up(animate=False)
 
     def action_close(self) -> None:
         self.dismiss()

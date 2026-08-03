@@ -10,7 +10,7 @@ from rich.console import Console
 from rich.text import Text
 from textual.color import Color
 from textual.binding import Binding
-from textual.widgets import DataTable, Footer, Header, OptionList
+from textual.widgets import DataTable, Footer, Header
 from textual.widgets import Input
 
 from git_viewer_textual.app import GitViewerApp
@@ -166,7 +166,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(getattr(app.focused, "id", None), "commits-table")
             self.assertEqual(app.screen.active_panel, "commits")
             self.assertTrue(app.screen.query_one("#day-details-scroll").can_focus)
-            self.assertTrue(app.screen.query_one("#language-list").can_focus)
+            self.assertTrue(app.screen.query_one("#language-scroll").can_focus)
 
             await pilot.press("tab")
             await pilot.pause()
@@ -174,7 +174,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
 
             await pilot.press("tab")
             await pilot.pause()
-            self.assertEqual(getattr(app.focused, "id", None), "language-list")
+            self.assertEqual(getattr(app.focused, "id", None), "language-scroll")
 
             await pilot.press("tab")
             await pilot.pause()
@@ -182,7 +182,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
 
             await pilot.press("shift+tab")
             await pilot.pause()
-            self.assertEqual(getattr(app.focused, "id", None), "language-list")
+            self.assertEqual(getattr(app.focused, "id", None), "language-scroll")
 
     async def test_help_overlay_opens_and_closes(self) -> None:
         app = make_app()
@@ -568,17 +568,21 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
         async with app.run_test() as pilot:
             self.assertEqual(len(app.screen.query("#language-bar")), 1)
             self.assertEqual(len(app.screen.query("#language-list")), 1)
-            self.assertEqual(len(app.screen.query("#language-summary")), 0)
-            self.assertEqual(len(app.screen.query("#language-summary-scroll")), 0)
-            option_list = app.screen.query_one("#language-list", OptionList)
-            self.assertTrue(option_list.can_focus)
-            self.assertGreater(option_list.option_count, 0)
+            scroll = app.screen.query_one("#language-scroll")
+            self.assertTrue(scroll.can_focus)
+            self.assertGreater(len(app.context.language_stats), 0)
 
             await pilot.press("tab")
             await pilot.press("tab")
             await pilot.pause()
-            self.assertEqual(getattr(app.focused, "id", None), "language-list")
-            self.assertEqual(option_list.highlighted, 0)
+            self.assertEqual(getattr(app.focused, "id", None), "language-scroll")
+            self.assertEqual(app.screen.active_panel, "languages")
+            self.assertEqual(app.screen._language_index, 0)
+
+            # arrow keys move the highlight within the panel
+            await pilot.press("down")
+            await pilot.pause()
+            self.assertEqual(app.screen._language_index, 1)
 
             await pilot.press("enter")
             await pilot.pause()

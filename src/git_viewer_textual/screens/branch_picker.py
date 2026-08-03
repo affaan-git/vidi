@@ -101,7 +101,7 @@ class BranchPickerScreen(ModalScreen[str | None]):
         container = self.query_one("#branch-picker", Static)
         container.styles.background = palette.panel
         container.styles.color = palette.foreground
-        container.styles.border = ("solid", palette.border)
+        container.styles.border = ("round", palette.primary)
 
         branch_filter = self.query_one("#branch-picker-filter", Input)
         branch_filter.styles.background = palette.surface

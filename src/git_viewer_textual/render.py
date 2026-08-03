@@ -13,6 +13,7 @@ from textual.color import Color
 from .data import RANGE_PRESETS, build_date_grid
 from .models import LanguageStat, ThemePalette
 from .theme import make_style
+from .utils import truncate_middle
 
 
 def resolve_heatmap_colors(palette: ThemePalette) -> tuple[str, list[str]]:
@@ -191,13 +192,90 @@ def build_language_title(
     return title
 
 
-def build_language_option(item: LanguageStat, palette: ThemePalette) -> Text:
-    """Render one selectable language row: a colored dot, the name, and share."""
-    text = Text()
-    text.append("● ", style=str(item["color"]))
-    text.append(str(item["language"]), style=make_style(palette.foreground))
-    text.append(f"  {float(item['percentage']):.1f}%", style=make_style(palette.muted))
-    return text
+LANGUAGE_ENTRY_SEPARATOR = 3
+
+
+def _language_label_width(width: int) -> int:
+    return max(6, min(16, width // 3))
+
+
+def _language_entry_text(item: LanguageStat, label_width: int) -> str:
+    return (
+        "● "
+        + truncate_middle(str(item["language"]), label_width)
+        + " "
+        + f"{float(item['percentage']):.1f}%"
+    )
+
+
+def language_legend_rows(language_stats: list[LanguageStat], width: int) -> list[list[int]]:
+    """Group language indices into the rows the wrapping legend will render.
+
+    The screen uses this to navigate the legend as a grid (up/down between rows,
+    left/right within the list) so the two views agree on where each entry sits.
+    """
+    label_width = _language_label_width(width)
+    rows: list[list[int]] = []
+    current: list[int] = []
+    current_width = 0
+    for index, item in enumerate(language_stats):
+        entry_width = len(_language_entry_text(item, label_width))
+        if current and current_width + LANGUAGE_ENTRY_SEPARATOR + entry_width > width:
+            rows.append(current)
+            current = []
+            current_width = 0
+        if current:
+            current_width += LANGUAGE_ENTRY_SEPARATOR
+        current.append(index)
+        current_width += entry_width
+    if current:
+        rows.append(current)
+    return rows
+
+
+def build_language_summary(
+    language_stats: list[LanguageStat],
+    palette: ThemePalette,
+    *,
+    width: int,
+    highlighted_index: int | None = None,
+) -> Group:
+    """Render the language breakdown as a compact, wrapping legend.
+
+    Entries flow left to right and wrap to a new line only when the next one
+    would exceed the panel width, so the list stays a few lines tall instead of
+    one row per language and rarely needs to scroll. The highlighted entry (only
+    while the panel is focused) is drawn bold in the accent color to show which
+    language Enter will open.
+    """
+    if not language_stats:
+        return Group(Text("No language data", style=make_style(palette.muted)))
+
+    label_width = _language_label_width(width)
+
+    def append_entry(line: Text, index: int) -> None:
+        item = language_stats[index]
+        highlighted = index == highlighted_index
+        line.append("● ", style=str(item["color"]))
+        line.append(
+            truncate_middle(str(item["language"]), label_width),
+            style=make_style(palette.primary if highlighted else palette.foreground, bold=highlighted),
+        )
+        line.append(" ", style=make_style(palette.muted))
+        line.append(
+            f"{float(item['percentage']):.1f}%",
+            style=make_style(palette.primary if highlighted else palette.muted, bold=highlighted),
+        )
+
+    lines: list[Text] = []
+    for row in language_legend_rows(language_stats, width):
+        line = Text()
+        for position, index in enumerate(row):
+            if position:
+                line.append(" " * LANGUAGE_ENTRY_SEPARATOR, style=make_style(palette.muted))
+            append_entry(line, index)
+        lines.append(line)
+    return Group(*lines)
 
 
 def build_language_bar(
@@ -205,6 +283,7 @@ def build_language_bar(
     palette: ThemePalette,
     *,
     width: int,
+    highlighted_index: int | None = None,
 ) -> Text:
     bar_width = max(8, width)
     if not language_stats:
@@ -232,10 +311,17 @@ def build_language_bar(
                 segment_widths[index] += 1
 
     bar = Text()
-    for item, segment_width in zip(language_stats, segment_widths):
+    for index, (item, segment_width) in enumerate(zip(language_stats, segment_widths)):
         if segment_width <= 0:
             continue
-        bar.append("█" * segment_width, style=str(item["color"]))
+        color = str(item["color"])
+        if index == highlighted_index:
+            # Brighten the selected segment toward the foreground, the same cue
+            # the contribution graph uses for the selected day.
+            brightened = Color.parse(color).blend(palette.foreground, 0.35).hex6
+            bar.append("█" * segment_width, style=f"bold {brightened}")
+        else:
+            bar.append("█" * segment_width, style=color)
 
     if not bar:
         bar.append("█" * bar_width, style=make_style(palette.surface))
