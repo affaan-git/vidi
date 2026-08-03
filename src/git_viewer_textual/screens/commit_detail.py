@@ -35,8 +35,14 @@ class CommitDetailScreen(ModalScreen[None]):
     COMMIT_GROUP = Binding.Group("Commit", compact=True)
 
     CSS = """
+    CommitDetailScreen {
+        background: $background;
+    }
+
     #commit-detail-summary-bar {
         padding: 0 1;
+        background: $surface;
+        border: solid $border;
     }
 
     #commit-detail-body {
@@ -47,6 +53,14 @@ class CommitDetailScreen(ModalScreen[None]):
 
     .commit-detail-panel {
         padding: 0 1 1 1;
+        background: $panel;
+        border: solid $border;
+    }
+
+    #commit-detail-overview-panel:focus-within,
+    #commit-detail-files-panel:focus-within,
+    #commit-detail-patch-panel:focus-within {
+        border: solid $primary;
     }
 
     .commit-detail-panel-title {
@@ -343,7 +357,6 @@ class CommitDetailScreen(ModalScreen[None]):
         if self.active_pane not in panes:
             self.active_pane = "patch" if self.show_full_patch and "patch" in panes else panes[0]
         target = self._pane_target(self.active_pane)
-        self._refresh_focus_styles()
         if self.focused is not target:
             target.focus()
 
@@ -368,38 +381,15 @@ class CommitDetailScreen(ModalScreen[None]):
             self.active_pane = preferred if preferred in available else available[0]
 
     def _apply_theme(self) -> None:
+        # Backgrounds and borders (including the :focus-within pane highlight)
+        # come from the registered theme via CSS; only the muted title color is
+        # not a standard theme variable.
         self._theme_palette = resolve_theme_palette(self.app.current_theme)
-        palette = self._theme_palette
-        self.styles.background = palette.background
-
-        summary_bar = self.query_one("#commit-detail-summary-bar", Static)
-        summary_bar.styles.background = palette.surface
-        summary_bar.styles.border = ("solid", palette.border)
-
-        for panel in self.query(".commit-detail-panel"):
-            panel.styles.background = palette.panel
-            panel.styles.border = ("solid", palette.border)
-
         for title in self.query(".commit-detail-panel-title"):
-            title.styles.color = palette.muted
-
-        self._refresh_focus_styles()
-
-    def _refresh_focus_styles(self) -> None:
-        palette = self._theme_palette
-        panel_ids = {
-            "overview": "#commit-detail-overview-panel",
-            "files": "#commit-detail-files-panel",
-            "patch": "#commit-detail-patch-panel",
-        }
-        for pane, selector in panel_ids.items():
-            panel = self.query_one(selector, Vertical)
-            border_color = palette.primary if pane == self.active_pane else palette.border
-            panel.styles.border = ("solid", border_color)
+            title.styles.color = self._theme_palette.muted
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
         self._sync_active_pane_from_focus()
-        self._refresh_focus_styles()
 
     def _apply_detail_layout(self) -> None:
         sidebar = self.query_one("#commit-detail-sidebar", Vertical)
@@ -514,7 +504,6 @@ class CommitDetailScreen(ModalScreen[None]):
         self._pending_focus_origin_id = None
         self._mode_transition_active = False
         self._force_requested_focus = False
-        self._refresh_focus_styles()
 
     def _render_detail_view(
         self,
@@ -529,7 +518,6 @@ class CommitDetailScreen(ModalScreen[None]):
             self.selected_file_index = 0
         if focus_target is not None:
             self.active_pane = focus_target
-            self._refresh_focus_styles()
         self._apply_detail_layout()
         self._diff_files_table().styles.display = "none" if self.show_full_patch else "block"
         self._outline_files_table().styles.display = "block" if self.show_full_patch else "none"
