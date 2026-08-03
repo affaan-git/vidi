@@ -10,6 +10,7 @@ from textual.binding import Binding
 from .models import RepoContext, RepoScanSnapshot
 from .repository import RepoService
 from .screens import HelpScreen, MainScreen
+from .theme import build_app_theme
 
 
 class GitViewerApp(App[None]):
@@ -39,6 +40,11 @@ class GitViewerApp(App[None]):
         self._initial_context_task: asyncio.Task[None] | None = None
 
     def on_mount(self) -> None:
+        # Register the palette as a Textual theme so CSS $vars and default widget
+        # styles resolve to the same colors the app paints programmatically.
+        app_theme = build_app_theme(self.current_theme)
+        self.register_theme(app_theme)
+        self.theme = app_theme.name
         self.title = f"{self.context.project_name} - Git Viewer"
         self.push_screen(MainScreen(self.context, self.service))
         if not self.context.language_stats or not self.context.files_by_language:

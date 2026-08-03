@@ -35,6 +35,51 @@ def make_change_stat_style(
     return make_style(palette.success if positive else palette.error, bold=True)
 
 
+APP_THEME_NAME = "git-viewer"
+
+
+def build_app_theme(source_theme: Theme, name: str = APP_THEME_NAME) -> Theme:
+    """Build a Textual theme whose variables equal the app palette.
+
+    The app derives a ThemePalette by blending from a base theme and then paints
+    Rich renderables with it. Registering that same palette as a Textual theme
+    makes CSS $vars, default widget styles (table cursor, option-list highlight,
+    scrollbars, input borders), and the programmatic palette all resolve to one
+    set of colors instead of diverging from Textual's stock theme.
+    """
+    palette = resolve_theme_palette(source_theme)
+    return Theme(
+        name=name,
+        primary=palette.primary.hex,
+        success=palette.success.hex,
+        error=palette.error.hex,
+        foreground=palette.foreground.hex,
+        background=palette.background.hex,
+        surface=palette.surface.hex,
+        panel=palette.panel.hex,
+        dark=source_theme.dark,
+        variables={
+            # Neutral borders match the panels; focused borders come from CSS.
+            "border": palette.border.hex,
+            "border-blurred": palette.border.hex,
+            # One selection color for the table cursor and the option-list.
+            "block-cursor-background": palette.selected_bg.hex,
+            "block-cursor-foreground": palette.selected_fg.hex,
+            "block-cursor-text-style": "none",
+            "block-cursor-blurred-background": palette.selected_bg.hex,
+            "block-cursor-blurred-foreground": palette.selected_fg.hex,
+            "block-cursor-blurred-text-style": "none",
+            # Scrollbars tinted from the palette instead of the stock theme.
+            "scrollbar": palette.surface.blend(palette.foreground, 0.22).hex,
+            "scrollbar-hover": palette.surface.blend(palette.foreground, 0.32).hex,
+            "scrollbar-active": palette.primary.hex,
+            "scrollbar-background": palette.panel.hex,
+            "scrollbar-background-hover": palette.panel.hex,
+            "scrollbar-background-active": palette.panel.hex,
+        },
+    )
+
+
 def resolve_theme_palette(theme: Theme) -> ThemePalette:
     primary = Color.parse(theme.primary)
     success = Color.parse(theme.success)
