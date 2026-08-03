@@ -15,6 +15,7 @@ from ..theme import make_style, resolve_theme_palette
 class LanguageFilesScreen(ModalScreen[None]):
     """Show the file list for one language."""
 
+    MOVE_GROUP = Binding.Group("Move", compact=True)
     BACK_GROUP = Binding.Group("Back", compact=True)
 
     CSS = """
@@ -44,10 +45,10 @@ class LanguageFilesScreen(ModalScreen[None]):
     """
 
     BINDINGS = [
-        Binding("down", "scroll_down", "Down", show=False),
-        Binding("up", "scroll_up", "Up", show=False),
-        Binding("escape", "close", "Close", group=BACK_GROUP),
-        Binding("q", "close", "Close", show=False, group=BACK_GROUP),
+        Binding("down", "scroll_down", "Down", priority=True, group=MOVE_GROUP),
+        Binding("up", "scroll_up", "Up", priority=True, group=MOVE_GROUP),
+        Binding("escape", "close", "Back", group=BACK_GROUP),
+        Binding("q", "close", "Back", show=False, group=BACK_GROUP),
     ]
 
     def __init__(self, language: str, files: list[str]) -> None:

@@ -323,6 +323,13 @@ class RepoService:
     def get_cached_scanned_file_count(self) -> int | None:
         return self._cached_scanned_file_count
 
+    def scanned_file_count(self, context: RepoContext) -> int:
+        """Scanned file count, preferring the cached scan and falling back to
+        the per-language file totals from the context."""
+        return self.get_cached_scanned_file_count() or sum(
+            len(files) for files in context.files_by_language.values()
+        )
+
     def _list_scanned_paths(self) -> list[str]:
         output = run_git(
             self.repo_dir,

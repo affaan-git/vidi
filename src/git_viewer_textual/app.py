@@ -32,7 +32,7 @@ class GitViewerApp(App[None]):
             branch_heads=context.branch_heads,
             current_branch=context.current_branch,
             repo_commit_count=context.repo_commit_count,
-            scanned_file_count=sum(len(files) for files in context.files_by_language.values()),
+            scanned_file_count=service.scanned_file_count(context),
         )
         self._repo_scan_in_flight = False
         self._repo_scan_task: asyncio.Task[None] | None = None
@@ -91,10 +91,7 @@ class GitViewerApp(App[None]):
                 branch_heads=new_context.branch_heads,
                 current_branch=new_context.current_branch,
                 repo_commit_count=new_context.repo_commit_count,
-                scanned_file_count=(
-                    self.service.get_cached_scanned_file_count()
-                    or sum(len(files) for files in new_context.files_by_language.values())
-                ),
+                scanned_file_count=self.service.scanned_file_count(new_context),
             )
             self._apply_refreshed_context(
                 previous_context,

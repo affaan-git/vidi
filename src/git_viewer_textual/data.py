@@ -146,6 +146,30 @@ def _build_patch_section(lines: list[str]) -> CommitPatchSection:
     )
 
 
+def section_for_change(
+    sections: tuple[CommitPatchSection, ...],
+    index: int,
+    change: CommitFileChange,
+) -> CommitPatchSection | None:
+    """Find the patch section for a file change.
+
+    Prefer the index-aligned section (file changes and patch sections come out
+    of git in the same order), then fall back to a path match.
+    """
+    if 0 <= index < len(sections):
+        candidate = sections[index]
+        if candidate.path == change.path or candidate.new_path == change.path:
+            return candidate
+    return next(
+        (
+            section
+            for section in sections
+            if section.path == change.path or section.new_path == change.path
+        ),
+        None,
+    )
+
+
 def display_label_for_change(
     change: CommitFileChange,
     section: CommitPatchSection | None,

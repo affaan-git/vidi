@@ -13,12 +13,15 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import DataTable, Footer, Header, Static
 
-from ..data import compact_label_for_change
+from ..data import compact_label_for_change, section_for_change
 from ..formatting import build_repo_stats_sub_title
 from ..models import CommitFileChange, CommitPatchSection, RepoContext, RepoScanSnapshot
 from ..repository import RepoService
 from ..theme import make_change_stat_style, make_style, resolve_theme_palette
 from ..utils import rel_time, utc_now
+
+# Coalesce the resize event burst so the view re-renders once per settle.
+RESIZE_DEBOUNCE_SECONDS = 0.05
 
 
 class CommitDetailScreen(ModalScreen[None]):
@@ -284,7 +287,7 @@ class CommitDetailScreen(ModalScreen[None]):
         # patch text on resize; only the layout and table columns need to react.
         if self._resize_timer is not None:
             self._resize_timer.stop()
-        self._resize_timer = self.set_timer(0.05, self._render_after_resize)
+        self._resize_timer = self.set_timer(RESIZE_DEBOUNCE_SECONDS, self._render_after_resize)
 
     def _render_after_resize(self) -> None:
         self._resize_timer = None
@@ -624,11 +627,7 @@ class CommitDetailScreen(ModalScreen[None]):
 
     def _build_repo_stats_sub_title(self) -> str:
         context = self.app.context
-        scanned_file_count = (
-            self.service.get_cached_scanned_file_count()
-            or sum(len(files) for files in context.files_by_language.values())
-        )
-        return build_repo_stats_sub_title(context, scanned_file_count)
+        return build_repo_stats_sub_title(context, self.service.scanned_file_count(context))
 
     def _files_table_layout(self, table: DataTable | None = None) -> tuple[int, int, int]:
         table = table or self._current_files_table()
@@ -667,18 +666,7 @@ class CommitDetailScreen(ModalScreen[None]):
         index: int,
         change: CommitFileChange,
     ) -> CommitPatchSection | None:
-        if 0 <= index < len(self.detail.patch_sections):
-            candidate = self.detail.patch_sections[index]
-            if candidate.path == change.path or candidate.new_path == change.path:
-                return candidate
-        return next(
-            (
-                item
-                for item in self.detail.patch_sections
-                if item.path == change.path or item.new_path == change.path
-            ),
-            None,
-        )
+        return section_for_change(self.detail.patch_sections, index, change)
 
     def _display_label_for_file(self, index: int) -> str:
         if not (0 <= index < len(self.detail.file_changes)):

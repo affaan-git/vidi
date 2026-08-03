@@ -20,13 +20,14 @@ from ..data import (
     compact_label_for_change,
     filter_commits,
     resolve_graph_window,
+    section_for_change,
 )
 from ..formatting import (
     append_file_change_summary_line,
     build_commit_identity_line,
     build_repo_stats_sub_title,
 )
-from ..models import BranchData, CommitFileChange, CommitPatchSection, CommitRecord, RepoContext
+from ..models import BranchData, CommitRecord, RepoContext
 from ..render import (
     build_graph_title,
     build_language_bar,
@@ -41,6 +42,14 @@ from ..utils import rel_time, truncate_middle, utc_now
 from .branch_picker import BranchPickerScreen
 from .commit_detail import CommitDetailScreen
 from .language_files import LanguageFilesScreen
+
+# Cap the commit table at a readable window; the graph and details cover the rest.
+MAX_VISIBLE_COMMITS = 30
+# Coalesce the resize event burst so the view re-renders once per settle.
+RESIZE_DEBOUNCE_SECONDS = 0.05
+# Column widths shared with the truncation budget so the two never drift apart.
+COMMIT_MESSAGE_WIDTH = 28
+COMMIT_AUTHOR_WIDTH = 12
 
 
 class CommitTable(DataTable):
@@ -240,10 +249,7 @@ class MainScreen(Screen[None]):
         self.active_panel = "commits"
         self._language_index = 0
         self._resize_timer = None
-        self.scanned_file_count = (
-            service.get_cached_scanned_file_count()
-            or sum(len(files) for files in context.files_by_language.values())
-        )
+        self.scanned_file_count = service.scanned_file_count(context)
         self._theme_palette = resolve_theme_palette(self.app.current_theme)
         self._branch_data_cache: dict[str, BranchData] = {}
         if initial_branch is not None:
@@ -282,8 +288,8 @@ class MainScreen(Screen[None]):
         commits_table.cursor_type = "row"
         commits_table.show_horizontal_scrollbar = False
         commits_table.add_column("Hash", width=8)
-        commits_table.add_column("Message", width=28)
-        commits_table.add_column("Author", width=12)
+        commits_table.add_column("Message", width=COMMIT_MESSAGE_WIDTH)
+        commits_table.add_column("Author", width=COMMIT_AUTHOR_WIDTH)
         commits_table.add_column("When", width=7)
         commits_table.add_column("Files", width=5)
 
@@ -356,7 +362,7 @@ class MainScreen(Screen[None]):
         # graph and details only re-render once the size settles.
         if self._resize_timer is not None:
             self._resize_timer.stop()
-        self._resize_timer = self.set_timer(0.05, self._render_after_resize)
+        self._resize_timer = self.set_timer(RESIZE_DEBOUNCE_SECONDS, self._render_after_resize)
 
     def _render_after_resize(self) -> None:
         self._resize_timer = None
@@ -528,7 +534,7 @@ class MainScreen(Screen[None]):
             commit.authored_date for commit in commits
         )
         if sync_table and self.selected_commit_hash:
-            visible_hashes = [commit.commit_hash for commit in commits[:30]]
+            visible_hashes = [commit.commit_hash for commit in commits[:MAX_VISIBLE_COMMITS]]
             if self.selected_commit_hash in visible_hashes:
                 table = self.query_one("#commits-table", DataTable)
                 row_index = visible_hashes.index(self.selected_commit_hash)
@@ -556,18 +562,18 @@ class MainScreen(Screen[None]):
         table.scroll_home(immediate=True, x_axis=True, y_axis=True)
         table.clear(columns=False)
         now = utc_now()
-        for commit in commits[:30]:
+        for commit in commits[:MAX_VISIBLE_COMMITS]:
             table.add_row(
                 commit.commit_hash[:7],
-                truncate_middle(commit.message, 28),
-                truncate_middle(commit.author_name, 12),
+                truncate_middle(commit.message, COMMIT_MESSAGE_WIDTH),
+                truncate_middle(commit.author_name, COMMIT_AUTHOR_WIDTH),
                 rel_time(commit.authored_at, now),
                 str(len(commit.changed_files)),
                 key=commit.commit_hash,
             )
-        if self.selected_commit_hash in {commit.commit_hash for commit in commits[:30]}:
+        if self.selected_commit_hash in {commit.commit_hash for commit in commits[:MAX_VISIBLE_COMMITS]}:
             try:
-                row_index = [commit.commit_hash for commit in commits[:30]].index(
+                row_index = [commit.commit_hash for commit in commits[:MAX_VISIBLE_COMMITS]].index(
                     self.selected_commit_hash
                 )
                 table.move_cursor(row=row_index, animate=False, scroll=True)
@@ -648,11 +654,7 @@ class MainScreen(Screen[None]):
         )
         for index, change in enumerate(commit_detail.file_changes):
             suffix = "\n" if index < len(commit_detail.file_changes) - 1 else ""
-            section = self._section_for_change(
-                commit_detail.file_changes,
-                commit_detail.patch_sections,
-                change,
-            )
+            section = section_for_change(commit_detail.patch_sections, index, change)
             append_file_change_summary_line(
                 details,
                 palette,
@@ -667,29 +669,6 @@ class MainScreen(Screen[None]):
             self.query_one("#day-details-scroll", VerticalScroll).scroll_home(
                 animate=False
             )
-
-    def _section_for_change(
-        self,
-        changes: tuple[CommitFileChange, ...],
-        sections: tuple[CommitPatchSection, ...],
-        change: CommitFileChange,
-    ) -> CommitPatchSection | None:
-        for index, candidate in enumerate(changes):
-            if candidate != change:
-                continue
-            if 0 <= index < len(sections):
-                section = sections[index]
-                if section.path == change.path or section.new_path == change.path:
-                    return section
-                break
-        return next(
-            (
-                section
-                for section in sections
-                if section.path == change.path or section.new_path == change.path
-            ),
-            None,
-        )
 
     def _refresh_language_panel(self) -> None:
         self.query_one("#language-title", Static).update(
@@ -800,10 +779,7 @@ class MainScreen(Screen[None]):
         new_snapshot: object,
     ) -> None:
         self.context = new_context
-        self.scanned_file_count = (
-            self.service.get_cached_scanned_file_count()
-            or sum(len(files) for files in new_context.files_by_language.values())
-        )
+        self.scanned_file_count = self.service.scanned_file_count(new_context)
         if self.selected_branch not in new_context.branches:
             self.selected_branch = (
                 new_context.current_branch
