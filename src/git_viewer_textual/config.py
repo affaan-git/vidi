@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
-CONFIG_DIR = Path.home() / ".config" / "git-viewer-textual"
+_config_home = os.environ.get("XDG_CONFIG_HOME")
+CONFIG_DIR = (Path(_config_home) if _config_home else Path.home() / ".config") / "git-viewer-textual"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 
 
