@@ -95,6 +95,19 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(context.initial_branch_data)
         self.assertIsNone(service.get_cached_scanned_file_count())
 
+    async def test_lightweight_app_warms_language_data_on_mount(self) -> None:
+        # The deferred context starts with no language data; on_mount must kick
+        # off the warm-up scan that fills it in (a regression guard: the warm-up
+        # once got detached from on_mount and languages stayed empty forever).
+        app = make_lightweight_app()
+        async with app.run_test() as pilot:
+            task = app._initial_context_task
+            if task is not None:
+                await task
+            await pilot.pause()
+            self.assertGreater(len(app.context.language_stats), 0)
+            self.assertIn("files", app.screen.sub_title)
+
     async def test_commit_detail_uses_same_builtin_header_without_clock(self) -> None:
         app = make_app()
         async with app.run_test() as pilot:

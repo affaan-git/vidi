@@ -59,6 +59,9 @@ class GitViewerApp(App[None]):
         self.watch(self, "theme", self._persist_theme, init=False)
         self.title = f"{self.context.project_name} - Git Viewer"
         self.push_screen(MainScreen(self.context, self.service))
+        if not self.context.language_stats or not self.context.files_by_language:
+            self._initial_context_task = asyncio.create_task(self._warm_initial_context())
+        self._schedule_next_repo_scan(self.REPO_SCAN_DEFAULT_SECONDS)
 
     def _persist_theme(self, theme_name: str) -> None:
         config.save_theme(theme_name)
@@ -108,9 +111,6 @@ class GitViewerApp(App[None]):
         for theme in app_themes(self._theme_source, transparent=self.transparent_background):
             self.register_theme(theme)
         self.theme = self.current_theme.name
-        if not self.context.language_stats or not self.context.files_by_language:
-            self._initial_context_task = asyncio.create_task(self._warm_initial_context())
-        self._schedule_next_repo_scan(self.REPO_SCAN_DEFAULT_SECONDS)
 
     def on_unmount(self) -> None:
         if self._repo_scan_task is not None:
