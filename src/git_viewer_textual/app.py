@@ -59,7 +59,7 @@ class GitViewerApp(App[None]):
         self.theme = saved if saved in self.available_themes else APP_THEME_NAME
         self._apply_transparency()
         self.watch(self, "theme", self._persist_theme, init=False)
-        self.title = f"{self.context.project_name} - Git Viewer"
+        self.title = self.context.project_name
         self.push_screen(MainScreen(self.context, self.service))
         if not self.context.language_stats or not self.context.files_by_language:
             self._initial_context_task = asyncio.create_task(self._warm_initial_context())
