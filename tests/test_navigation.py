@@ -14,7 +14,12 @@ from textual.widgets import DataTable, Footer, Header, OptionList
 from textual.widgets import Input
 
 from git_viewer_textual.app import GitViewerApp
-from git_viewer_textual.data import compact_label_for_change, filter_commits, resolve_graph_window
+from git_viewer_textual.data import (
+    compact_label_for_change,
+    compact_path_label,
+    filter_commits,
+    resolve_graph_window,
+)
 from git_viewer_textual.formatting import (
     append_file_change_summary_line,
     build_commit_identity_line,
@@ -1153,6 +1158,21 @@ class FilterTests(unittest.TestCase):
         self.assertIn("->", compact)
         self.assertIn(".tsx", compact)
         self.assertLessEqual(len(compact), 32)
+
+    def test_compact_path_label_narrow_widths(self) -> None:
+        # a root file never gets a misleading "…/" parent prefix
+        for width in range(5, 12):
+            root = compact_path_label("README.md", width)
+            self.assertFalse(root.startswith("…/"), (width, root))
+            self.assertLessEqual(len(root), width)
+            self.assertEqual(root.count("…"), 0 if root == "README.md" else 1, (width, root))
+
+        # a nested file keeps its start and extension with a single ellipsis
+        nested = compact_path_label("src/a/commit_files.py", 12)
+        self.assertLessEqual(len(nested), 12)
+        self.assertTrue(nested.endswith(".py"), nested)
+        self.assertEqual(nested.count("…"), 1, nested)
+        self.assertTrue(nested.startswith("commit"), nested)
 
     def test_build_language_title_stays_compact_but_keeps_top_language_when_width_allows(self) -> None:
         app = make_app()

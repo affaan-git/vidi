@@ -209,18 +209,32 @@ def compact_label_for_change(
     return f"{compact}{suffix}"
 
 
+def _ellipsize_filename(name: str, max_len: int) -> str:
+    """Shorten a filename to fit, keeping its (distinctive) start and, when there
+    is room, its extension, with a single ellipsis: commit_files.py -> commit_f….py."""
+    if len(name) <= max_len:
+        return name
+    if max_len <= 1:
+        return "…"
+    dot = name.rfind(".")
+    ext = name[dot:] if 0 < dot < len(name) - 1 else ""
+    if ext and len(ext) + 2 <= max_len:
+        return f"{name[:max_len - 1 - len(ext)]}…{ext}"
+    return f"{name[:max_len - 1]}…"
+
+
 def compact_path_label(path: str, max_len: int) -> str:
     if len(path) <= max_len:
         return path
     parts = [part for part in path.split("/") if part]
     if not parts:
-        return truncate_middle(path, max_len)
+        return _ellipsize_filename(path, max_len)
 
     filename = parts[-1]
-    if max_len <= 4:
-        return truncate_middle(filename, max_len)
-    if len(filename) >= max_len - 2:
-        return f"…/{truncate_middle(filename, max_len - 2)}"
+    # No room to prefix a parent dir ("…/parent/file"), so show the filename
+    # alone, truncated -- never a bare "…/" (misleading, esp. for root files).
+    if len(filename) + 2 > max_len:
+        return _ellipsize_filename(filename, max_len)
 
     label = filename
     for parent in reversed(parts[:-1]):
