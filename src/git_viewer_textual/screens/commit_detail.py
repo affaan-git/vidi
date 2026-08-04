@@ -154,8 +154,8 @@ class CommitDetailScreen(ModalScreen[None]):
     BINDINGS = [
         Binding("down", "cursor_down", "Down", priority=True, group=MOVE_GROUP),
         Binding("up", "cursor_up", "Up", priority=True, group=MOVE_GROUP),
-        Binding("j", "cursor_down", "Down", priority=True, show=False),
-        Binding("k", "cursor_up", "Up", priority=True, show=False),
+        Binding("j", "nav_down", "Down", priority=True, show=False),
+        Binding("k", "nav_up", "Up", priority=True, show=False),
         Binding("tab", "focus_next_pane", "Next Pane", priority=True, group=PANE_GROUP),
         Binding(
             "shift+tab",
@@ -176,6 +176,7 @@ class CommitDetailScreen(ModalScreen[None]):
         Binding("slash", "open_search", "Search"),
         Binding("n", "next_match", "Next Match", group=SEARCH_GROUP),
         Binding("N", "prev_match", "Prev Match", group=SEARCH_GROUP),
+        Binding("shift+enter", "prev_match", "Prev Match", show=False, priority=True),
         Binding("escape", "close_screen", "Back", group=BACK_GROUP),
         Binding("q", "close_screen", "Back", show=False, group=BACK_GROUP),
     ]
@@ -906,15 +907,12 @@ class CommitDetailScreen(ModalScreen[None]):
             return False
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        # While typing a search, the input needs every key; without this the
-        # priority scroll/pane bindings would steal them.
+        # While typing a search, only j/k and the pane keys yield to the input;
+        # the arrows (and page/jump keys) still drive the focused pane so you can
+        # move through the patch or files list while filtering.
         if self._search_focused() and action in (
-            "cursor_down",
-            "cursor_up",
-            "page_down",
-            "page_up",
-            "scroll_top",
-            "scroll_bottom",
+            "nav_down",
+            "nav_up",
             "focus_next_pane",
             "focus_prev_pane",
         ):
@@ -946,18 +944,17 @@ class CommitDetailScreen(ModalScreen[None]):
             self._render_files_meta()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        # Enter keeps the filter/highlights and moves into the list or patch.
+        # Patch search: Enter steps to the next match (Shift+Enter / N steps back).
+        # Files filter: Enter moves into the (narrowed) files table.
         if event.input.id == "commit-detail-search":
-            self._active_patch_scroll().focus()
+            self.action_next_match()
         elif event.input.id == "commit-detail-files-filter":
             self._current_files_table().focus()
 
     def _close_search(self) -> None:
-        inp = self._search_input()
-        inp.value = ""
-        inp.display = False
-        self._search_query = ""
-        self._apply_patch_search(recompute=True)
+        # Hide the box but keep the matches + highlights, so n / N still step
+        # through them in the patch (Esc again then closes the screen).
+        self._search_input().display = False
         self._active_patch_scroll().focus()
 
     def _close_files_filter(self) -> None:
@@ -1240,6 +1237,13 @@ class CommitDetailScreen(ModalScreen[None]):
             target.action_cursor_down()
         else:
             target.scroll_down(animate=False)
+
+    # j / k -- separate actions so they yield to a search box while typing
+    def action_nav_down(self) -> None:
+        self.action_cursor_down()
+
+    def action_nav_up(self) -> None:
+        self.action_cursor_up()
 
     def action_page_up(self) -> None:
         target = self._scroll_target()

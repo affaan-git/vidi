@@ -69,11 +69,12 @@ class FileViewScreen(ModalScreen[None]):
     BINDINGS = [
         Binding("down", "scroll_down", "Down", priority=True, group=MOVE_GROUP),
         Binding("up", "scroll_up", "Up", priority=True, group=MOVE_GROUP),
-        Binding("j", "scroll_down", "Down", priority=True, show=False),
-        Binding("k", "scroll_up", "Up", priority=True, show=False),
+        Binding("j", "nav_down", "Down", priority=True, show=False),
+        Binding("k", "nav_up", "Up", priority=True, show=False),
         Binding("slash", "open_search", "Search"),
         Binding("n", "next_match", "Next Match", group=SEARCH_GROUP),
         Binding("N", "prev_match", "Prev Match", group=SEARCH_GROUP),
+        Binding("shift+enter", "prev_match", "Prev Match", show=False, priority=True),
         Binding("pageup", "page_up", "Page Up", priority=True, group=PAGE_GROUP),
         Binding("pagedown", "page_down", "Page Down", priority=True, group=PAGE_GROUP),
         Binding("home", "scroll_top", "Top", priority=True, group=JUMP_GROUP),
@@ -205,16 +206,9 @@ class FileViewScreen(ModalScreen[None]):
             return False
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        # While typing a search, the input needs up/down/j/k etc.; without this
-        # the priority scroll bindings would steal them.
-        if self._search_focused() and action in (
-            "scroll_down",
-            "scroll_up",
-            "page_down",
-            "page_up",
-            "scroll_top",
-            "scroll_bottom",
-        ):
+        # While typing a search, only j/k need to reach the input (as text); the
+        # arrows and page/jump keys keep scrolling so you can read around matches.
+        if self._search_focused() and action in ("nav_down", "nav_up"):
             return False
         return True
 
@@ -234,9 +228,9 @@ class FileViewScreen(ModalScreen[None]):
             self._scroll_to_current()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        # Enter keeps the search highlights and moves into the content.
+        # Enter steps to the next match (Shift+Enter / N steps back); Esc closes.
         if event.input.id == "file-view-search":
-            self._scroll().focus()
+            self.action_next_match()
 
     def _recompute_matches(self) -> None:
         query = self._query.lower()
@@ -288,12 +282,9 @@ class FileViewScreen(ModalScreen[None]):
         self._scroll().scroll_to(y=max(0, target - 2), animate=False)
 
     def _close_search(self) -> None:
-        inp = self._search_input()
-        inp.value = ""
-        inp.display = False
-        self._query = ""
-        self._recompute_matches()
-        self._render_view()
+        # Hide the box but keep the matches + highlights, so n / N still step
+        # through them on the content (Esc again then closes the screen).
+        self._search_input().display = False
         self._scroll().focus()
 
     # -- file stepping -----------------------------------------------------
@@ -321,6 +312,13 @@ class FileViewScreen(ModalScreen[None]):
 
     def action_scroll_up(self) -> None:
         self._scroll().scroll_up(animate=False)
+
+    # j / k -- separate action so it can yield to the search box while typing
+    def action_nav_down(self) -> None:
+        self.action_scroll_down()
+
+    def action_nav_up(self) -> None:
+        self.action_scroll_up()
 
     def action_page_down(self) -> None:
         self._scroll().scroll_page_down(animate=False)

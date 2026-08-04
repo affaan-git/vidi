@@ -947,23 +947,30 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(screen._match_lines, expected)
             self.assertEqual(screen._current_match, 0)
 
-            # Enter moves into the content; n / N cycle matches
+            # Enter steps to the next match while the box is focused
             await pilot.press("enter")
             await pilot.pause()
-            self.assertTrue(screen._scroll().has_focus)
-            await pilot.press("n")
-            await pilot.pause()
             self.assertEqual(screen._current_match, 1)
-            await pilot.press("N")
-            await pilot.pause()
-            self.assertEqual(screen._current_match, 0)
 
-            # Esc clears the search but keeps the file open
+            # Esc closes the box, keeps the matches, focuses the content
             await pilot.press("escape")
             await pilot.pause()
             self.assertFalse(screen.query_one("#file-view-search", Input).display)
-            self.assertEqual(screen._match_lines, [])
-            self.assertIsInstance(app.screen, FileViewScreen)
+            self.assertTrue(screen._scroll().has_focus)
+            self.assertEqual(screen._match_lines, expected)
+
+            # n / N step matches on the content
+            await pilot.press("N")
+            await pilot.pause()
+            self.assertEqual(screen._current_match, 0)
+            await pilot.press("n")
+            await pilot.pause()
+            self.assertEqual(screen._current_match, 1)
+
+            # Esc again closes the screen
+            await pilot.press("escape")
+            await pilot.pause()
+            self.assertNotEqual(type(app.screen).__name__, "FileViewScreen")
 
     async def test_commit_detail_patch_search(self) -> None:
         app = make_app()
@@ -985,6 +992,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertIsNotNone(token)
             expected = [i for i, ln in enumerate(lines) if token in ln.lower()]
+            self.assertGreaterEqual(len(expected), 2)
 
             await pilot.press("slash")
             await pilot.pause()
@@ -994,23 +1002,30 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(screen._match_lines, expected)
             self.assertEqual(screen._current_match, 0)
 
-            # Enter moves into the patch; n / N cycle matches
+            # Enter steps to the next match while the box is focused
             await pilot.press("enter")
             await pilot.pause()
-            self.assertTrue(screen._active_patch_scroll().has_focus)
-            await pilot.press("n")
-            await pilot.pause()
             self.assertEqual(screen._current_match, 1)
-            await pilot.press("N")
-            await pilot.pause()
-            self.assertEqual(screen._current_match, 0)
 
-            # Esc clears the search but keeps the detail screen open
+            # Esc closes the box, keeps the matches, focuses the patch
             await pilot.press("escape")
             await pilot.pause()
             self.assertFalse(screen.query_one("#commit-detail-search", Input).display)
-            self.assertEqual(screen._match_lines, [])
-            self.assertEqual(type(app.screen).__name__, "CommitDetailScreen")
+            self.assertTrue(screen._active_patch_scroll().has_focus)
+            self.assertEqual(screen._match_lines, expected)
+
+            # n / N step matches in the patch
+            await pilot.press("N")
+            await pilot.pause()
+            self.assertEqual(screen._current_match, 0)
+            await pilot.press("n")
+            await pilot.pause()
+            self.assertEqual(screen._current_match, 1)
+
+            # Esc again closes the screen
+            await pilot.press("escape")
+            await pilot.pause()
+            self.assertEqual(type(app.screen).__name__, "MainScreen")
 
     async def test_branch_picker_shows_ahead_behind(self) -> None:
         from git_viewer_textual.screens.branch_picker import BranchPickerScreen

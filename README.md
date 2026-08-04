@@ -104,6 +104,7 @@ Press `?` at any time for the in-app reference.
 | `p` | Toggle file diff and full patch |
 | `f` | Browse this commit's files |
 | `/` | Filter the files list (on the files pane) or search the patch |
+| `Enter` / `Shift+Enter` | Next / previous patch match while searching |
 | `n` / `N` | Next / previous patch match |
 | `PageUp` / `PageDown` | Scroll by a page |
 | `Home` / `End` | Jump to the top or bottom |
@@ -137,8 +138,9 @@ Files changed in the commit are marked with a dot.
 
 | Key | Action |
 | --- | --- |
-| `j` / `k` (or arrows) | Scroll |
+| `j` / `k` (or arrows) | Scroll (arrows scroll even while searching) |
 | `/` | Search in the file |
+| `Enter` / `Shift+Enter` | Next / previous match while searching |
 | `n` / `N` | Next / previous match |
 | `[` / `]` | Previous / next file |
 | `PageUp` / `PageDown` | Scroll by a page |

@@ -266,8 +266,8 @@ class MainScreen(Screen[None]):
     BINDINGS = [
         Binding("down", "cursor_down", "Down", priority=True, group=MOVE_GROUP),
         Binding("up", "cursor_up", "Up", priority=True, group=MOVE_GROUP),
-        Binding("j", "cursor_down", "Down", priority=True, show=False),
-        Binding("k", "cursor_up", "Up", priority=True, show=False),
+        Binding("j", "nav_down", "Down", priority=True, show=False),
+        Binding("k", "nav_up", "Up", priority=True, show=False),
         Binding("tab", "focus_next_panel", "Next Panel", priority=True, group=PANEL_GROUP),
         Binding(
             "shift+tab",
@@ -884,9 +884,9 @@ class MainScreen(Screen[None]):
             return False
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        # While typing in the commit filter, let the input keep every key it
-        # needs -- otherwise the priority up/down/j/k bindings would hijack them.
-        if action in ("cursor_down", "cursor_up") and self._commit_filter_focused():
+        # While typing in the commit filter, only j/k yield to the input (as
+        # text); the arrows still move (and preview) rows in the filtered table.
+        if action in ("nav_down", "nav_up") and self._commit_filter_focused():
             return False
         return True
 
@@ -1020,6 +1020,13 @@ class MainScreen(Screen[None]):
             focused.action_cursor_up()
         elif isinstance(focused, VerticalScroll):
             focused.scroll_up(animate=False)
+
+    # j / k -- separate actions so they yield to the commit filter while typing
+    def action_nav_down(self) -> None:
+        self.action_cursor_down()
+
+    def action_nav_up(self) -> None:
+        self.action_cursor_up()
 
     def action_cursor_down(self) -> None:
         panel = self.active_panel

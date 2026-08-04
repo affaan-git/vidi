@@ -39,6 +39,7 @@ SHORTCUTS: list[tuple[str, list[tuple[str, str]]]] = [
             ("p", "Toggle file diff and full patch"),
             ("f", "Browse this commit's files"),
             ("/", "Filter the files list, or search the patch"),
+            ("enter / shift+enter", "Next / previous patch match while searching"),
             ("n / N", "Next / previous patch match"),
             ("page up / page down", "Scroll by a page"),
             ("home / end", "Jump to the top or bottom"),
@@ -67,8 +68,9 @@ SHORTCUTS: list[tuple[str, list[tuple[str, str]]]] = [
     (
         "File view",
         [
-            ("j / k  or  up / down", "Scroll"),
+            ("j / k  or  up / down", "Scroll (arrows scroll even while searching)"),
             ("/", "Search in the file"),
+            ("enter / shift+enter", "Next / previous match while searching"),
             ("n / N", "Next / previous match"),
             ("[ / ]", "Previous / next file"),
             ("page up / page down", "Scroll by a page"),
