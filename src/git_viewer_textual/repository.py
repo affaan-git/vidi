@@ -322,11 +322,13 @@ class RepoService:
         self.get_branch_data = lru_cache(maxsize=64)(self._branch_data)
         self.get_commit_detail = lru_cache(maxsize=256)(self._commit_detail)
         self.get_commit_language_stats = lru_cache(maxsize=128)(self._commit_language_stats)
+        self.get_commit_files = lru_cache(maxsize=128)(self._commit_files)
 
     def invalidate_cached_git_data(self) -> None:
         self.get_branch_data.cache_clear()
         self.get_commit_detail.cache_clear()
         self.get_commit_language_stats.cache_clear()
+        self.get_commit_files.cache_clear()
 
     def update_language_settings(
         self,
@@ -340,6 +342,7 @@ class RepoService:
         self.extra_ignored_dirs = set(extra_ignored_dirs)
         self.ignore_dirs = _resolve_ignore_dirs(self.repo_dir, self.extra_ignored_dirs)
         self.get_commit_language_stats.cache_clear()
+        self.get_commit_files.cache_clear()
         # The header file count honours the same excludes, so recount it too.
         self._cached_scanned_file_count = self._count_scanned_paths(
             self._list_scanned_paths()
@@ -393,6 +396,17 @@ class RepoService:
         for language in files_by_language:
             files_by_language[language].sort()
         return stats, files_by_language
+
+    def _commit_files(self, commit_hash: str) -> list[str]:
+        """Every file in the tree AT a commit (the whole tree, not language
+        filtered), skipping ignored directories; sorted for stable browsing."""
+        output = run_git(self.repo_dir, ["ls-tree", "-r", "--name-only", commit_hash])
+        files = [
+            path
+            for path in output.splitlines()
+            if path and not any(component in self.ignore_dirs for component in path.split("/"))
+        ]
+        return sorted(files)
 
     def get_cached_scanned_file_count(self) -> int | None:
         return self._cached_scanned_file_count

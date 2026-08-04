@@ -19,6 +19,7 @@ SHORTCUTS: list[tuple[str, list[tuple[str, str]]]] = [
             ("j / k  or  up / down", "Move within the focused panel"),
             ("tab / shift+tab", "Switch between panels"),
             ("enter", "Open the commit, or the highlighted language's files"),
+            ("f", "Browse the highlighted commit's files"),
             ("left / right", "Languages: prev / next; Graph: back / forward a week"),
             ("h / l", "Select the older / newer active day"),
             ("[ / ]", "Step through years"),
@@ -35,6 +36,7 @@ SHORTCUTS: list[tuple[str, list[tuple[str, str]]]] = [
             ("tab / shift+tab", "Switch between panes"),
             ("[ / ]", "Previous / next commit"),
             ("p", "Toggle file diff and full patch"),
+            ("f", "Browse this commit's files"),
             ("page up / page down", "Scroll by a page"),
             ("home / end", "Jump to the top or bottom"),
             ("esc / q", "Back to the main screen"),
@@ -50,9 +52,10 @@ SHORTCUTS: list[tuple[str, list[tuple[str, str]]]] = [
         ],
     ),
     (
-        "Language files",
+        "Commit files",
         [
             ("j / k  or  up / down", "Move between files"),
+            ("[ / ]", "Previous / next commit"),
             ("enter", "Open the highlighted file"),
             ("esc / q", "Back"),
         ],

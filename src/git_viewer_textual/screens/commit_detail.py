@@ -19,6 +19,7 @@ from ..models import CommitFileChange, CommitPatchSection, RepoContext, RepoScan
 from ..repository import RepoService
 from ..theme import make_change_stat_style, make_style, resolve_theme_palette
 from ..utils import rel_time, utc_now
+from .commit_files import CommitFilesScreen
 
 # Coalesce the resize event burst so the view re-renders once per settle.
 RESIZE_DEBOUNCE_SECONDS = 0.05
@@ -155,6 +156,7 @@ class CommitDetailScreen(ModalScreen[None]):
         Binding("home", "scroll_top", "Top", priority=True, group=JUMP_GROUP),
         Binding("end", "scroll_bottom", "Bottom", priority=True, group=JUMP_GROUP),
         Binding("p", "toggle_patch_scope", "Patch"),
+        Binding("f", "browse_files", "Files"),
         Binding("escape", "close_screen", "Back", group=BACK_GROUP),
         Binding("q", "close_screen", "Back", show=False, group=BACK_GROUP),
     ]
@@ -209,6 +211,12 @@ class CommitDetailScreen(ModalScreen[None]):
 
     def action_prev_commit(self) -> None:
         self._go_to_commit(self._commit_index + 1)
+
+    def action_browse_files(self) -> None:
+        """Browse every file in this commit's tree, stepping commits with [ / ]."""
+        self.app.push_screen(
+            CommitFilesScreen(self.service, self._commit_hashes, self._commit_index)
+        )
 
     def _go_to_commit(self, index: int) -> None:
         # Step in place rather than swapping in a fresh screen: the commit detail

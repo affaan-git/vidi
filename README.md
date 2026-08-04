@@ -35,6 +35,8 @@ the details panel. Press `Enter` on a commit to open its diff, then `[` / `]` to
 step to the previous / next commit without leaving the detail view. The Languages
 panel is a snapshot of the highlighted commit's tree; press `Enter` on a language
 to list its files at that commit, and `Enter` on a file to view its contents.
+Press `f` (from any panel, or in the commit detail) to browse the whole tree; in
+the file list `[` / `]` step between commits.
 
 ## Install
 
@@ -82,6 +84,7 @@ Press `?` at any time for the in-app reference.
 | `j` / `k` (or arrows) | Move within the focused panel |
 | `Tab` / `Shift+Tab` | Switch between panels |
 | `Enter` | Open the commit, or the highlighted language's files |
+| `f` | Browse the highlighted commit's files |
 | `Left` / `Right` | Languages: prev / next language; Graph: back / forward a week |
 | `h` / `l` | Select the older / newer active day |
 | `[` / `]` | Step through years |
@@ -98,6 +101,7 @@ Press `?` at any time for the in-app reference.
 | `Tab` / `Shift+Tab` | Switch between panes |
 | `[` / `]` | Previous / next commit |
 | `p` | Toggle file diff and full patch |
+| `f` | Browse this commit's files |
 | `PageUp` / `PageDown` | Scroll by a page |
 | `Home` / `End` | Jump to the top or bottom |
 | `Esc` / `q` | Back to the main screen |
@@ -111,11 +115,14 @@ Press `?` at any time for the in-app reference.
 | `Enter` | Switch to the highlighted branch |
 | `Esc` / `q` | Back to the main screen |
 
-### Language files
+### Commit files
+
+Reached with `f` (the whole tree) or `Enter` on a language (just that language).
 
 | Key | Action |
 | --- | --- |
 | `j` / `k` (or arrows) | Move between files |
+| `[` / `]` | Previous / next commit |
 | `Enter` | Open the highlighted file |
 | `Esc` / `q` | Back |
 

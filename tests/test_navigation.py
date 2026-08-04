@@ -666,9 +666,9 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("enter")
             await pilot.pause()
             await pilot.pause()
-            self.assertEqual(type(app.screen).__name__, "LanguageFilesScreen")
+            self.assertEqual(type(app.screen).__name__, "CommitFilesScreen")
             self.assertGreater(
-                app.screen.query_one("#language-files-list", OptionList).option_count, 0
+                app.screen.query_one("#commit-files-list", OptionList).option_count, 0
             )
 
             # Enter on a file opens the file viewer with its content
@@ -680,7 +680,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
 
             await pilot.press("escape")
             await pilot.pause()
-            self.assertEqual(type(app.screen).__name__, "LanguageFilesScreen")
+            self.assertEqual(type(app.screen).__name__, "CommitFilesScreen")
             await pilot.press("escape")
             await pilot.pause()
             self.assertEqual(type(app.screen).__name__, "MainScreen")
@@ -741,6 +741,63 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("[")
             await pilot.pause()
             self.assertEqual(app.screen._index, 0)
+
+    async def test_commit_files_browser_steps_commits(self) -> None:
+        from git_viewer_textual.screens.commit_files import CommitFilesScreen
+
+        context, service = build_repo_context(
+            repo_dir=sample_repo(),
+            language_mode="bytes",
+            exclude_languages=set(),
+            extra_ignored_dirs=set(),
+        )
+        hashes = [c.commit_hash for c in service.get_branch_data(context.current_branch).commits]
+        self.assertGreaterEqual(len(hashes), 2)
+
+        app = GitViewerApp(context, service)
+        async with app.run_test(size=(120, 40)) as pilot:
+            # start on an older commit so both [ and ] have somewhere to go
+            app.push_screen(CommitFilesScreen(service, hashes, 1))
+            await pilot.pause()
+            self.assertEqual(app.screen._commit_hash, hashes[1])
+
+            await pilot.press("]")  # newer
+            await pilot.pause()
+            self.assertEqual(app.screen._commit_hash, hashes[0])
+
+            await pilot.press("[")  # older
+            await pilot.pause()
+            self.assertEqual(app.screen._commit_hash, hashes[1])
+            # the file list follows the commit
+            self.assertEqual(app.screen._files, service.get_commit_files(hashes[1]))
+
+    async def test_browse_files_key_opens_all_files_from_main_and_detail(self) -> None:
+        from git_viewer_textual.screens.commit_files import CommitFilesScreen
+
+        app = make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            # from the main screen (any panel), f browses the whole tree
+            await pilot.press("f")
+            await pilot.pause()
+            await pilot.pause()
+            self.assertIsInstance(app.screen, CommitFilesScreen)
+            self.assertIsNone(app.screen._language)
+            self.assertGreater(
+                app.screen.query_one("#commit-files-list", OptionList).option_count, 0
+            )
+            await pilot.press("escape")
+            await pilot.pause()
+
+            # and from inside the commit detail screen
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.pause()
+            self.assertEqual(type(app.screen).__name__, "CommitDetailScreen")
+            await pilot.press("f")
+            await pilot.pause()
+            await pilot.pause()
+            self.assertIsInstance(app.screen, CommitFilesScreen)
 
     async def test_language_settings_apply_updates_scan_and_persists(self) -> None:
         from git_viewer_textual import config

@@ -43,7 +43,7 @@ from ..theme import make_style, resolve_theme_palette
 from ..utils import rel_time, truncate_middle, utc_now
 from .branch_picker import BranchPickerScreen
 from .commit_detail import CommitDetailScreen
-from .language_files import LanguageFilesScreen
+from .commit_files import CommitFilesScreen
 
 # Cap the commit table at a readable window; the graph and details cover the rest.
 MAX_VISIBLE_COMMITS = 30
@@ -266,6 +266,7 @@ class MainScreen(Screen[None]):
             group=PANEL_GROUP,
         ),
         Binding("b", "open_branch_picker", "Branch"),
+        Binding("f", "browse_files", "Files"),
         Binding("h", "day_down", "Older Day", group=DAY_GROUP),
         Binding("l", "day_up", "Newer Day", group=DAY_GROUP),
         Binding("[", "prev_year", "Prev Year", group=YEAR_GROUP),
@@ -792,16 +793,33 @@ class MainScreen(Screen[None]):
         self.query_one("#language-scroll", LanguageList).focus()
         self._render_language_summary()
 
+    def _commit_hashes_and_index(self) -> tuple[list[str], int]:
+        """The commits in view (newest-first) and the selected one's index, so a
+        files browser can step between commits with [ / ]."""
+        _, commits = self._filtered_branch_data()
+        hashes = [commit.commit_hash for commit in commits]
+        try:
+            index = hashes.index(self.selected_commit_hash)
+        except ValueError:
+            index = 0
+        return hashes, index
+
     def _open_language_files(self) -> None:
         stats = self._language_stats
         if not stats or not self.selected_commit_hash:
             return
-        item = stats[self._language_index]
-        language = str(item["language"])
-        files = sorted(self._language_files.get(language, []))
+        language = str(stats[self._language_index]["language"])
+        hashes, index = self._commit_hashes_and_index()
         self.app.push_screen(
-            LanguageFilesScreen(language, files, self.selected_commit_hash, self.service)
+            CommitFilesScreen(self.service, hashes, index, language=language)
         )
+
+    def action_browse_files(self) -> None:
+        """Browse every file in the highlighted commit's tree (any panel)."""
+        if not self.selected_commit_hash:
+            return
+        hashes, index = self._commit_hashes_and_index()
+        self.app.push_screen(CommitFilesScreen(self.service, hashes, index))
 
     def _build_repo_stats_sub_title(self) -> str:
         return build_repo_stats_sub_title(self.context, self.scanned_file_count)
