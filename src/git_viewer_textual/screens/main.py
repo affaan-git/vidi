@@ -45,8 +45,10 @@ from .branch_picker import BranchPickerScreen
 from .commit_detail import CommitDetailScreen
 from .commit_files import CommitFilesScreen
 
-# Cap the commit table at a readable window; the graph and details cover the rest.
-MAX_VISIBLE_COMMITS = 30
+# Cap the commit table generously: the table (a virtualized DataTable) should
+# cover the same commits the graph spans, so day jumps (h/l) always land on a
+# visible row instead of selecting a commit off the window.
+MAX_VISIBLE_COMMITS = 500
 # Coalesce the resize event burst so the view re-renders once per settle.
 RESIZE_DEBOUNCE_SECONDS = 0.05
 # Column widths shared with the truncation budget so the two never drift apart.
