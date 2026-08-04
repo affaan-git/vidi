@@ -315,10 +315,61 @@ class RepoService:
         # keeping every service alive and making cache_clear global.
         self.get_branch_data = lru_cache(maxsize=64)(self._branch_data)
         self.get_commit_detail = lru_cache(maxsize=256)(self._commit_detail)
+        self.get_commit_language_stats = lru_cache(maxsize=128)(self._commit_language_stats)
 
     def invalidate_cached_git_data(self) -> None:
         self.get_branch_data.cache_clear()
         self.get_commit_detail.cache_clear()
+        self.get_commit_language_stats.cache_clear()
+
+    def _commit_language_stats(
+        self, commit_hash: str
+    ) -> tuple[list[LanguageStat], dict[str, list[str]]]:
+        """Language breakdown of the whole tree AT a commit (a snapshot), from
+        `git ls-tree`, honouring the same excludes as the working-tree scan."""
+        output = run_git(self.repo_dir, ["ls-tree", "-r", "-l", commit_hash])
+        totals: dict[str, int] = {}
+        files_by_language: dict[str, list[str]] = {}
+        total_value = 0
+        for line in output.splitlines():
+            meta, _, path = line.partition("\t")
+            if not path:
+                continue
+            parts = meta.split()
+            if len(parts) < 4 or parts[1] != "blob":
+                continue
+            if any(component in self.ignore_dirs for component in path.split("/")):
+                continue
+            language = detect_language(os.path.basename(path), EXTENSION_TO_LANGUAGE)
+            if language in self.exclude_languages:
+                continue
+            files_by_language.setdefault(language, []).append(path)
+            if self.language_mode == "files":
+                value = 1
+            else:
+                try:
+                    value = int(parts[3])
+                except ValueError:
+                    value = 0
+            totals[language] = totals.get(language, 0) + value
+            total_value += value
+
+        stats: list[LanguageStat] = []
+        for language, value in totals.items():
+            percentage = (value / total_value * 100.0) if total_value else 0.0
+            stats.append(
+                {
+                    "language": language,
+                    "value": value,
+                    "percentage": percentage,
+                    "count": len(files_by_language[language]),
+                    "color": LANGUAGE_COLORS.get(language, random_color(language)),
+                }
+            )
+        stats.sort(key=lambda item: float(item["percentage"]), reverse=True)
+        for language in files_by_language:
+            files_by_language[language].sort()
+        return stats, files_by_language
 
     def get_cached_scanned_file_count(self) -> int | None:
         return self._cached_scanned_file_count
@@ -329,6 +380,15 @@ class RepoService:
         return self.get_cached_scanned_file_count() or sum(
             len(files) for files in context.files_by_language.values()
         )
+
+    def get_file_at_commit(self, commit_hash: str, path: str) -> str | None:
+        """The text of a file as it was at a commit, or None if it can't be read
+        as text (binary, missing, or a git error)."""
+        try:
+            content = run_git(self.repo_dir, ["show", f"{commit_hash}:{path}"])
+        except (RuntimeError, UnicodeDecodeError):
+            return None
+        return None if "\x00" in content else content
 
     def _list_scanned_paths(self) -> list[str]:
         output = run_git(

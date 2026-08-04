@@ -182,6 +182,7 @@ def build_language_title(
     language_stats: list[LanguageStat],
     palette: ThemePalette,
 ) -> Text:
+    total_files = sum(int(item.get("count", 0)) for item in language_stats)
     title = Text()
     title.append("Languages", style=make_style(palette.muted, bold=True))
     title.append(" ", style=make_style(palette.muted))
@@ -189,6 +190,9 @@ def build_language_title(
         str(len(language_stats)),
         style=make_style(palette.foreground, bold=True),
     )
+    if total_files:
+        word = "file" if total_files == 1 else "files"
+        title.append(f"  {total_files} {word}", style=make_style(palette.muted))
     return title
 
 
@@ -199,12 +203,17 @@ def _language_label_width(width: int) -> int:
     return max(6, min(16, width // 3))
 
 
+def _language_metric(item: LanguageStat) -> str:
+    # File count for the snapshot, with the share in parentheses.
+    return f"{int(item.get('count', 0))} ({float(item['percentage']):.0f}%)"
+
+
 def _language_entry_text(item: LanguageStat, label_width: int) -> str:
     return (
         "● "
         + truncate_middle(str(item["language"]), label_width)
         + " "
-        + f"{float(item['percentage']):.1f}%"
+        + _language_metric(item)
     )
 
 
@@ -263,7 +272,7 @@ def build_language_summary(
         )
         line.append(" ", style=make_style(palette.muted))
         line.append(
-            f"{float(item['percentage']):.1f}%",
+            _language_metric(item),
             style=make_style(palette.primary if highlighted else palette.muted, bold=highlighted),
         )
 

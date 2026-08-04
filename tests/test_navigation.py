@@ -10,7 +10,7 @@ from rich.console import Console
 from rich.text import Text
 from textual.color import Color
 from textual.binding import Binding
-from textual.widgets import DataTable, Footer, Header
+from textual.widgets import DataTable, Footer, Header, OptionList
 from textual.widgets import Input
 
 from git_viewer_textual.app import GitViewerApp
@@ -628,32 +628,59 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(app.screen.query(Footer)), 1)
             self.assertEqual(len(app.screen.query("#branch-picker-help")), 0)
 
-    async def test_languages_panel_is_selectable_and_opens_files_modal(self) -> None:
+    def test_commit_language_stats_are_a_per_commit_snapshot(self) -> None:
+        context, service = build_repo_context(
+            repo_dir=sample_repo(),
+            language_mode="bytes",
+            exclude_languages=set(),
+            extra_ignored_dirs=set(),
+        )
+        head = service.get_branch_data(context.current_branch).commits[0].commit_hash
+        stats, files_by_language = service.get_commit_language_stats(head)
+        self.assertGreater(len(stats), 0)
+        for stat in stats:
+            self.assertIn("count", stat)
+            self.assertIn("percentage", stat)
+            self.assertEqual(stat["count"], len(files_by_language[stat["language"]]))
+
+    async def test_languages_panel_is_per_commit_and_opens_file_viewer(self) -> None:
         app = make_app()
         async with app.run_test() as pilot:
             self.assertEqual(len(app.screen.query("#language-bar")), 1)
-            self.assertEqual(len(app.screen.query("#language-list")), 1)
-            scroll = app.screen.query_one("#language-scroll")
-            self.assertTrue(scroll.can_focus)
-            self.assertGreater(len(app.context.language_stats), 0)
+            self.assertTrue(app.screen.query_one("#language-scroll").can_focus)
+            # the panel reflects the selected commit's tree, with per-language counts
+            self.assertGreater(len(app.screen._language_stats), 0)
+            self.assertTrue(all("count" in s for s in app.screen._language_stats))
 
             await pilot.press("tab")
             await pilot.press("tab")
             await pilot.pause()
             self.assertEqual(getattr(app.focused, "id", None), "language-scroll")
             self.assertEqual(app.screen.active_panel, "languages")
-            self.assertEqual(app.screen._language_index, 0)
 
-            # arrow keys move the highlight within the panel
             await pilot.press("down")
             await pilot.pause()
             self.assertEqual(app.screen._language_index, 1)
 
+            # Enter opens the files modal for the highlighted language
             await pilot.press("enter")
             await pilot.pause()
             await pilot.pause()
             self.assertEqual(type(app.screen).__name__, "LanguageFilesScreen")
+            self.assertGreater(
+                app.screen.query_one("#language-files-list", OptionList).option_count, 0
+            )
 
+            # Enter on a file opens the file viewer with its content
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.pause()
+            self.assertEqual(type(app.screen).__name__, "FileViewScreen")
+            self.assertEqual(len(app.screen.query("#file-view-content")), 1)
+
+            await pilot.press("escape")
+            await pilot.pause()
+            self.assertEqual(type(app.screen).__name__, "LanguageFilesScreen")
             await pilot.press("escape")
             await pilot.pause()
             self.assertEqual(type(app.screen).__name__, "MainScreen")

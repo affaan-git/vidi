@@ -52,8 +52,18 @@ SHORTCUTS: list[tuple[str, list[tuple[str, str]]]] = [
     (
         "Language files",
         [
-            ("up / down", "Scroll the file list"),
-            ("esc / q", "Back to the main screen"),
+            ("j / k  or  up / down", "Move between files"),
+            ("enter", "Open the highlighted file"),
+            ("esc / q", "Back"),
+        ],
+    ),
+    (
+        "File view",
+        [
+            ("j / k  or  up / down", "Scroll"),
+            ("page up / page down", "Scroll by a page"),
+            ("home / end", "Jump to the top or bottom"),
+            ("esc / q", "Back"),
         ],
     ),
 ]

@@ -27,7 +27,7 @@ from ..formatting import (
     build_commit_identity_line,
     build_repo_stats_sub_title,
 )
-from ..models import BranchData, CommitRecord, RepoContext
+from ..models import BranchData, CommitRecord, LanguageStat, RepoContext
 from ..render import (
     build_graph_title,
     build_language_bar,
@@ -287,6 +287,10 @@ class MainScreen(Screen[None]):
         self.selected_day = None
         self.selected_commit_hash = None
         self._language_index = 0
+        # Per-commit snapshot: the language breakdown of the highlighted commit's
+        # tree, refreshed as the selection moves.
+        self._language_stats: list[LanguageStat] = []
+        self._language_files: dict[str, list[str]] = {}
         self._resize_timer = None
         self.scanned_file_count = service.scanned_file_count(context)
         self._theme_palette = resolve_theme_palette(self.app.current_theme)
@@ -553,6 +557,7 @@ class MainScreen(Screen[None]):
             )
         )
         self._update_day_details(commits, reset_scroll=True)
+        self._refresh_language_panel()
 
     def _update_commits_table(self, commits: list[CommitRecord]) -> None:
         table = self.query_one("#commits-table", DataTable)
@@ -668,16 +673,20 @@ class MainScreen(Screen[None]):
             )
 
     def _refresh_language_panel(self) -> None:
-        self.query_one("#language-title", Static).update(
-            build_language_title(
-                self.context.language_stats,
-                self._theme_palette,
+        # Snapshot the highlighted commit's tree languages (cached per commit).
+        if self.selected_commit_hash:
+            self._language_stats, self._language_files = self.service.get_commit_language_stats(
+                self.selected_commit_hash
             )
+        else:
+            self._language_stats, self._language_files = [], {}
+        self.query_one("#language-title", Static).update(
+            build_language_title(self._language_stats, self._theme_palette)
         )
         self._populate_language_list()
 
     def _populate_language_list(self) -> None:
-        stats = self.context.language_stats
+        stats = self._language_stats
         if stats:
             self._language_index = max(0, min(self._language_index, len(stats) - 1))
         else:
@@ -689,7 +698,7 @@ class MainScreen(Screen[None]):
         # panel reads as a plain summary until it is the thing you are steering.
         # The bar and legend share the highlight so the selected language lights
         # up in both places at once.
-        stats = self.context.language_stats
+        stats = self._language_stats
         highlighted = (
             self._language_index if stats and self.active_panel == "languages" else None
         )
@@ -717,7 +726,7 @@ class MainScreen(Screen[None]):
     def _language_rows(self) -> list[list[int]]:
         scroll = self.query_one("#language-scroll", VerticalScroll)
         width = scroll.content_region.width or scroll.size.width or 32
-        return language_legend_rows(self.context.language_stats, width)
+        return language_legend_rows(self._language_stats, width)
 
     def _set_language_index(self, new_index: int) -> None:
         if new_index == self._language_index:
@@ -728,7 +737,7 @@ class MainScreen(Screen[None]):
     def _move_language_linear(self, delta: int) -> None:
         # left/right step through the legend in reading order, so every entry is
         # reachable no matter how the rows wrap.
-        stats = self.context.language_stats
+        stats = self._language_stats
         if not stats:
             return
         self._set_language_index(max(0, min(self._language_index + delta, len(stats) - 1)))
@@ -737,7 +746,7 @@ class MainScreen(Screen[None]):
         # up/down move between wrapped rows at the same column, so the highlight
         # travels vertically the way the legend looks. With no row to land on we
         # fall back to a linear step so the arrows always respond.
-        stats = self.context.language_stats
+        stats = self._language_stats
         if not stats:
             return
         rows = self._language_rows()
@@ -757,13 +766,15 @@ class MainScreen(Screen[None]):
             self._move_language_linear(delta)
 
     def _open_language_files(self) -> None:
-        stats = self.context.language_stats
-        if not stats:
+        stats = self._language_stats
+        if not stats or not self.selected_commit_hash:
             return
         item = stats[self._language_index]
         language = str(item["language"])
-        files = sorted(self.context.files_by_language.get(language, []))
-        self.app.push_screen(LanguageFilesScreen(language, files))
+        files = sorted(self._language_files.get(language, []))
+        self.app.push_screen(
+            LanguageFilesScreen(language, files, self.selected_commit_hash, self.service)
+        )
 
     def _build_repo_stats_sub_title(self) -> str:
         return build_repo_stats_sub_title(self.context, self.scanned_file_count)

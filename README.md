@@ -3,8 +3,9 @@
 A read-only, terminal-based viewer for a local Git repository. It opens on a
 GitHub-style dashboard for a repo you already have on disk: a contribution
 graph, the commit history for the selected branch and year, a details panel for
-the highlighted commit, and a language breakdown. Drill into any commit to read
-its diff and full patch. Nothing is ever written to the repository.
+the highlighted commit, and the language breakdown of that commit's tree. Drill
+into any commit to read its diff and full patch, or open any file as it was at
+that commit. Nothing is ever written to the repository.
 
 Built with [Textual](https://textual.textualize.io/). Where a general-purpose
 git TUI like lazygit or tig is built around running git commands, this one is
@@ -31,8 +32,9 @@ built around reading a repository at a glance.
 Move between the commit table, details, and languages panels with `Tab`.
 Selecting a day on the graph, or highlighting a row in the commit table, updates
 the details panel. Press `Enter` on a commit to open its diff, then `[` / `]` to
-step to the previous / next commit without leaving the detail view. Press `Enter`
-on a language to list the files that make it up.
+step to the previous / next commit without leaving the detail view. The Languages
+panel is a snapshot of the highlighted commit's tree; press `Enter` on a language
+to list its files at that commit, and `Enter` on a file to view its contents.
 
 ## Install
 
@@ -117,8 +119,18 @@ Press `?` at any time for the in-app reference.
 
 | Key | Action |
 | --- | --- |
-| `Up` / `Down` | Scroll the file list |
-| `Esc` / `q` | Back to the main screen |
+| `j` / `k` (or arrows) | Move between files |
+| `Enter` | Open the highlighted file |
+| `Esc` / `q` | Back |
+
+### File view
+
+| Key | Action |
+| --- | --- |
+| `j` / `k` (or arrows) | Scroll |
+| `PageUp` / `PageDown` | Scroll by a page |
+| `Home` / `End` | Jump to the top or bottom |
+| `Esc` / `q` | Back |
 
 ## Development
 
