@@ -339,7 +339,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             }
             self.assertEqual(
                 grouped_descriptions,
-                {"Back", "Pane", "Move", "Page", "Jump", "Commit"},
+                {"Back", "Pane", "Move", "Page", "Jump", "Commit", "Search"},
             )
             self.assertIn(
                 ("q", "close_screen"),
@@ -959,6 +959,53 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(screen.query_one("#file-view-search", Input).display)
             self.assertEqual(screen._match_lines, [])
             self.assertIsInstance(app.screen, FileViewScreen)
+
+    async def test_commit_detail_patch_search(self) -> None:
+        app = make_app()
+        async with app.run_test(size=(160, 45)) as pilot:
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.pause()
+            self.assertEqual(type(app.screen).__name__, "CommitDetailScreen")
+            screen = app.screen
+
+            # full patch gives a larger body to search
+            await pilot.press("p")
+            await pilot.pause()
+            await pilot.pause()
+            self.assertTrue(screen.show_full_patch)
+            lines = screen._patch_base["full"].plain.split("\n")
+            token = next(
+                (c for c in "etaoinsr" if sum(c in ln.lower() for ln in lines) >= 2), None
+            )
+            self.assertIsNotNone(token)
+            expected = [i for i, ln in enumerate(lines) if token in ln.lower()]
+
+            await pilot.press("slash")
+            await pilot.pause()
+            self.assertTrue(screen.query_one("#commit-detail-search", Input).display)
+            await pilot.press(token)
+            await pilot.pause()
+            self.assertEqual(screen._match_lines, expected)
+            self.assertEqual(screen._current_match, 0)
+
+            # Enter moves into the patch; n / N cycle matches
+            await pilot.press("enter")
+            await pilot.pause()
+            self.assertTrue(screen._active_patch_scroll().has_focus)
+            await pilot.press("n")
+            await pilot.pause()
+            self.assertEqual(screen._current_match, 1)
+            await pilot.press("N")
+            await pilot.pause()
+            self.assertEqual(screen._current_match, 0)
+
+            # Esc clears the search but keeps the detail screen open
+            await pilot.press("escape")
+            await pilot.pause()
+            self.assertFalse(screen.query_one("#commit-detail-search", Input).display)
+            self.assertEqual(screen._match_lines, [])
+            self.assertEqual(type(app.screen).__name__, "CommitDetailScreen")
 
     async def test_language_settings_apply_updates_scan_and_persists(self) -> None:
         from git_viewer_textual import config

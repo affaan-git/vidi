@@ -103,9 +103,11 @@ Press `?` at any time for the in-app reference.
 | `[` / `]` | Previous / next commit |
 | `p` | Toggle file diff and full patch |
 | `f` | Browse this commit's files |
+| `/` | Search the patch |
+| `n` / `N` | Next / previous match |
 | `PageUp` / `PageDown` | Scroll by a page |
 | `Home` / `End` | Jump to the top or bottom |
-| `Esc` / `q` | Back to the main screen |
+| `Esc` / `q` | Back (`Esc` first closes the search) |
 
 ### Branch picker
 

@@ -38,9 +38,11 @@ SHORTCUTS: list[tuple[str, list[tuple[str, str]]]] = [
             ("[ / ]", "Previous / next commit"),
             ("p", "Toggle file diff and full patch"),
             ("f", "Browse this commit's files"),
+            ("/", "Search the patch"),
+            ("n / N", "Next / previous match"),
             ("page up / page down", "Scroll by a page"),
             ("home / end", "Jump to the top or bottom"),
-            ("esc / q", "Back to the main screen"),
+            ("esc / q", "Back (esc first closes the search)"),
         ],
     ),
     (

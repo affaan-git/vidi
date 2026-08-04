@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from functools import partial
 
+from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 from textual import events
@@ -11,7 +12,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import DataTable, Footer, Header, Static
+from textual.widgets import DataTable, Footer, Header, Input, Static
 
 from ..data import compact_label_for_change, section_for_change
 from ..formatting import build_repo_stats_sub_title
@@ -34,6 +35,7 @@ class CommitDetailScreen(ModalScreen[None]):
     PAGE_GROUP = Binding.Group("Page", compact=True)
     JUMP_GROUP = Binding.Group("Jump", compact=True)
     COMMIT_GROUP = Binding.Group("Commit", compact=True)
+    SEARCH_GROUP = Binding.Group("Search", compact=True)
 
     CSS = """
     CommitDetailScreen {
@@ -117,6 +119,18 @@ class CommitDetailScreen(ModalScreen[None]):
         height: 1fr;
     }
 
+    #commit-detail-search {
+        display: none;
+        margin-bottom: 1;
+        border: solid $border;
+        background: $surface;
+        color: $text;
+    }
+
+    #commit-detail-search:focus {
+        border: solid $primary;
+    }
+
     #commit-detail-selected-scroll,
     #commit-detail-full-scroll {
         height: 1fr;
@@ -157,6 +171,9 @@ class CommitDetailScreen(ModalScreen[None]):
         Binding("end", "scroll_bottom", "Bottom", priority=True, group=JUMP_GROUP),
         Binding("p", "toggle_patch_scope", "Patch"),
         Binding("f", "browse_files", "Files"),
+        Binding("slash", "open_search", "Search"),
+        Binding("n", "next_match", "Next Match", group=SEARCH_GROUP),
+        Binding("N", "prev_match", "Prev Match", group=SEARCH_GROUP),
         Binding("escape", "close_screen", "Back", group=BACK_GROUP),
         Binding("q", "close_screen", "Back", show=False, group=BACK_GROUP),
     ]
@@ -203,6 +220,13 @@ class CommitDetailScreen(ModalScreen[None]):
         self._force_requested_focus = False
         self._resize_timer = None
         self._theme_palette = resolve_theme_palette(self.app.current_theme)
+        # in-patch search state
+        self._search_query = ""
+        self._match_lines: list[int] = []
+        self._current_match = -1
+        self._patch_base: dict[str, Text] = {"selected": Text(), "full": Text()}
+        self._patch_offsets: list[int] | None = None
+        self._patch_offsets_key: tuple[str, int, int] = ("", 0, 0)
 
     def action_next_commit(self) -> None:
         # the list is newest-first, so "next" (newer) steps toward index 0,
@@ -272,6 +296,7 @@ class CommitDetailScreen(ModalScreen[None]):
                     classes="commit-detail-panel",
                 ):
                     yield Static(id="commit-detail-patch-title", classes="commit-detail-panel-title")
+                    yield Input(placeholder="Search patch", id="commit-detail-search")
                     with VerticalScroll(id="commit-detail-selected-scroll"):
                         yield Static(id="commit-detail-selected-content")
                     with VerticalScroll(id="commit-detail-full-scroll"):
@@ -722,6 +747,16 @@ class CommitDetailScreen(ModalScreen[None]):
                     style=make_style(palette.foreground),
                 )
 
+        if self._search_query:
+            current.append("  ", style=make_style(palette.muted))
+            if self._match_lines:
+                current.append(
+                    f"{self._current_match + 1}/{len(self._match_lines)} matches",
+                    style=make_style(palette.primary),
+                )
+            else:
+                current.append("no matches", style=make_style(palette.muted))
+
         modes = Text()
         modes.append(
             "File Diff",
@@ -833,6 +868,159 @@ class CommitDetailScreen(ModalScreen[None]):
 
             self.query_one("#commit-detail-selected-content", Static).update(selected_content)
             self.query_one("#commit-detail-full-content", Static).update(full_content)
+            # keep the un-highlighted texts so search can overlay onto a fresh copy
+            self._patch_base = {"selected": selected_content, "full": full_content}
+            if self._search_query:
+                self._apply_patch_search(recompute=True)
+
+    # -- in-patch search ---------------------------------------------------
+
+    def _search_input(self) -> Input:
+        return self.query_one("#commit-detail-search", Input)
+
+    def _search_focused(self) -> bool:
+        try:
+            return self._search_input().has_focus
+        except Exception:
+            return False
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        # While typing a search, the input needs every key; without this the
+        # priority scroll/pane bindings would steal them.
+        if self._search_focused() and action in (
+            "cursor_down",
+            "cursor_up",
+            "page_down",
+            "page_up",
+            "scroll_top",
+            "scroll_bottom",
+            "focus_next_pane",
+            "focus_prev_pane",
+        ):
+            return False
+        return True
+
+    def action_open_search(self) -> None:
+        inp = self._search_input()
+        inp.display = True
+        inp.focus()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "commit-detail-search":
+            return
+        self._search_query = event.value
+        self._apply_patch_search(recompute=True)
+        if self._match_lines:
+            self._scroll_to_patch_match()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        # Enter keeps the highlights and moves into the patch content.
+        if event.input.id == "commit-detail-search":
+            self._active_patch_scroll().focus()
+
+    def _close_search(self) -> None:
+        inp = self._search_input()
+        inp.value = ""
+        inp.display = False
+        self._search_query = ""
+        self._apply_patch_search(recompute=True)
+        self._active_patch_scroll().focus()
+
+    def _active_patch_key(self) -> str:
+        return "full" if self.show_full_patch else "selected"
+
+    def _recompute_patch_matches(self, base: Text, query: str) -> None:
+        if query:
+            lines = base.plain.split("\n")
+            self._match_lines = [i for i, line in enumerate(lines) if query in line.lower()]
+        else:
+            self._match_lines = []
+        self._current_match = 0 if self._match_lines else -1
+        self._patch_offsets = None
+
+    def _apply_patch_search(self, *, recompute: bool) -> None:
+        key = self._active_patch_key()
+        base = self._patch_base[key]
+        query = self._search_query.lower()
+        palette = self._theme_palette
+        if recompute:
+            self._recompute_patch_matches(base, query)
+
+        display = base.copy()
+        if query and self._match_lines:
+            lines = base.plain.split("\n")
+            all_style = make_style(palette.selected_fg, background=palette.selected_bg)
+            current_style = make_style(palette.selected_fg, background=palette.primary, bold=True)
+            current_line = (
+                self._match_lines[self._current_match]
+                if 0 <= self._current_match < len(self._match_lines)
+                else -1
+            )
+            offset = 0
+            for index, line in enumerate(lines):
+                if query in line.lower():
+                    style = current_style if index == current_line else all_style
+                    lowered = line.lower()
+                    pos = 0
+                    while True:
+                        found = lowered.find(query, pos)
+                        if found < 0:
+                            break
+                        display.stylize(style, offset + found, offset + found + len(query))
+                        pos = found + len(query)
+                offset += len(line) + 1
+
+        static_id = (
+            "#commit-detail-full-content"
+            if self.show_full_patch
+            else "#commit-detail-selected-content"
+        )
+        self.query_one(static_id, Static).update(display)
+        self.query_one("#commit-detail-patch-title", Static).update(self._build_patch_title())
+
+    def _ensure_patch_offsets(self) -> None:
+        key = self._active_patch_key()
+        base = self._patch_base[key]
+        static_id = (
+            "#commit-detail-full-content"
+            if self.show_full_patch
+            else "#commit-detail-selected-content"
+        )
+        static = self.query_one(static_id, Static)
+        width = max(1, static.content_region.width or static.size.width or 80)
+        cache_key = (key, width, len(base.plain))
+        if self._patch_offsets is not None and self._patch_offsets_key == cache_key:
+            return
+        console = Console(width=width)
+        offsets: list[int] = []
+        row = 0
+        for line in base.plain.split("\n"):
+            offsets.append(row)
+            row += max(1, len(Text(line).wrap(console, width)))
+        self._patch_offsets = offsets
+        self._patch_offsets_key = cache_key
+
+    def _scroll_to_patch_match(self) -> None:
+        if not 0 <= self._current_match < len(self._match_lines):
+            return
+        self._ensure_patch_offsets()
+        line = self._match_lines[self._current_match]
+        assert self._patch_offsets is not None
+        target = self._patch_offsets[line] if line < len(self._patch_offsets) else 0
+        self._active_patch_scroll().scroll_to(y=max(0, target - 2), animate=False)
+
+    def action_next_match(self) -> None:
+        self._step_match(1)
+
+    def action_prev_match(self) -> None:
+        self._step_match(-1)
+
+    def _step_match(self, delta: int) -> None:
+        if not self._match_lines:
+            return
+        self._current_match = (self._current_match + delta) % len(self._match_lines)
+        self._apply_patch_search(recompute=False)
+        self._scroll_to_patch_match()
 
     def _scroll_patch_to_selected(self) -> None:
         if not self.show_full_patch or not self.detail.file_changes:
@@ -1030,6 +1218,9 @@ class CommitDetailScreen(ModalScreen[None]):
         )
 
     def action_close_screen(self) -> None:
+        if self._search_input().display:
+            self._close_search()
+            return
         self.dismiss(None)
 
     def handle_repo_context_refresh(
