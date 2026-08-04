@@ -842,6 +842,12 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
                     for c in screen._visible_commits(commits)
                 )
             )
+            # and on the authored date (ISO, e.g. a year-month prefix)
+            screen._commit_query = commits[0].authored_date.isoformat()[:7]
+            self.assertIn(
+                commits[0].commit_hash,
+                [c.commit_hash for c in screen._visible_commits(commits)],
+            )
             screen._commit_query = ""
 
             # / opens the filter; typing narrows, and j/k type instead of navigating

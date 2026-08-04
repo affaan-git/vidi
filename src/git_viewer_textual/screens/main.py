@@ -586,7 +586,7 @@ class MainScreen(Screen[None]):
 
     def _visible_commits(self, commits: list[CommitRecord]) -> list[CommitRecord]:
         """The commits shown in the table, narrowed by the / filter (if any),
-        matching on message, author, or hash."""
+        matching on message, author, hash, or authored date (ISO, e.g. 2026-08)."""
         query = self._commit_query.strip().lower()
         if not query:
             return commits
@@ -596,6 +596,7 @@ class MainScreen(Screen[None]):
             if query in commit.message.lower()
             or query in commit.author_name.lower()
             or query in commit.commit_hash.lower()
+            or query in commit.authored_date.isoformat()
         ]
 
     def _update_commits_table(self, commits: list[CommitRecord]) -> None:
