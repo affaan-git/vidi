@@ -698,10 +698,14 @@ class MainScreen(Screen[None]):
         )
         details.append("\nFiles changed\n", style=make_style(palette.muted, bold=True))
         commit_detail = self.service.get_commit_detail(selected_commit.commit_hash)
+        # Wrap against the width of the Static that actually renders the text --
+        # the scroll's content_region still includes the stable scrollbar gutter,
+        # so measuring it left the lines ~2 columns too wide and wrapped the stat.
+        details_static = self.query_one("#day-details", Static)
         details_scroll = self.query_one("#day-details-scroll", VerticalScroll)
-        content_width = (
-            details_scroll.content_region.width or details_scroll.size.width or 56
-        )
+        content_width = details_static.content_region.width
+        if not content_width:
+            content_width = max(0, details_scroll.content_region.width - 2) or 56
         for index, change in enumerate(commit_detail.file_changes):
             suffix = "\n" if index < len(commit_detail.file_changes) - 1 else ""
             section = section_for_change(commit_detail.patch_sections, index, change)
