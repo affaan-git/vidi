@@ -819,6 +819,53 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(screen._files), len(screen._all_files))
             self.assertIsInstance(app.screen, CommitFilesScreen)
 
+    async def test_commit_table_filter(self) -> None:
+        app = make_app()
+        async with app.run_test(size=(160, 45)) as pilot:
+            await pilot.pause()
+            screen = app.screen
+            table = screen.query_one("#commits-table", DataTable)
+            base_rows = table.row_count
+            self.assertGreaterEqual(base_rows, 1)
+
+            # _visible_commits narrows on hash, and on author
+            commits = screen.service.get_branch_data(screen.selected_branch).commits
+            screen._commit_query = commits[0].commit_hash[:6]
+            self.assertEqual(
+                [c.commit_hash for c in screen._visible_commits(commits)],
+                [commits[0].commit_hash],
+            )
+            screen._commit_query = commits[0].author_name
+            self.assertTrue(
+                all(
+                    commits[0].author_name.lower() in c.author_name.lower()
+                    for c in screen._visible_commits(commits)
+                )
+            )
+            screen._commit_query = ""
+
+            # / opens the filter; typing narrows, and j/k type instead of navigating
+            await pilot.press("slash")
+            await pilot.pause()
+            filter_input = screen.query_one("#commits-filter", Input)
+            self.assertTrue(filter_input.display and filter_input.has_focus)
+            for char in "zzz":
+                await pilot.press(char)
+            await pilot.pause()
+            self.assertEqual(filter_input.value, "zzz")
+            self.assertEqual(table.row_count, 0)
+            for char in "jk":
+                await pilot.press(char)
+            await pilot.pause()
+            self.assertEqual(filter_input.value, "zzzjk")
+
+            # Esc clears the filter and restores the table with focus
+            await pilot.press("escape")
+            await pilot.pause()
+            self.assertFalse(filter_input.display)
+            self.assertEqual(table.row_count, base_rows)
+            self.assertTrue(table.has_focus)
+
     async def test_browse_files_key_opens_all_files_from_main_and_detail(self) -> None:
         from git_viewer_textual.screens.commit_files import CommitFilesScreen
 

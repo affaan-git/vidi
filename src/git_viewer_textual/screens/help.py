@@ -20,6 +20,7 @@ SHORTCUTS: list[tuple[str, list[tuple[str, str]]]] = [
             ("tab / shift+tab", "Switch between panels"),
             ("enter", "Open the commit, or the highlighted language's files"),
             ("f", "Browse the highlighted commit's files"),
+            ("/", "Filter the commit table (esc clears)"),
             ("left / right", "Languages: prev / next; Graph: back / forward a week"),
             ("h / l", "Select the older / newer active day"),
             ("[ / ]", "Step through years"),

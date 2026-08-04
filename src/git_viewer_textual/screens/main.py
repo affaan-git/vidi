@@ -13,7 +13,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import DataTable, Footer, Header, Static
+from textual.widgets import DataTable, Footer, Header, Input, Static
 
 from ..data import (
     RANGE_PRESETS,
@@ -216,6 +216,18 @@ class MainScreen(Screen[None]):
         min-height: 5;
     }
 
+    #commits-filter {
+        display: none;
+        margin: 0 0 1 0;
+        border: solid $border;
+        background: $surface;
+        color: $text;
+    }
+
+    #commits-filter:focus {
+        border: solid $primary;
+    }
+
     #languages-panel {
         height: 1fr;
         min-height: 10;
@@ -267,6 +279,8 @@ class MainScreen(Screen[None]):
         ),
         Binding("b", "open_branch_picker", "Branch"),
         Binding("f", "browse_files", "Files"),
+        Binding("slash", "open_commit_filter", "Filter"),
+        Binding("escape", "close_commit_filter", show=False),
         Binding("h", "day_down", "Older Day", group=DAY_GROUP),
         Binding("l", "day_up", "Newer Day", group=DAY_GROUP),
         Binding("[", "prev_year", "Prev Year", group=YEAR_GROUP),
@@ -309,6 +323,7 @@ class MainScreen(Screen[None]):
         self._branch_load_tasks: dict[str, asyncio.Task[None]] = {}
         self._day_keys: list[dt.date] = []
         self._suspend_table_events = False
+        self._commit_query = ""
         self._mounted = False
 
     def compose(self) -> ComposeResult:
@@ -319,7 +334,8 @@ class MainScreen(Screen[None]):
                     yield Static("Contribution Activity", id="graph-title", classes="panel-title")
                     yield GraphView(id="graph-content")
                 with Vertical(id="commits-panel", classes="panel"):
-                    yield Static("Year Commits", classes="panel-title")
+                    yield Static("Year Commits", id="commits-title", classes="panel-title")
+                    yield Input(placeholder="Filter commits", id="commits-filter")
                     yield CommitTable(id="commits-table")
             with Vertical(classes="right-column"):
                 with Vertical(id="details-panel", classes="panel"):
@@ -568,12 +584,28 @@ class MainScreen(Screen[None]):
         self._update_day_details(commits, reset_scroll=True)
         self._refresh_language_panel()
 
+    def _visible_commits(self, commits: list[CommitRecord]) -> list[CommitRecord]:
+        """The commits shown in the table, narrowed by the / filter (if any),
+        matching on message, author, or hash."""
+        query = self._commit_query.strip().lower()
+        if not query:
+            return commits
+        return [
+            commit
+            for commit in commits
+            if query in commit.message.lower()
+            or query in commit.author_name.lower()
+            or query in commit.commit_hash.lower()
+        ]
+
     def _update_commits_table(self, commits: list[CommitRecord]) -> None:
+        visible = self._visible_commits(commits)[:MAX_VISIBLE_COMMITS]
+        self._update_commits_title(len(visible), len(commits))
         table = self.query_one("#commits-table", DataTable)
         table.scroll_home(immediate=True, x_axis=True, y_axis=True)
         table.clear(columns=False)
         now = utc_now()
-        for commit in commits[:MAX_VISIBLE_COMMITS]:
+        for commit in visible:
             table.add_row(
                 commit.commit_hash[:7],
                 truncate_middle(commit.message, COMMIT_MESSAGE_WIDTH),
@@ -582,14 +614,22 @@ class MainScreen(Screen[None]):
                 str(len(commit.changed_files)),
                 key=commit.commit_hash,
             )
-        if self.selected_commit_hash in {commit.commit_hash for commit in commits[:MAX_VISIBLE_COMMITS]}:
+        visible_hashes = [commit.commit_hash for commit in visible]
+        if self.selected_commit_hash in visible_hashes:
             try:
-                row_index = [commit.commit_hash for commit in commits[:MAX_VISIBLE_COMMITS]].index(
-                    self.selected_commit_hash
+                table.move_cursor(
+                    row=visible_hashes.index(self.selected_commit_hash),
+                    animate=False,
+                    scroll=True,
                 )
-                table.move_cursor(row=row_index, animate=False, scroll=True)
             except Exception:
                 pass
+
+    def _update_commits_title(self, shown: int, total: int) -> None:
+        title = "Year Commits"
+        if self._commit_query.strip():
+            title = f"Year Commits  ({shown} of {total})"
+        self.query_one("#commits-title", Static).update(title)
 
     def _update_day_details(self, commits: list[CommitRecord], *, reset_scroll: bool) -> None:
         palette = self._theme_palette
@@ -826,6 +866,56 @@ class MainScreen(Screen[None]):
             return
         hashes, index = self._commit_hashes_and_index()
         self.app.push_screen(CommitFilesScreen(self.service, hashes, index))
+
+    # -- commit table filter ----------------------------------------------
+
+    def _commit_filter(self) -> Input:
+        return self.query_one("#commits-filter", Input)
+
+    def _commit_filter_focused(self) -> bool:
+        try:
+            return self._commit_filter().has_focus
+        except Exception:
+            return False
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        # While typing in the commit filter, let the input keep every key it
+        # needs -- otherwise the priority up/down/j/k bindings would hijack them.
+        if action in ("cursor_down", "cursor_up") and self._commit_filter_focused():
+            return False
+        return True
+
+    def action_open_commit_filter(self) -> None:
+        inp = self._commit_filter()
+        inp.display = True
+        inp.focus()
+
+    def action_close_commit_filter(self) -> None:
+        inp = self._commit_filter()
+        if not inp.display:
+            return
+        inp.value = ""
+        inp.display = False
+        self._commit_query = ""
+        _, commits = self._filtered_branch_data()
+        self._update_commits_table(commits)
+        self.query_one("#commits-table", CommitTable).focus()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "commits-filter":
+            return
+        self._commit_query = event.value
+        _, commits = self._filtered_branch_data()
+        self._suspend_table_events = True
+        try:
+            self._update_commits_table(commits)
+        finally:
+            self._suspend_table_events = False
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        # Enter keeps the filter and moves into the (narrowed) table.
+        if event.input.id == "commits-filter":
+            self.query_one("#commits-table", CommitTable).focus()
 
     def _build_repo_stats_sub_title(self) -> str:
         return build_repo_stats_sub_title(self.context, self.scanned_file_count)

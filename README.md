@@ -85,6 +85,7 @@ Press `?` at any time for the in-app reference.
 | `Tab` / `Shift+Tab` | Switch between panels |
 | `Enter` | Open the commit, or the highlighted language's files |
 | `f` | Browse the highlighted commit's files |
+| `/` | Filter the commit table by message, author or hash (`Esc` clears) |
 | `Left` / `Right` | Languages: prev / next language; Graph: back / forward a week |
 | `h` / `l` | Select the older / newer active day |
 | `[` / `]` | Step through years |
