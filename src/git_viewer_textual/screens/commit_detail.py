@@ -950,11 +950,22 @@ class CommitDetailScreen(ModalScreen[None]):
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         # Patch search: Enter steps to the next match (Shift+Enter / N steps back).
-        # Files filter: Enter moves into the (narrowed) files table.
         if event.input.id == "commit-detail-search":
             self.action_next_match()
-        elif event.input.id == "commit-detail-files-filter":
-            self._current_files_table().focus()
+            return
+        if event.input.id != "commit-detail-files-filter":
+            return
+        # Files filter: Enter picks the highlighted file (shows its diff) and
+        # moves into the narrowed files list so arrows keep browsing it.
+        visible = self._visible_file_indices()
+        table = self._current_files_table()
+        row = table.cursor_row
+        if visible and row is not None and 0 <= row < len(visible):
+            self.selected_file_index = visible[row]
+            self._render_patch_panel(refresh_content=True)
+            self._schedule_reconcile(focus_target="files")
+        else:
+            table.focus()
 
     def _close_search(self) -> None:
         # Hide the box but keep the matches + highlights, so n / N still step
