@@ -56,6 +56,7 @@ class GitViewerApp(App[None]):
             self.register_theme(theme)
         saved = config.load_theme()
         self.theme = saved if saved in self.available_themes else APP_THEME_NAME
+        self._apply_transparency()
         self.watch(self, "theme", self._persist_theme, init=False)
         self.title = f"{self.context.project_name} - Git Viewer"
         self.push_screen(MainScreen(self.context, self.service))
@@ -111,6 +112,16 @@ class GitViewerApp(App[None]):
         for theme in app_themes(self._theme_source, transparent=self.transparent_background):
             self.register_theme(theme)
         self.theme = self.current_theme.name
+        self._apply_transparency()
+        # Re-registering a theme in place doesn't re-resolve already-computed
+        # widget backgrounds, so force a CSS refresh to pick up the new surfaces.
+        self.refresh_css()
+
+    def _apply_transparency(self) -> None:
+        # Transparent backgrounds use the terminal's default color (ansi_default);
+        # that only stays transparent in native-ANSI mode, otherwise Textual
+        # converts it to an opaque color. So enable native ANSI when transparent.
+        self.ansi_color = True if self.transparent_background else None
 
     def on_unmount(self) -> None:
         if self._repo_scan_task is not None:
