@@ -210,6 +210,32 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertEqual((app.screen.selected_day - after_day).days, 7)
 
+    async def test_app_registers_all_themes(self) -> None:
+        app = make_app()
+        async with app.run_test() as pilot:
+            for name in ("git-viewer", "one-night", "pro-black"):
+                self.assertIn(name, app.available_themes)
+            self.assertIn(app.current_theme.name, app.available_themes)
+
+    def test_config_theme_roundtrip(self) -> None:
+        import pathlib
+        import tempfile
+
+        from git_viewer_textual import config
+
+        orig_dir, orig_path = config.CONFIG_DIR, config.CONFIG_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                config.CONFIG_DIR = pathlib.Path(tmp)
+                config.CONFIG_PATH = config.CONFIG_DIR / "config.json"
+                self.assertIsNone(config.load_theme())
+                config.save_theme("pro-black")
+                self.assertEqual(config.load_theme(), "pro-black")
+                config.reset()
+                self.assertIsNone(config.load_theme())
+        finally:
+            config.CONFIG_DIR, config.CONFIG_PATH = orig_dir, orig_path
+
     async def test_help_overlay_opens_and_closes(self) -> None:
         app = make_app()
         async with app.run_test() as pilot:

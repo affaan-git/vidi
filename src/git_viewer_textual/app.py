@@ -7,10 +7,11 @@ import asyncio
 from textual.app import App
 from textual.binding import Binding
 
+from . import config
 from .models import RepoContext, RepoScanSnapshot
 from .repository import RepoService
 from .screens import HelpScreen, MainScreen
-from .theme import build_app_theme
+from .theme import APP_THEME_NAME, app_themes
 
 
 class GitViewerApp(App[None]):
@@ -40,13 +41,19 @@ class GitViewerApp(App[None]):
         self._initial_context_task: asyncio.Task[None] | None = None
 
     def on_mount(self) -> None:
-        # Register the palette as a Textual theme so CSS $vars and default widget
-        # styles resolve to the same colors the app paints programmatically.
-        app_theme = build_app_theme(self.current_theme)
-        self.register_theme(app_theme)
-        self.theme = app_theme.name
+        # Register the app themes (palette-as-Textual-theme so CSS $vars and
+        # default widget styles match the programmatic palette) and restore the
+        # saved choice, falling back to the default.
+        for theme in app_themes(self.current_theme):
+            self.register_theme(theme)
+        saved = config.load_theme()
+        self.theme = saved if saved in self.available_themes else APP_THEME_NAME
+        self.watch(self, "theme", self._persist_theme, init=False)
         self.title = f"{self.context.project_name} - Git Viewer"
         self.push_screen(MainScreen(self.context, self.service))
+
+    def _persist_theme(self, theme_name: str) -> None:
+        config.save_theme(theme_name)
         if not self.context.language_stats or not self.context.files_by_language:
             self._initial_context_task = asyncio.create_task(self._warm_initial_context())
         self._schedule_next_repo_scan(self.REPO_SCAN_DEFAULT_SECONDS)

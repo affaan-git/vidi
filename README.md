@@ -57,6 +57,16 @@ git-viewer-textual /path/to/repo \
     --ignore-dirs vendor,generated
 ```
 
+## Themes
+
+Ships with three themes: `git-viewer` (default), `one-night`, and `pro-black`.
+Switch from the command palette (`Ctrl+P` -> "Change theme"); the choice is
+remembered between runs. Reset to the default with:
+
+```bash
+git-viewer-textual --reset-theme
+```
+
 ## Keys
 
 Press `?` at any time for the in-app reference.

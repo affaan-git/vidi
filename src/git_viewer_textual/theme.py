@@ -51,6 +51,9 @@ def build_app_theme(source_theme: Theme, name: str = APP_THEME_NAME) -> Theme:
     return Theme(
         name=name,
         primary=palette.primary.hex,
+        secondary=source_theme.secondary,
+        accent=source_theme.accent,
+        warning=source_theme.warning,
         success=palette.success.hex,
         error=palette.error.hex,
         foreground=palette.foreground.hex,
@@ -78,6 +81,59 @@ def build_app_theme(source_theme: Theme, name: str = APP_THEME_NAME) -> Theme:
             "scrollbar-background-active": palette.panel.hex,
         },
     )
+
+
+# Extra selectable themes, ported from the user's dotfiles Ghostty schemes
+# (github.com/affaan-git/dotfiles). One Dark ANSI colors over two backgrounds.
+DOTFILES_THEMES: dict[str, dict[str, str]] = {
+    "pro-black": {
+        "background": "#141619",
+        "foreground": "#c9cdd6",
+        "primary": "#61afef",
+        "secondary": "#c678dd",
+        "accent": "#56b6c2",
+        "success": "#98c379",
+        "warning": "#d19a66",
+        "error": "#e06c75",
+    },
+    "one-night": {
+        "background": "#282c3c",
+        "foreground": "#cccccc",
+        "primary": "#61afef",
+        "secondary": "#c678dd",
+        "accent": "#56b6c2",
+        "success": "#98c379",
+        "warning": "#d19a66",
+        "error": "#e06c75",
+    },
+}
+
+
+def _base_theme(name: str, colors: dict[str, str]) -> Theme:
+    return Theme(
+        name=name,
+        primary=colors["primary"],
+        secondary=colors.get("secondary"),
+        accent=colors.get("accent"),
+        warning=colors.get("warning"),
+        success=colors["success"],
+        error=colors["error"],
+        foreground=colors["foreground"],
+        background=colors["background"],
+        dark=True,
+    )
+
+
+def app_themes(default_source: Theme) -> list[Theme]:
+    """Every theme the app registers: the default (built from Textual's current
+    theme) plus the dotfiles themes, each fully configured with the same
+    palette-derived variables so they all render consistently."""
+    themes = [build_app_theme(default_source, name=APP_THEME_NAME)]
+    themes.extend(
+        build_app_theme(_base_theme(name, colors), name=name)
+        for name, colors in DOTFILES_THEMES.items()
+    )
+    return themes
 
 
 def resolve_theme_palette(theme: Theme) -> ThemePalette:
@@ -118,6 +174,11 @@ def resolve_theme_palette(theme: Theme) -> ThemePalette:
     muted = foreground.blend(panel, 0.50 if theme.dark else 0.35)
     border = panel.blend(foreground, 0.18 if theme.dark else 0.35)
     selected_bg = primary.blend(surface, 0.42 if theme.dark else 0.60)
+    # Keep the selection legible: on low-gamut themes (e.g. ansi) the blend can
+    # collapse toward the panel, so nudge it toward the foreground if it lands
+    # too close in brightness.
+    if abs(selected_bg.brightness - panel.brightness) < 0.12:
+        selected_bg = selected_bg.blend(foreground, 0.30)
     selected_fg = selected_bg.get_contrast_text()
     overlay = background.darken(0.35 if theme.dark else 0.75).with_alpha(
         0.68 if theme.dark else 0.50
