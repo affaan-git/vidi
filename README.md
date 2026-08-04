@@ -50,14 +50,8 @@ Requires Python 3.12 or newer. The only runtime dependency is `textual`.
 git-viewer-textual /path/to/repo
 ```
 
-Options:
-
-```bash
-git-viewer-textual /path/to/repo \
-    --language-mode files \        # count languages by file instead of bytes
-    --exclude-languages JSON,YAML \
-    --ignore-dirs vendor,generated
-```
+Everything else is set from inside the app (command palette, `Ctrl+P`) and
+remembered between runs -- there are no other flags.
 
 ## Themes
 
@@ -72,8 +66,10 @@ The command palette also has:
   terminal shows through) while keeping the theme's borders, selection, and text.
 - "Graph: browse / select on move" - toggle whether moving over the contribution
   graph moves the commit-table selection immediately (default) or only on Enter.
+- "Language settings" - choose whether languages are measured by bytes or file
+  count, exclude languages, and add directories to ignore in the scan.
 
-Both settings persist between runs.
+All of these persist between runs.
 
 ## Keys
 

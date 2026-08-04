@@ -12,6 +12,7 @@ from . import config
 from .models import RepoContext, RepoScanSnapshot
 from .repository import RepoService
 from .screens import HelpScreen, MainScreen
+from .screens.language_settings import LanguageSettingsScreen
 from .theme import APP_THEME_NAME, app_themes
 
 
@@ -96,9 +97,41 @@ class GitViewerApp(App[None]):
             "terminal (and its transparency) show through",
             self._command_toggle_transparent,
         )
+        yield SystemCommand(
+            "Language settings",
+            "Choose how languages are measured and what the scan skips",
+            self._command_language_settings,
+        )
 
     def _command_reset_theme(self) -> None:
         self.theme = APP_THEME_NAME
+
+    def _command_language_settings(self) -> None:
+        self.push_screen(
+            LanguageSettingsScreen(
+                self.service.language_mode,
+                sorted(self.service.exclude_languages),
+                sorted(self.service.extra_ignored_dirs),
+            ),
+            self._apply_language_settings,
+        )
+
+    def _apply_language_settings(self, result: dict | None) -> None:
+        if not result:
+            return
+        self.service.update_language_settings(
+            result["language_mode"],
+            set(result["exclude_languages"]),
+            set(result["ignore_dirs"]),
+        )
+        config.save_language_settings(
+            result["language_mode"],
+            result["exclude_languages"],
+            result["ignore_dirs"],
+        )
+        screen = self.screen
+        if isinstance(screen, MainScreen):
+            screen.reload_language_panel()
 
     def _command_toggle_graph_browse(self) -> None:
         self.graph_browse = not self.graph_browse

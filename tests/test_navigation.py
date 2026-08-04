@@ -742,6 +742,42 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertEqual(app.screen._index, 0)
 
+    async def test_language_settings_apply_updates_scan_and_persists(self) -> None:
+        from git_viewer_textual import config
+        from git_viewer_textual.screens.language_settings import LanguageSettingsScreen
+        from textual.widgets import Select
+
+        context, service = build_repo_context(
+            repo_dir=sample_repo(),
+            language_mode="bytes",
+            exclude_languages=set(),
+            extra_ignored_dirs=set(),
+        )
+        head = service.get_branch_data(context.current_branch).commits[0].commit_hash
+        before = [s["language"] for s in service.get_commit_language_stats(head)[0]]
+        self.assertGreater(len(before), 0)
+        victim = before[0]
+
+        app = GitViewerApp(context, service)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._command_language_settings()
+            await pilot.pause()
+            self.assertIsInstance(app.screen, LanguageSettingsScreen)
+            app.screen.query_one("#language-mode", Select).value = "files"
+            app.screen.query_one("#language-exclude", Input).value = victim
+            app.screen.action_apply()
+            await pilot.pause()
+
+            self.assertEqual(service.language_mode, "files")
+            self.assertIn(victim, service.exclude_languages)
+            after = [s["language"] for s in service.get_commit_language_stats(head)[0]]
+            self.assertNotIn(victim, after)
+
+        saved = config.load_language_settings()
+        self.assertEqual(saved["language_mode"], "files")
+        self.assertIn(victim, saved["exclude_languages"])
+
     async def test_branch_picker_restores_current_branch_when_filter_is_cleared(self) -> None:
         app = make_app()
         async with app.run_test() as pilot:

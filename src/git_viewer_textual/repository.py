@@ -250,6 +250,7 @@ def build_repo_context(
         language_mode=language_mode,
         exclude_languages=exclude_languages,
         ignore_dirs=ignore_dirs,
+        extra_ignored_dirs=extra_ignored_dirs,
         initial_scanned_file_count=scanned_file_count,
     )
     context = RepoContext(
@@ -290,6 +291,7 @@ def build_initial_repo_context(
         language_mode=language_mode,
         exclude_languages=exclude_languages,
         ignore_dirs=ignore_dirs,
+        extra_ignored_dirs=extra_ignored_dirs,
         initial_scanned_file_count=None,
     )
 
@@ -304,12 +306,16 @@ class RepoService:
         language_mode: str = "bytes",
         exclude_languages: set[str] | None = None,
         ignore_dirs: set[str] | None = None,
+        extra_ignored_dirs: set[str] | None = None,
         initial_scanned_file_count: int | None = None,
     ):
         self.repo_dir = repo_dir
         self.language_mode = language_mode
         self.exclude_languages = set(exclude_languages or set())
         self.ignore_dirs = set(ignore_dirs or set())
+        # The user-supplied extras only, kept so settings can re-resolve them
+        # against the defaults and gitignore without losing either side.
+        self.extra_ignored_dirs = set(extra_ignored_dirs or set())
         self._cached_scanned_file_count = initial_scanned_file_count
         # Per-instance caches: a class-level lru_cache would key on self,
         # keeping every service alive and making cache_clear global.
@@ -321,6 +327,23 @@ class RepoService:
         self.get_branch_data.cache_clear()
         self.get_commit_detail.cache_clear()
         self.get_commit_language_stats.cache_clear()
+
+    def update_language_settings(
+        self,
+        language_mode: str,
+        exclude_languages: set[str],
+        extra_ignored_dirs: set[str],
+    ) -> None:
+        """Re-point the language scan at new settings and drop the stale cache."""
+        self.language_mode = language_mode
+        self.exclude_languages = set(exclude_languages)
+        self.extra_ignored_dirs = set(extra_ignored_dirs)
+        self.ignore_dirs = _resolve_ignore_dirs(self.repo_dir, self.extra_ignored_dirs)
+        self.get_commit_language_stats.cache_clear()
+        # The header file count honours the same excludes, so recount it too.
+        self._cached_scanned_file_count = self._count_scanned_paths(
+            self._list_scanned_paths()
+        )
 
     def _commit_language_stats(
         self, commit_hash: str

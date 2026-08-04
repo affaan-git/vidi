@@ -680,6 +680,12 @@ class MainScreen(Screen[None]):
                 animate=False
             )
 
+    def reload_language_panel(self) -> None:
+        """Re-read languages after the scan settings changed (cache was cleared)."""
+        self.scanned_file_count = self.service.scanned_file_count(self.context)
+        self.sub_title = self._build_repo_stats_sub_title()
+        self._refresh_language_panel()
+
     def _refresh_language_panel(self) -> None:
         # Snapshot the highlighted commit's tree languages (cached per commit).
         if self.selected_commit_hash:

@@ -19,15 +19,19 @@ def _load() -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _set(key: str, value: object) -> None:
-    """Persist one preference; failures are ignored (a viewer, not a vault)."""
+def _set_many(values: dict[str, object]) -> None:
+    """Persist preferences; failures are ignored (a viewer, not a vault)."""
     try:
         prefs = _load()
-        prefs[key] = value
+        prefs.update(values)
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         CONFIG_PATH.write_text(json.dumps(prefs, indent=2) + "\n")
     except OSError:
         pass
+
+
+def _set(key: str, value: object) -> None:
+    _set_many({key: value})
 
 
 def load_theme() -> str | None:
@@ -57,6 +61,35 @@ def load_transparent_background() -> bool:
 
 def save_transparent_background(value: bool) -> None:
     _set("transparent_background", bool(value))
+
+
+def _str_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str) and item]
+
+
+def load_language_settings() -> dict:
+    """The persisted language-scan settings, falling back to sensible defaults."""
+    prefs = _load()
+    mode = prefs.get("language_mode")
+    return {
+        "language_mode": mode if mode in ("bytes", "files") else "bytes",
+        "exclude_languages": _str_list(prefs.get("exclude_languages")),
+        "ignore_dirs": _str_list(prefs.get("ignore_dirs")),
+    }
+
+
+def save_language_settings(
+    language_mode: str, exclude_languages: list[str], ignore_dirs: list[str]
+) -> None:
+    _set_many(
+        {
+            "language_mode": language_mode if language_mode in ("bytes", "files") else "bytes",
+            "exclude_languages": list(exclude_languages),
+            "ignore_dirs": list(ignore_dirs),
+        }
+    )
 
 
 def reset() -> None:
