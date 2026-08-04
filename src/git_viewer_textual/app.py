@@ -67,13 +67,14 @@ class GitViewerApp(App[None]):
             self._command_reset_theme,
         )
         graph_label = (
-            "Graph: select as you move"
+            "Graph: commit table follows as you move"
             if self.graph_browse
-            else "Graph: browse, select on Enter"
+            else "Graph: commit table follows on Enter"
         )
         yield SystemCommand(
             graph_label,
-            "Toggle whether moving the graph selects a commit immediately or on Enter",
+            "Toggle whether moving over the graph moves the commit-table selection "
+            "immediately or only when you press Enter",
             self._command_toggle_graph_browse,
         )
 

@@ -820,18 +820,21 @@ class MainScreen(Screen[None]):
         if self.active_panel == "languages":
             self._open_language_files()
             return
-        _, commits = self._filtered_branch_data()
-        if self.active_panel == "graph" and self.app.graph_browse:
-            # In browse mode, Enter commits the previewed day before opening it.
+        if self.active_panel == "graph":
+            # Enter hands the graph's day off to the commit table: pick that
+            # commit in the table and move focus there, so the next Enter opens
+            # it and up/down navigate the table normally.
+            _, commits = self._filtered_branch_data()
             day_commits = [c for c in commits if c.authored_date == self.selected_day]
-            self._set_selected_commit(
-                commits,
-                day_commits[0].commit_hash if day_commits else None,
-                sync_table=True,
-            )
+            if not day_commits:
+                return
+            self._set_selected_commit(commits, day_commits[0].commit_hash, sync_table=True)
+            self.query_one("#commits-table", CommitTable).focus()
+            return
         commit_hash = self.selected_commit_hash
         if not commit_hash:
             return
+        _, commits = self._filtered_branch_data()
         self.app.push_screen(
             CommitDetailScreen(
                 self.service,
@@ -889,10 +892,9 @@ class MainScreen(Screen[None]):
             return
         self.selected_day = new_day
         if self.app.graph_browse:
-            # Browse: move the highlight and preview the day in the details, but
-            # do not commit the selection or move the commit table -- Enter does.
+            # On-enter mode: only move the square highlight; the commit picker and
+            # details stay put until Enter hands the day off to the table.
             self._render_graph(commits)
-            self._update_day_details(commits, reset_scroll=True)
             return
         day_commits = [commit for commit in commits if commit.authored_date == new_day]
         self._set_selected_commit(
