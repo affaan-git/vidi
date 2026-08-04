@@ -33,6 +33,8 @@ from ..render import (
     build_language_bar,
     build_language_summary,
     build_language_title,
+    graph_day_at,
+    language_index_at,
     language_legend_rows,
     render_contribution_graph,
 )
@@ -78,6 +80,9 @@ class GraphView(Static):
 
     def action_next_week(self) -> None:
         self.screen._move_selected_day(7)
+
+    def on_click(self, event: events.Click) -> None:
+        self.screen._click_graph(event.offset.x, event.offset.y)
 
 
 class CommitTable(DataTable):
@@ -126,6 +131,9 @@ class LanguageList(VerticalScroll):
 
     def action_next_language(self) -> None:
         self.screen._move_language_linear(1)
+
+    def on_click(self, event: events.Click) -> None:
+        self.screen._click_language(event.offset.x, event.offset.y + int(self.scroll_y))
 
 
 class MainScreen(Screen[None]):
@@ -765,6 +773,19 @@ class MainScreen(Screen[None]):
         else:
             self._move_language_linear(delta)
 
+    def _click_language(self, column: int, row: int) -> None:
+        # Clicking a legend entry selects that language (and focuses the panel),
+        # like moving to it with the arrows; Enter or a click on a file opens it.
+        if not self._language_stats:
+            return
+        width = self.query_one("#language-scroll", VerticalScroll).content_region.width or 32
+        index = language_index_at(self._language_stats, width, column, row)
+        if index is None:
+            return
+        self._language_index = index
+        self.query_one("#language-scroll", LanguageList).focus()
+        self._render_language_summary()
+
     def _open_language_files(self) -> None:
         stats = self._language_stats
         if not stats or not self.selected_commit_hash:
@@ -899,20 +920,33 @@ class MainScreen(Screen[None]):
         if base is None:
             base = self._day_keys[0] if self._day_keys else graph_end
         new_day = base + dt.timedelta(days=delta_days)
-        if new_day < graph_start or new_day > graph_end:
-            return
-        self.selected_day = new_day
+        if graph_start <= new_day <= graph_end:
+            self._select_day(new_day, commits)
+
+    def _select_day(self, day: dt.date, commits: list[CommitRecord]) -> None:
+        self.selected_day = day
         if self.app.graph_browse:
             # On-enter mode: only move the square highlight; the commit picker and
             # details stay put until Enter hands the day off to the table.
             self._render_graph(commits)
             return
-        day_commits = [commit for commit in commits if commit.authored_date == new_day]
+        day_commits = [commit for commit in commits if commit.authored_date == day]
         self._set_selected_commit(
             commits,
             day_commits[0].commit_hash if day_commits else None,
             sync_table=True,
         )
+
+    def _click_graph(self, column: int, row: int) -> None:
+        # Clicking a square selects that day the same way the arrows do (mode
+        # aware), then focuses the graph.
+        graph_start, graph_end = resolve_graph_window(self.selected_range, self.selected_year)
+        day = graph_day_at(graph_start, graph_end, column, row)
+        if day is None:
+            return
+        _, commits = self._filtered_branch_data()
+        self._select_day(day, commits)
+        self.query_one("#graph-content", GraphView).focus()
 
     def _render_graph(self, commits: list[CommitRecord]) -> None:
         counts: collections.Counter[dt.date] = collections.Counter(

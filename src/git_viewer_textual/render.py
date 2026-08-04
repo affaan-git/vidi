@@ -151,6 +151,25 @@ def render_contribution_graph(
     return Group(*lines, legend)
 
 
+def graph_day_at(
+    start: dt.date, end: dt.date, column: int, row: int
+) -> dt.date | None:
+    """The day at a click position in the contribution graph, or None.
+
+    Row 0 is the month header; rows 1..7 are Sun..Sat; columns 0..3 are the
+    weekday label, columns 4+ are the week cells -- matching the layout in
+    render_contribution_graph.
+    """
+    weekday = row - 1
+    week = column - 4
+    if not 0 <= weekday <= 6 or week < 0:
+        return None
+    days_to_prev_sunday = (start.weekday() + 1) % 7
+    first_sunday = start - dt.timedelta(days=days_to_prev_sunday)
+    day = first_sunday + dt.timedelta(days=week * 7 + weekday)
+    return day if start <= day <= end else None
+
+
 def build_graph_title(
     branch: str,
     range_value: str,
@@ -240,6 +259,26 @@ def language_legend_rows(language_stats: list[LanguageStat], width: int) -> list
     if current:
         rows.append(current)
     return rows
+
+
+def language_index_at(
+    language_stats: list[LanguageStat], width: int, column: int, row: int
+) -> int | None:
+    """The language index at a click position (column, row) in the wrapped
+    legend, or None if the click missed every entry."""
+    rows = language_legend_rows(language_stats, width)
+    if not 0 <= row < len(rows):
+        return None
+    label_width = _language_label_width(width)
+    x = 0
+    for position, index in enumerate(rows[row]):
+        if position:
+            x += LANGUAGE_ENTRY_SEPARATOR
+        entry_width = len(_language_entry_text(language_stats[index], label_width))
+        if x <= column < x + entry_width:
+            return index
+        x += entry_width
+    return None
 
 
 def build_language_summary(

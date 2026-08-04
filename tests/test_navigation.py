@@ -685,6 +685,37 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertEqual(type(app.screen).__name__, "MainScreen")
 
+    async def test_click_selects_a_language_in_the_legend(self) -> None:
+        from textual.geometry import Offset
+
+        app = make_app()
+        async with app.run_test(size=(160, 44)) as pilot:
+            rows = app.screen._language_rows()
+            self.assertTrue(rows)
+            await pilot.click("#language-scroll", offset=Offset(2, 0))
+            await pilot.pause()
+            self.assertEqual(app.screen.active_panel, "languages")
+            self.assertEqual(app.screen._language_index, rows[0][0])
+
+    async def test_click_selects_a_graph_day(self) -> None:
+        import datetime as dt
+
+        from textual.geometry import Offset
+
+        from git_viewer_textual.data import resolve_graph_window
+
+        app = make_app()
+        async with app.run_test(size=(160, 44)) as pilot:
+            scr = app.screen
+            start, _ = resolve_graph_window(scr.selected_range, scr.selected_year)
+            first_sunday = start - dt.timedelta(days=(start.weekday() + 1) % 7)
+            offset = (scr.selected_day - first_sunday).days
+            column, row = offset // 7 + 4, offset % 7 + 1
+            await pilot.click("#graph-content", offset=Offset(column, row))
+            await pilot.pause()
+            self.assertEqual(getattr(app.focused, "id", None), "graph-content")
+            self.assertEqual(app.screen.active_panel, "graph")
+
     async def test_branch_picker_restores_current_branch_when_filter_is_cleared(self) -> None:
         app = make_app()
         async with app.run_test() as pilot:
