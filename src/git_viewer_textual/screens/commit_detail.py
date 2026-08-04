@@ -1172,6 +1172,11 @@ class CommitDetailScreen(ModalScreen[None]):
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         if event.data_table.id not in {"commit-detail-files-diff", "commit-detail-files-outline"} or self._suspend_file_events:
             return
+        # While typing in the files filter, the table is repopulated and its
+        # cursor moves -- ignore that highlight so it doesn't change the selection
+        # or reconcile focus away from the input.
+        if self._files_filter_input().has_focus:
+            return
         row_key = event.row_key.value if event.row_key else None
         if row_key is None:
             return
