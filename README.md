@@ -118,10 +118,12 @@ Press `?` at any time for the in-app reference.
 ### Commit files
 
 Reached with `f` (the whole tree) or `Enter` on a language (just that language).
+Files changed in the commit are marked with a dot.
 
 | Key | Action |
 | --- | --- |
 | `j` / `k` (or arrows) | Move between files |
+| `/` | Filter the list (type to narrow, `Esc` clears) |
 | `[` / `]` | Previous / next commit |
 | `Enter` | Open the highlighted file |
 | `Esc` / `q` | Back |

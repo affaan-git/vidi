@@ -771,6 +771,54 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             # the file list follows the commit
             self.assertEqual(app.screen._files, service.get_commit_files(hashes[1]))
 
+    async def test_commit_files_browser_marks_changed_and_filters(self) -> None:
+        import re
+
+        from git_viewer_textual.screens.commit_files import CommitFilesScreen
+
+        context, service = build_repo_context(
+            repo_dir=sample_repo(),
+            language_mode="bytes",
+            exclude_languages=set(),
+            extra_ignored_dirs=set(),
+        )
+        hashes = [c.commit_hash for c in service.get_branch_data(context.current_branch).commits]
+        head = hashes[0]
+        changed = {fc.path for fc in service.get_commit_detail(head).file_changes}
+
+        app = GitViewerApp(context, service)
+        async with app.run_test(size=(120, 40)) as pilot:
+            app.push_screen(CommitFilesScreen(service, hashes, 0))
+            await pilot.pause()
+            await pilot.pause()
+            screen = app.screen
+            # files changed in this commit are tracked (and dotted in the list)
+            self.assertEqual(screen._changed, changed)
+
+            # / opens the filter and narrows the list live
+            await pilot.press("slash")
+            await pilot.pause()
+            self.assertTrue(screen.query_one("#commit-files-filter", Input).display)
+            fragment = re.match(r"[A-Za-z]+", screen._all_files[0].split("/")[-1])
+            fragment = (fragment.group(0) if fragment else "a")[:4]
+            for char in fragment:
+                await pilot.press(char)
+            await pilot.pause()
+            self.assertTrue(all(fragment.lower() in path.lower() for path in screen._files))
+            self.assertLessEqual(len(screen._files), len(screen._all_files))
+
+            # Enter keeps the filter and moves into the list
+            await pilot.press("enter")
+            await pilot.pause()
+            self.assertTrue(screen._options().has_focus)
+
+            # Esc clears the filter and restores the full list, screen stays open
+            await pilot.press("escape")
+            await pilot.pause()
+            self.assertFalse(screen.query_one("#commit-files-filter", Input).display)
+            self.assertEqual(len(screen._files), len(screen._all_files))
+            self.assertIsInstance(app.screen, CommitFilesScreen)
+
     async def test_browse_files_key_opens_all_files_from_main_and_detail(self) -> None:
         from git_viewer_textual.screens.commit_files import CommitFilesScreen
 

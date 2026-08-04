@@ -55,6 +55,7 @@ SHORTCUTS: list[tuple[str, list[tuple[str, str]]]] = [
         "Commit files",
         [
             ("j / k  or  up / down", "Move between files"),
+            ("/", "Filter the list (esc clears)"),
             ("[ / ]", "Previous / next commit"),
             ("enter", "Open the highlighted file"),
             ("esc / q", "Back"),
