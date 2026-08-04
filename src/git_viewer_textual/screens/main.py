@@ -1116,8 +1116,15 @@ class MainScreen(Screen[None]):
         self.refresh_view()
 
     def action_open_branch_picker(self) -> None:
+        branches = self.context.branches
+        base = self.service.default_base_branch(branches)
+        divergence = (
+            {branch: self.service.get_branch_divergence(branch, base) for branch in branches}
+            if base
+            else {}
+        )
         self.app.push_screen(
-            BranchPickerScreen(self.context.branches, self.selected_branch),
+            BranchPickerScreen(branches, self.selected_branch, divergence, base),
             self._handle_branch_selected,
         )
 

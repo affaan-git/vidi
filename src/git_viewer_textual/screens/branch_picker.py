@@ -72,10 +72,19 @@ class BranchPickerScreen(ModalScreen[str | None]):
         Binding("q", "cancel", "Back", show=False, group=BACK_GROUP),
     ]
 
-    def __init__(self, branches: list[str], current_branch: str) -> None:
+    def __init__(
+        self,
+        branches: list[str],
+        current_branch: str,
+        divergence: dict[str, tuple[int, int]] | None = None,
+        base_branch: str | None = None,
+    ) -> None:
         super().__init__()
         self.branches = branches
         self.current_branch = current_branch
+        # {branch: (ahead, behind)} relative to base_branch, for the ahead/behind marks.
+        self._divergence = divergence or {}
+        self._base_branch = base_branch
         self.filtered_branches = branches[:]
         self.highlighted_branch = current_branch if current_branch in branches else (
             branches[0] if branches else ""
@@ -92,8 +101,18 @@ class BranchPickerScreen(ModalScreen[str | None]):
     def on_mount(self) -> None:
         self.watch(self.app, "theme", self._on_theme_change, init=False)
         self._apply_theme()
+        self._render_title()
         self._refresh_options()
         self.query_one("#branch-picker-filter", Input).focus()
+
+    def _render_title(self) -> None:
+        title = Text("Select Branch", style=make_style(self._theme_palette.foreground, bold=True))
+        if self._base_branch and any(a or b for a, b in self._divergence.values()):
+            title.append(
+                f"    ↑ ahead / ↓ behind {self._base_branch}",
+                style=make_style(self._theme_palette.muted),
+            )
+        self.query_one("#branch-picker-title", Static).update(title)
 
     def _on_theme_change(self, old_value: str, new_value: str) -> None:
         self._apply_theme()
@@ -108,9 +127,14 @@ class BranchPickerScreen(ModalScreen[str | None]):
     def _build_option(self, branch: str) -> Option:
         palette = self._theme_palette
         prompt = Text()
-        prompt.append(truncate_middle(branch, 42), style=make_style(palette.foreground))
+        prompt.append(truncate_middle(branch, 30), style=make_style(palette.foreground))
         if branch == self.current_branch:
             prompt.append("  current", style=make_style(palette.primary, bold=True))
+        ahead, behind = self._divergence.get(branch, (0, 0))
+        if ahead:
+            prompt.append(f"  ↑{ahead}", style=make_style(palette.success))
+        if behind:
+            prompt.append(f"  ↓{behind}", style=make_style(palette.error))
         return Option(prompt, id=branch)
 
     def _refresh_options(self) -> None:

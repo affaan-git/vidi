@@ -323,12 +323,33 @@ class RepoService:
         self.get_commit_detail = lru_cache(maxsize=256)(self._commit_detail)
         self.get_commit_language_stats = lru_cache(maxsize=128)(self._commit_language_stats)
         self.get_commit_files = lru_cache(maxsize=128)(self._commit_files)
+        self.get_branch_divergence = lru_cache(maxsize=256)(self._branch_divergence)
 
     def invalidate_cached_git_data(self) -> None:
         self.get_branch_data.cache_clear()
         self.get_commit_detail.cache_clear()
         self.get_commit_language_stats.cache_clear()
         self.get_commit_files.cache_clear()
+        self.get_branch_divergence.cache_clear()
+
+    def _branch_divergence(self, branch: str, base: str) -> tuple[int, int]:
+        """Commits `branch` is ahead of / behind `base` (0, 0 if same or unknown)."""
+        if not base or branch == base:
+            return (0, 0)
+        try:
+            ahead = int(run_git(self.repo_dir, ["rev-list", "--count", f"{base}..{branch}"]).strip() or "0")
+            behind = int(run_git(self.repo_dir, ["rev-list", "--count", f"{branch}..{base}"]).strip() or "0")
+        except (RuntimeError, ValueError):
+            return (0, 0)
+        return (ahead, behind)
+
+    @staticmethod
+    def default_base_branch(branches: list[str]) -> str | None:
+        """The trunk to measure branches against: main, else master, else none."""
+        for candidate in ("main", "master"):
+            if candidate in branches:
+                return candidate
+        return None
 
     def update_language_settings(
         self,

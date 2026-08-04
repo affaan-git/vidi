@@ -111,6 +111,8 @@ Press `?` at any time for the in-app reference.
 
 ### Branch picker
 
+Each branch shows how far it is `↑` ahead / `↓` behind `main` (or `master`).
+
 | Key | Action |
 | --- | --- |
 | type | Filter the branch list |

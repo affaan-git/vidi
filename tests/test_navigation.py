@@ -1012,6 +1012,32 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(screen._match_lines, [])
             self.assertEqual(type(app.screen).__name__, "CommitDetailScreen")
 
+    async def test_branch_picker_shows_ahead_behind(self) -> None:
+        from git_viewer_textual.screens.branch_picker import BranchPickerScreen
+
+        app = make_app()
+        async with app.run_test(size=(100, 40)) as pilot:
+            await pilot.pause()
+            divergence = {"main": (0, 0), "feature": (2, 1), "hotfix": (5, 0)}
+            app.push_screen(
+                BranchPickerScreen(
+                    ["main", "feature", "hotfix"], "main", divergence, "main"
+                )
+            )
+            await pilot.pause()
+            await pilot.pause()
+            options = app.screen.query_one("#branch-picker-options", OptionList)
+            rendered = {
+                str(options.get_option_at_index(i).prompt.plain)
+                for i in range(options.option_count)
+            }
+            joined = " | ".join(rendered)
+            self.assertIn("↑2", joined)
+            self.assertIn("↓1", joined)
+            self.assertIn("↑5", joined)
+            # the base branch itself carries no ahead/behind marks
+            self.assertTrue(any(r.startswith("main") and "↑" not in r for r in rendered))
+
     async def test_commit_detail_files_filter(self) -> None:
         import re
 
