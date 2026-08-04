@@ -134,10 +134,12 @@ Files changed in the commit are marked with a dot.
 | Key | Action |
 | --- | --- |
 | `j` / `k` (or arrows) | Scroll |
+| `/` | Search in the file |
+| `n` / `N` | Next / previous match |
 | `[` / `]` | Previous / next file |
 | `PageUp` / `PageDown` | Scroll by a page |
 | `Home` / `End` | Jump to the top or bottom |
-| `Esc` / `q` | Back |
+| `Esc` / `q` | Back (`Esc` first closes the search) |
 
 ## Development
 

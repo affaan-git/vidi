@@ -894,6 +894,66 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertIsInstance(app.screen, CommitFilesScreen)
 
+    async def test_file_view_in_file_search(self) -> None:
+        from git_viewer_textual.screens.file_view import FileViewScreen
+
+        context, service = build_repo_context(
+            repo_dir=sample_repo(),
+            language_mode="bytes",
+            exclude_languages=set(),
+            extra_ignored_dirs=set(),
+        )
+        head = service.get_branch_data(context.current_branch).commits[0].commit_hash
+        best, best_lines = None, []
+        for path in service.get_commit_files(head):
+            content = service.get_file_at_commit(head, path)
+            if content is None:
+                continue
+            lines = content.splitlines() or [""]
+            if len(lines) > len(best_lines):
+                best, best_lines = path, lines
+        self.assertIsNotNone(best)
+        query = next(
+            (ch for ch in "etaoinshr" if sum(ch in ln.lower() for ln in best_lines) >= 2),
+            None,
+        )
+        self.assertIsNotNone(query)
+        expected = [i for i, ln in enumerate(best_lines) if query in ln.lower()]
+        self.assertGreaterEqual(len(expected), 2)
+
+        app = GitViewerApp(context, service)
+        async with app.run_test(size=(100, 30)) as pilot:
+            app.push_screen(FileViewScreen(service, head, [best], 0))
+            await pilot.pause()
+            await pilot.pause()
+            screen = app.screen
+
+            await pilot.press("slash")
+            await pilot.pause()
+            self.assertTrue(screen.query_one("#file-view-search", Input).display)
+            await pilot.press(query)
+            await pilot.pause()
+            self.assertEqual(screen._match_lines, expected)
+            self.assertEqual(screen._current_match, 0)
+
+            # Enter moves into the content; n / N cycle matches
+            await pilot.press("enter")
+            await pilot.pause()
+            self.assertTrue(screen._scroll().has_focus)
+            await pilot.press("n")
+            await pilot.pause()
+            self.assertEqual(screen._current_match, 1)
+            await pilot.press("N")
+            await pilot.pause()
+            self.assertEqual(screen._current_match, 0)
+
+            # Esc clears the search but keeps the file open
+            await pilot.press("escape")
+            await pilot.pause()
+            self.assertFalse(screen.query_one("#file-view-search", Input).display)
+            self.assertEqual(screen._match_lines, [])
+            self.assertIsInstance(app.screen, FileViewScreen)
+
     async def test_language_settings_apply_updates_scan_and_persists(self) -> None:
         from git_viewer_textual import config
         from git_viewer_textual.screens.language_settings import LanguageSettingsScreen
