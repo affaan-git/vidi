@@ -119,7 +119,8 @@ class CommitDetailScreen(ModalScreen[None]):
         height: 1fr;
     }
 
-    #commit-detail-search {
+    #commit-detail-search,
+    #commit-detail-files-filter {
         display: none;
         margin-bottom: 1;
         border: solid $border;
@@ -127,7 +128,8 @@ class CommitDetailScreen(ModalScreen[None]):
         color: $text;
     }
 
-    #commit-detail-search:focus {
+    #commit-detail-search:focus,
+    #commit-detail-files-filter:focus {
         border: solid $primary;
     }
 
@@ -227,6 +229,8 @@ class CommitDetailScreen(ModalScreen[None]):
         self._patch_base: dict[str, Text] = {"selected": Text(), "full": Text()}
         self._patch_offsets: list[int] | None = None
         self._patch_offsets_key: tuple[str, int, int] = ("", 0, 0)
+        # changed-files filter state (diff mode only)
+        self._files_query = ""
 
     def action_next_commit(self) -> None:
         # the list is newest-first, so "next" (newer) steps toward index 0,
@@ -288,6 +292,7 @@ class CommitDetailScreen(ModalScreen[None]):
                 ):
                     yield Static(id="commit-detail-files-title", classes="commit-detail-panel-title")
                     yield Static(id="commit-detail-files-meta")
+                    yield Input(placeholder="Filter files", id="commit-detail-files-filter")
                     yield DataTable(id="commit-detail-files-diff", show_row_labels=False)
                     yield DataTable(id="commit-detail-files-outline", show_row_labels=False)
             with Vertical(id="commit-detail-main"):
@@ -466,7 +471,7 @@ class CommitDetailScreen(ModalScreen[None]):
         if (
             not force
             and signature == self._files_table_signatures.get(table_id)
-            and table.row_count == len(self.detail.file_changes)
+            and table.row_count == len(self._visible_file_indices())
         ):
             self._sync_outline_cursor(self.selected_file_index)
             return
@@ -559,8 +564,6 @@ class CommitDetailScreen(ModalScreen[None]):
 
         palette = self._theme_palette
         now = utc_now()
-        total_additions = sum(change.additions or 0 for change in self.detail.file_changes)
-        total_deletions = sum(change.deletions or 0 for change in self.detail.file_changes)
 
         summary_bar = Text()
         summary_bar.append("Commit ", style=make_style(palette.muted, bold=True))
@@ -609,18 +612,40 @@ class CommitDetailScreen(ModalScreen[None]):
             self._files_table_signatures[table_id] = None
         else:
             self._refresh_files_table(force=False)
-        file_word = "file" if len(self.detail.file_changes) == 1 else "files"
         files_title = (
             "Patch Outline"
             if self.show_full_patch
             else "Files Changed"
         )
         self.query_one("#commit-detail-files-title", Static).update(files_title)
-        files_meta = Text()
-        files_meta.append(
-            f"{len(self.detail.file_changes)} {file_word}",
-            style=make_style(palette.foreground, bold=True),
+        self._render_files_meta()
+
+        self._render_patch_panel(refresh_content=refresh_patch_content)
+        self._schedule_reconcile(
+            focus_target=focus_target,
+            scroll_to_selection=scroll_to_selection,
+            force_files_table_refresh=False,
         )
+
+    def _render_files_meta(self) -> None:
+        palette = self._theme_palette
+        total = len(self.detail.file_changes)
+        total_additions = sum(change.additions or 0 for change in self.detail.file_changes)
+        total_deletions = sum(change.deletions or 0 for change in self.detail.file_changes)
+        file_word = "file" if total == 1 else "files"
+
+        files_meta = Text()
+        if self._files_query.strip() and not self.show_full_patch:
+            shown = len(self._visible_file_indices())
+            files_meta.append(
+                f"{shown} of {total} {file_word}",
+                style=make_style(palette.foreground, bold=True),
+            )
+        else:
+            files_meta.append(
+                f"{total} {file_word}",
+                style=make_style(palette.foreground, bold=True),
+            )
         files_meta.append("  ", style=make_style(palette.muted))
         files_meta.append(
             f"+{total_additions}",
@@ -638,13 +663,6 @@ class CommitDetailScreen(ModalScreen[None]):
                 style=make_style(palette.muted),
             )
         self.query_one("#commit-detail-files-meta", Static).update(files_meta)
-
-        self._render_patch_panel(refresh_content=refresh_patch_content)
-        self._schedule_reconcile(
-            focus_target=focus_target,
-            scroll_to_selection=scroll_to_selection,
-            force_files_table_refresh=False,
-        )
 
     def _build_repo_stats_sub_title(self) -> str:
         context = self.app.context
@@ -878,9 +896,12 @@ class CommitDetailScreen(ModalScreen[None]):
     def _search_input(self) -> Input:
         return self.query_one("#commit-detail-search", Input)
 
+    def _files_filter_input(self) -> Input:
+        return self.query_one("#commit-detail-files-filter", Input)
+
     def _search_focused(self) -> bool:
         try:
-            return self._search_input().has_focus
+            return self._search_input().has_focus or self._files_filter_input().has_focus
         except Exception:
             return False
 
@@ -901,22 +922,35 @@ class CommitDetailScreen(ModalScreen[None]):
         return True
 
     def action_open_search(self) -> None:
+        # Context-aware: filter the changed-files list from the files pane (diff
+        # mode), search the patch from anywhere else.
+        if self.active_pane == "files" and not self.show_full_patch:
+            inp = self._files_filter_input()
+            inp.display = True
+            inp.focus()
+            return
         inp = self._search_input()
+        inp.placeholder = "Search patch" if self.show_full_patch else "Search diff"
         inp.display = True
         inp.focus()
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        if event.input.id != "commit-detail-search":
-            return
-        self._search_query = event.value
-        self._apply_patch_search(recompute=True)
-        if self._match_lines:
-            self._scroll_to_patch_match()
+        if event.input.id == "commit-detail-search":
+            self._search_query = event.value
+            self._apply_patch_search(recompute=True)
+            if self._match_lines:
+                self._scroll_to_patch_match()
+        elif event.input.id == "commit-detail-files-filter":
+            self._files_query = event.value
+            self._refresh_files_table(force=True)
+            self._render_files_meta()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        # Enter keeps the highlights and moves into the patch content.
+        # Enter keeps the filter/highlights and moves into the list or patch.
         if event.input.id == "commit-detail-search":
             self._active_patch_scroll().focus()
+        elif event.input.id == "commit-detail-files-filter":
+            self._current_files_table().focus()
 
     def _close_search(self) -> None:
         inp = self._search_input()
@@ -925,6 +959,15 @@ class CommitDetailScreen(ModalScreen[None]):
         self._search_query = ""
         self._apply_patch_search(recompute=True)
         self._active_patch_scroll().focus()
+
+    def _close_files_filter(self) -> None:
+        inp = self._files_filter_input()
+        inp.value = ""
+        inp.display = False
+        self._files_query = ""
+        self._refresh_files_table(force=True)
+        self._render_files_meta()
+        self._current_files_table().focus()
 
     def _active_patch_key(self) -> str:
         return "full" if self.show_full_patch else "selected"
@@ -1046,12 +1089,16 @@ class CommitDetailScreen(ModalScreen[None]):
     def _sync_outline_cursor(self, index: int) -> None:
         if not (0 <= index < len(self.detail.file_changes)):
             return
+        visible = self._visible_file_indices()
+        if index not in visible:
+            return
+        row = visible.index(index)
         table = self._current_files_table()
-        if table.cursor_row == index:
+        if table.cursor_row == row:
             return
         self._suspend_file_events = True
         try:
-            table.move_cursor(row=index, animate=False, scroll=True)
+            table.move_cursor(row=row, animate=False, scroll=True)
         finally:
             self._suspend_file_events = False
 
@@ -1083,13 +1130,32 @@ class CommitDetailScreen(ModalScreen[None]):
             return
         self._sync_selection_from_patch_scroll(new_value)
 
+    def _visible_file_indices(self) -> list[int]:
+        """Original indices of the files shown in the table. Narrowed by the /
+        files filter, which only applies in diff mode (the full-patch outline
+        stays complete so its scroll-sync is unaffected)."""
+        query = self._files_query.strip().lower()
+        if not query or self.show_full_patch:
+            return list(range(len(self.detail.file_changes)))
+        indices: list[int] = []
+        for index, change in enumerate(self.detail.file_changes):
+            section = self._section_for_change(index, change)
+            haystack = change.path.lower()
+            if section is not None and section.is_rename:
+                haystack = f"{section.old_path} {section.new_path}".lower()
+            if query in haystack:
+                indices.append(index)
+        return indices
+
     def _update_files_table(self) -> None:
         table = self._current_files_table()
         file_width = self._apply_files_table_layout()
         table.clear(columns=False)
         self._suspend_file_events = True
         try:
-            for index, change in enumerate(self.detail.file_changes):
+            visible = self._visible_file_indices()
+            for index in visible:
+                change = self.detail.file_changes[index]
                 section = self._section_for_change(index, change)
                 table.add_row(
                     compact_label_for_change(change, section, file_width),
@@ -1097,8 +1163,9 @@ class CommitDetailScreen(ModalScreen[None]):
                     self._build_stat_cell(change.deletions, positive=False),
                     key=str(index),
                 )
-            if self.detail.file_changes:
-                table.move_cursor(row=self.selected_file_index, animate=False, scroll=True)
+            if visible:
+                row = visible.index(self.selected_file_index) if self.selected_file_index in visible else 0
+                table.move_cursor(row=row, animate=False, scroll=True)
         finally:
             self._suspend_file_events = False
 
@@ -1216,10 +1283,23 @@ class CommitDetailScreen(ModalScreen[None]):
             focus_target=self.active_pane,
             scroll_to_selection=scroll_to_selection,
         )
+        # the files filter only applies in diff mode; drop it when going full
+        if self.show_full_patch and self._files_filter_input().display:
+            files_filter = self._files_filter_input()
+            files_filter.value = ""
+            files_filter.display = False
+            self._files_query = ""
+        if self._search_input().display:
+            self._search_input().placeholder = (
+                "Search patch" if self.show_full_patch else "Search diff"
+            )
 
     def action_close_screen(self) -> None:
         if self._search_input().display:
             self._close_search()
+            return
+        if self._files_filter_input().display:
+            self._close_files_filter()
             return
         self.dismiss(None)
 

@@ -103,8 +103,8 @@ Press `?` at any time for the in-app reference.
 | `[` / `]` | Previous / next commit |
 | `p` | Toggle file diff and full patch |
 | `f` | Browse this commit's files |
-| `/` | Search the patch |
-| `n` / `N` | Next / previous match |
+| `/` | Filter the files list (on the files pane) or search the patch |
+| `n` / `N` | Next / previous patch match |
 | `PageUp` / `PageDown` | Scroll by a page |
 | `Home` / `End` | Jump to the top or bottom |
 | `Esc` / `q` | Back (`Esc` first closes the search) |

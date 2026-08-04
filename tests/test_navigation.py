@@ -1007,6 +1007,61 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(screen._match_lines, [])
             self.assertEqual(type(app.screen).__name__, "CommitDetailScreen")
 
+    async def test_commit_detail_files_filter(self) -> None:
+        import re
+
+        from git_viewer_textual.screens.commit_detail import CommitDetailScreen
+
+        context, service = build_repo_context(
+            repo_dir=sample_repo(),
+            language_mode="bytes",
+            exclude_languages=set(),
+            extra_ignored_dirs=set(),
+        )
+        hashes = [c.commit_hash for c in service.get_branch_data(context.current_branch).commits]
+        target = next(
+            (h for h in hashes if len(service.get_commit_detail(h).file_changes) >= 2),
+            hashes[0],
+        )
+        paths = [c.path for c in service.get_commit_detail(target).file_changes]
+        self.assertGreaterEqual(len(paths), 2)
+
+        app = GitViewerApp(context, service)
+        async with app.run_test(size=(160, 45)) as pilot:
+            await pilot.pause()
+            app.push_screen(
+                CommitDetailScreen(
+                    service, target, source_branch=context.current_branch, commit_hashes=hashes
+                )
+            )
+            await pilot.pause()
+            await pilot.pause()
+            screen = app.screen
+            table = screen._current_files_table()
+            table.focus()
+            await pilot.pause()
+            self.assertEqual(screen.active_pane, "files")
+            self.assertEqual(table.row_count, len(paths))
+
+            # / over the files pane (diff mode) opens the files filter
+            await pilot.press("slash")
+            await pilot.pause()
+            self.assertTrue(screen.query_one("#commit-detail-files-filter", Input).display)
+            fragment = re.search(r"[A-Za-z]{3,}", paths[0].split("/")[-1])
+            fragment = (fragment.group(0) if fragment else "aaa")[:4]
+            for char in fragment:
+                await pilot.press(char)
+            await pilot.pause()
+            expected = sum(1 for p in paths if fragment.lower() in p.lower())
+            self.assertGreaterEqual(expected, 1)
+            self.assertEqual(table.row_count, expected)
+
+            # Esc clears the filter and restores the full list
+            await pilot.press("escape")
+            await pilot.pause()
+            self.assertFalse(screen.query_one("#commit-detail-files-filter", Input).display)
+            self.assertEqual(table.row_count, len(paths))
+
     async def test_language_settings_apply_updates_scan_and_persists(self) -> None:
         from git_viewer_textual import config
         from git_viewer_textual.screens.language_settings import LanguageSettingsScreen
