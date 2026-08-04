@@ -659,13 +659,19 @@ class MainScreen(Screen[None]):
         details.append("\nFiles changed\n", style=make_style(palette.muted, bold=True))
         commit_detail = self.service.get_commit_detail(selected_commit.commit_hash)
         details_scroll = self.query_one("#day-details-scroll", VerticalScroll)
-        label_width = max(
-            18,
-            (details_scroll.content_region.width or details_scroll.size.width or 56) - 12,
+        content_width = (
+            details_scroll.content_region.width or details_scroll.size.width or 56
         )
         for index, change in enumerate(commit_detail.file_changes):
             suffix = "\n" if index < len(commit_detail.file_changes) - 1 else ""
             section = section_for_change(commit_detail.patch_sections, index, change)
+            # Truncate the path to leave room for "  - " + gap + the exact
+            # "+adds -dels" stat, so wide stats (e.g. +161 -0) never wrap the last
+            # number onto its own line.
+            additions_text = "+-" if change.additions is None else f"+{change.additions}"
+            deletions_text = "--" if change.deletions is None else f"-{change.deletions}"
+            stat_width = len(additions_text) + 1 + len(deletions_text)
+            label_width = max(8, content_width - len("  - ") - 2 - stat_width)
             append_file_change_summary_line(
                 details,
                 palette,
