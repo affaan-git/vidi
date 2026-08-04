@@ -667,7 +667,12 @@ class CommitDetailScreen(ModalScreen[None]):
 
     def _build_repo_stats_sub_title(self) -> str:
         context = self.app.context
-        return build_repo_stats_sub_title(context, self.service.scanned_file_count(context))
+        branch = self.source_branch or context.current_branch
+        base = self.service.default_base_branch(context.branches)
+        ahead, behind = self.service.get_branch_divergence(branch, base) if base else (0, 0)
+        return build_repo_stats_sub_title(
+            context, self.service.scanned_file_count(context), branch, ahead, behind
+        )
 
     def _files_table_layout(self, table: DataTable | None = None) -> tuple[int, int, int]:
         table = table or self._current_files_table()

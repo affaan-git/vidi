@@ -923,7 +923,13 @@ class MainScreen(Screen[None]):
             self.query_one("#commits-table", CommitTable).focus()
 
     def _build_repo_stats_sub_title(self) -> str:
-        return build_repo_stats_sub_title(self.context, self.scanned_file_count)
+        base = self.service.default_base_branch(self.context.branches)
+        ahead, behind = (
+            self.service.get_branch_divergence(self.selected_branch, base) if base else (0, 0)
+        )
+        return build_repo_stats_sub_title(
+            self.context, self.scanned_file_count, self.selected_branch, ahead, behind
+        )
 
     def handle_repo_context_refresh(
         self,

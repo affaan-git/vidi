@@ -51,9 +51,26 @@ def append_file_change_summary_line(
     )
 
 
-def build_repo_stats_sub_title(context: RepoContext, scanned_file_count: int) -> str:
-    return (
-        f"{context.repo_commit_count} commits · "
-        f"{len(context.branches)} branches · "
-        f"{scanned_file_count} files"
-    )
+def _count(n: int, singular: str, plural: str | None = None) -> str:
+    return f"{n} {singular if n == 1 else (plural or singular + 's')}"
+
+
+def build_repo_stats_sub_title(
+    context: RepoContext,
+    scanned_file_count: int,
+    branch: str | None = None,
+    ahead: int = 0,
+    behind: int = 0,
+) -> str:
+    parts: list[str] = []
+    if branch:
+        marks = ""
+        if ahead:
+            marks += f"  ↑{ahead}"
+        if behind:
+            marks += f"  ↓{behind}"
+        parts.append(f"{branch}{marks}")
+    parts.append(_count(context.repo_commit_count, "commit"))
+    parts.append(_count(len(context.branches), "branch", "branches"))
+    parts.append(_count(scanned_file_count, "file"))
+    return "  ·  ".join(parts)

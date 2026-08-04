@@ -23,6 +23,7 @@ from git_viewer_textual.data import (
 from git_viewer_textual.formatting import (
     append_file_change_summary_line,
     build_commit_identity_line,
+    build_repo_stats_sub_title,
 )
 from git_viewer_textual.models import (
     CommitFileChange,
@@ -82,10 +83,16 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             expected_count = sum(len(files) for files in app.context.files_by_language.values())
             self.assertEqual(
                 app.screen.sub_title,
-                f"{app.context.repo_commit_count} commits · "
-                f"{len(app.context.branches)} branches · "
-                f"{expected_count} files",
+                build_repo_stats_sub_title(
+                    app.context, expected_count, app.screen.selected_branch, 0, 0
+                ),
             )
+            # the branch leads the header
+            self.assertTrue(app.screen.sub_title.startswith(app.screen.selected_branch))
+            # counts are singular when they should be (1 file, not 1 files)
+            one_file = build_repo_stats_sub_title(app.context, 1, "b", 0, 0)
+            self.assertIn("1 file", one_file)
+            self.assertNotIn("1 files", one_file)
 
     def test_build_initial_repo_context_skips_eager_language_and_branch_loading(self) -> None:
         context, service = build_initial_repo_context(
@@ -121,11 +128,10 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             header = app.screen.query_one(Header)
             self.assertFalse(getattr(header, "_show_clock"))
             expected_count = sum(len(files) for files in app.context.files_by_language.values())
+            branch = app.screen.source_branch or app.context.current_branch
             self.assertEqual(
                 app.screen.sub_title,
-                f"{app.context.repo_commit_count} commits · "
-                f"{len(app.context.branches)} branches · "
-                f"{expected_count} files",
+                build_repo_stats_sub_title(app.context, expected_count, branch, 0, 0),
             )
 
     async def test_main_screen_repo_refresh_updates_header_status_and_subtitle(self) -> None:
