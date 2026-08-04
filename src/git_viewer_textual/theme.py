@@ -77,14 +77,15 @@ def build_app_theme(
         "scrollbar-background-active": palette.panel.hex,
     }
     if transparent:
+        # Only the content surfaces pass the terminal through. The scrollbar
+        # track stays an opaque palette colour: an ansi_default track renders
+        # transparent below the thumb, showing whatever sits behind the modal --
+        # a stray dark segment that reads as a rendering glitch.
         variables.update(
             {
                 "background": "ansi_default",
                 "surface": "ansi_default",
                 "panel": "ansi_default",
-                "scrollbar-background": "ansi_default",
-                "scrollbar-background-hover": "ansi_default",
-                "scrollbar-background-active": "ansi_default",
             }
         )
     return Theme(
