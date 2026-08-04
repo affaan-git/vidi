@@ -174,9 +174,13 @@ class CommitDetailScreen(ModalScreen[None]):
         Binding("p", "toggle_patch_scope", "Patch"),
         Binding("f", "browse_files", "Files"),
         Binding("slash", "open_search", "Search"),
+        # enter/shift+enter step patch matches only while the search box is
+        # focused (own actions so they never hijack the files-table / files-filter
+        # enter); n/N step matches once there are matches.
+        Binding("enter", "search_next", "Next Match", priority=True),
+        Binding("shift+enter", "search_prev", "Prev Match", priority=True),
         Binding("n", "next_match", "Next Match", group=SEARCH_GROUP),
         Binding("N", "prev_match", "Prev Match", group=SEARCH_GROUP),
-        Binding("shift+enter", "prev_match", "Prev Match", show=False, priority=True),
         Binding("escape", "close_screen", "Back", group=BACK_GROUP),
         Binding("q", "close_screen", "Back", show=False, group=BACK_GROUP),
     ]
@@ -922,6 +926,13 @@ class CommitDetailScreen(ModalScreen[None]):
             "focus_prev_pane",
         ):
             return False
+        # enter/shift+enter only act (and show in the footer) while the patch
+        # search box is focused -- otherwise enter belongs to the files table /
+        # files filter. n/N step matches once there are any.
+        if action in ("search_next", "search_prev"):
+            return self._search_input().has_focus
+        if action in ("next_match", "prev_match"):
+            return bool(self._match_lines)
         return True
 
     def action_open_search(self) -> None:
@@ -949,10 +960,8 @@ class CommitDetailScreen(ModalScreen[None]):
             self._render_files_meta()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        # Patch search: Enter steps to the next match (Shift+Enter / N steps back).
-        if event.input.id == "commit-detail-search":
-            self.action_next_match()
-            return
+        # Patch-search enter is handled by the priority search_next binding; only
+        # the files filter needs Submitted here.
         if event.input.id != "commit-detail-files-filter":
             return
         # Files filter: Enter picks the highlighted file (shows its diff) and
@@ -1070,6 +1079,13 @@ class CommitDetailScreen(ModalScreen[None]):
 
     def action_prev_match(self) -> None:
         self._step_match(-1)
+
+    # enter / shift+enter (own actions so they can be gated to the search box)
+    def action_search_next(self) -> None:
+        self.action_next_match()
+
+    def action_search_prev(self) -> None:
+        self.action_prev_match()
 
     def _step_match(self, delta: int) -> None:
         if not self._match_lines:

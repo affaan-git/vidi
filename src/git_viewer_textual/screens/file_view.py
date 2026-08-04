@@ -72,9 +72,10 @@ class FileViewScreen(ModalScreen[None]):
         Binding("j", "nav_down", "Down", priority=True, show=False),
         Binding("k", "nav_up", "Up", priority=True, show=False),
         Binding("slash", "open_search", "Search"),
+        Binding("enter", "next_match", "Next Match", priority=True),
+        Binding("shift+enter", "prev_match", "Prev Match", priority=True),
         Binding("n", "next_match", "Next Match", group=SEARCH_GROUP),
         Binding("N", "prev_match", "Prev Match", group=SEARCH_GROUP),
-        Binding("shift+enter", "prev_match", "Prev Match", show=False, priority=True),
         Binding("pageup", "page_up", "Page Up", priority=True, group=PAGE_GROUP),
         Binding("pagedown", "page_down", "Page Down", priority=True, group=PAGE_GROUP),
         Binding("home", "scroll_top", "Top", priority=True, group=JUMP_GROUP),
@@ -210,6 +211,10 @@ class FileViewScreen(ModalScreen[None]):
         # arrows and page/jump keys keep scrolling so you can read around matches.
         if self._search_focused() and action in ("nav_down", "nav_up"):
             return False
+        # Show/enable the match-nav (enter/shift+enter, n/N) only when there is a
+        # search to step through, so the footer advertises it while typing.
+        if action in ("next_match", "prev_match"):
+            return bool(self._search_focused() or self._match_lines)
         return True
 
     def action_open_search(self) -> None:
@@ -226,11 +231,6 @@ class FileViewScreen(ModalScreen[None]):
         # incremental: jump to the first match as you type
         if self._match_lines:
             self._scroll_to_current()
-
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        # Enter steps to the next match (Shift+Enter / N steps back); Esc closes.
-        if event.input.id == "file-view-search":
-            self.action_next_match()
 
     def _recompute_matches(self) -> None:
         query = self._query.lower()
