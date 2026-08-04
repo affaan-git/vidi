@@ -64,9 +64,14 @@ Switch from the command palette (`Ctrl+P` -> "Change theme"); the choice is
 remembered between runs. Reset to the default from the palette
 ("Reset theme to default").
 
-The command palette also has "Graph: browse / select on move" to toggle whether
-moving over the contribution graph selects a commit immediately (default) or
-only previews it until you press Enter.
+The command palette also has:
+
+- "Transparent background" - use the terminal's background (so a translucent
+  terminal shows through) while keeping the theme's borders, selection, and text.
+- "Graph: browse / select on move" - toggle whether moving over the contribution
+  graph moves the commit-table selection immediately (default) or only on Enter.
+
+Both settings persist between runs.
 
 ## Keys
 

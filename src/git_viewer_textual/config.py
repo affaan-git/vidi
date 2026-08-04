@@ -50,6 +50,15 @@ def save_graph_browse(value: bool) -> None:
     _set("graph_browse", bool(value))
 
 
+def load_transparent_background() -> bool:
+    """Whether the app uses the terminal's background (so translucency shows)."""
+    return bool(_load().get("transparent_background", False))
+
+
+def save_transparent_background(value: bool) -> None:
+    _set("transparent_background", bool(value))
+
+
 def reset() -> None:
     """Forget saved preferences so the app falls back to its defaults."""
     try:

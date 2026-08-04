@@ -43,12 +43,16 @@ class GitViewerApp(App[None]):
         # When True the graph previews a day as you move and commits on Enter;
         # when False it selects as you move (like the commit table).
         self.graph_browse = config.load_graph_browse()
+        # When True the app themes use the terminal's default background so a
+        # translucent terminal shows through.
+        self.transparent_background = config.load_transparent_background()
 
     def on_mount(self) -> None:
         # Register the app themes (palette-as-Textual-theme so CSS $vars and
         # default widget styles match the programmatic palette) and restore the
         # saved choice, falling back to the default.
-        for theme in app_themes(self.current_theme):
+        self._theme_source = self.current_theme  # Textual default, derives git-viewer
+        for theme in app_themes(self._theme_source, transparent=self.transparent_background):
             self.register_theme(theme)
         saved = config.load_theme()
         self.theme = saved if saved in self.available_themes else APP_THEME_NAME
@@ -77,6 +81,17 @@ class GitViewerApp(App[None]):
             "immediately or only when you press Enter",
             self._command_toggle_graph_browse,
         )
+        transparent_label = (
+            "Opaque background"
+            if self.transparent_background
+            else "Transparent background"
+        )
+        yield SystemCommand(
+            transparent_label,
+            "Toggle whether the app paints its own background or lets the "
+            "terminal (and its transparency) show through",
+            self._command_toggle_transparent,
+        )
 
     def _command_reset_theme(self) -> None:
         self.theme = APP_THEME_NAME
@@ -84,6 +99,15 @@ class GitViewerApp(App[None]):
     def _command_toggle_graph_browse(self) -> None:
         self.graph_browse = not self.graph_browse
         config.save_graph_browse(self.graph_browse)
+
+    def _command_toggle_transparent(self) -> None:
+        self.transparent_background = not self.transparent_background
+        config.save_transparent_background(self.transparent_background)
+        # Rebuild the app themes with/without transparent backgrounds and re-apply
+        # the current one (only the app's own themes are affected).
+        for theme in app_themes(self._theme_source, transparent=self.transparent_background):
+            self.register_theme(theme)
+        self.theme = self.current_theme.name
         if not self.context.language_stats or not self.context.files_by_language:
             self._initial_context_task = asyncio.create_task(self._warm_initial_context())
         self._schedule_next_repo_scan(self.REPO_SCAN_DEFAULT_SECONDS)

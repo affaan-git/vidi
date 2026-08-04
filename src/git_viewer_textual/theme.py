@@ -38,7 +38,12 @@ def make_change_stat_style(
 APP_THEME_NAME = "git-viewer"
 
 
-def build_app_theme(source_theme: Theme, name: str = APP_THEME_NAME) -> Theme:
+def build_app_theme(
+    source_theme: Theme,
+    name: str = APP_THEME_NAME,
+    *,
+    transparent: bool = False,
+) -> Theme:
     """Build a Textual theme whose variables equal the app palette.
 
     The app derives a ThemePalette by blending from a base theme and then paints
@@ -46,8 +51,42 @@ def build_app_theme(source_theme: Theme, name: str = APP_THEME_NAME) -> Theme:
     makes CSS $vars, default widget styles (table cursor, option-list highlight,
     scrollbars, input borders), and the programmatic palette all resolve to one
     set of colors instead of diverging from Textual's stock theme.
+
+    When transparent, the background surfaces use the terminal's default color
+    (ansi_default) so a translucent terminal shows through, while borders,
+    selection, and text keep the palette's explicit colors.
     """
     palette = resolve_theme_palette(source_theme)
+    variables = {
+        # Neutral borders match the panels; focused borders come from CSS.
+        "border": palette.border.hex,
+        "border-blurred": palette.border.hex,
+        # One selection color for the table cursor and the option-list.
+        "block-cursor-background": palette.selected_bg.hex,
+        "block-cursor-foreground": palette.selected_fg.hex,
+        "block-cursor-text-style": "none",
+        "block-cursor-blurred-background": palette.selected_bg.hex,
+        "block-cursor-blurred-foreground": palette.selected_fg.hex,
+        "block-cursor-blurred-text-style": "none",
+        # Scrollbars tinted from the palette instead of the stock theme.
+        "scrollbar": palette.surface.blend(palette.foreground, 0.22).hex,
+        "scrollbar-hover": palette.surface.blend(palette.foreground, 0.32).hex,
+        "scrollbar-active": palette.primary.hex,
+        "scrollbar-background": palette.panel.hex,
+        "scrollbar-background-hover": palette.panel.hex,
+        "scrollbar-background-active": palette.panel.hex,
+    }
+    if transparent:
+        variables.update(
+            {
+                "background": "ansi_default",
+                "surface": "ansi_default",
+                "panel": "ansi_default",
+                "scrollbar-background": "ansi_default",
+                "scrollbar-background-hover": "ansi_default",
+                "scrollbar-background-active": "ansi_default",
+            }
+        )
     return Theme(
         name=name,
         primary=palette.primary.hex,
@@ -61,25 +100,7 @@ def build_app_theme(source_theme: Theme, name: str = APP_THEME_NAME) -> Theme:
         surface=palette.surface.hex,
         panel=palette.panel.hex,
         dark=source_theme.dark,
-        variables={
-            # Neutral borders match the panels; focused borders come from CSS.
-            "border": palette.border.hex,
-            "border-blurred": palette.border.hex,
-            # One selection color for the table cursor and the option-list.
-            "block-cursor-background": palette.selected_bg.hex,
-            "block-cursor-foreground": palette.selected_fg.hex,
-            "block-cursor-text-style": "none",
-            "block-cursor-blurred-background": palette.selected_bg.hex,
-            "block-cursor-blurred-foreground": palette.selected_fg.hex,
-            "block-cursor-blurred-text-style": "none",
-            # Scrollbars tinted from the palette instead of the stock theme.
-            "scrollbar": palette.surface.blend(palette.foreground, 0.22).hex,
-            "scrollbar-hover": palette.surface.blend(palette.foreground, 0.32).hex,
-            "scrollbar-active": palette.primary.hex,
-            "scrollbar-background": palette.panel.hex,
-            "scrollbar-background-hover": palette.panel.hex,
-            "scrollbar-background-active": palette.panel.hex,
-        },
+        variables=variables,
     )
 
 
@@ -124,13 +145,13 @@ def _base_theme(name: str, colors: dict[str, str]) -> Theme:
     )
 
 
-def app_themes(default_source: Theme) -> list[Theme]:
+def app_themes(default_source: Theme, *, transparent: bool = False) -> list[Theme]:
     """Every theme the app registers: the default (built from Textual's current
     theme) plus the dotfiles themes, each fully configured with the same
     palette-derived variables so they all render consistently."""
-    themes = [build_app_theme(default_source, name=APP_THEME_NAME)]
+    themes = [build_app_theme(default_source, name=APP_THEME_NAME, transparent=transparent)]
     themes.extend(
-        build_app_theme(_base_theme(name, colors), name=name)
+        build_app_theme(_base_theme(name, colors), name=name, transparent=transparent)
         for name, colors in DOTFILES_THEMES.items()
     )
     return themes
