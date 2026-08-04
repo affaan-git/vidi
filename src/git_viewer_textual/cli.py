@@ -6,7 +6,6 @@ import argparse
 import os
 import sys
 
-from . import config
 from .app import GitViewerApp
 from .repository import build_initial_repo_context
 
@@ -15,12 +14,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run a terminal-based local git repository viewer with Textual."
     )
-    parser.add_argument("repo_dir", nargs="?", help="Path to local git repository")
-    parser.add_argument(
-        "--reset-theme",
-        action="store_true",
-        help="Reset the saved theme preference to the default",
-    )
+    parser.add_argument("repo_dir", help="Path to local git repository")
     parser.add_argument(
         "--exclude-languages",
         default="",
@@ -42,14 +36,6 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    if args.reset_theme:
-        config.reset()
-        print("Reset the saved theme preference to the default.")
-    if args.repo_dir is None:
-        if args.reset_theme:
-            return
-        print("Error: the repo_dir argument is required")
-        sys.exit(2)
     repo_dir = os.path.abspath(args.repo_dir)
     if not os.path.isdir(repo_dir):
         print(f"Error: directory does not exist: {repo_dir}")

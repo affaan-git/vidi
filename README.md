@@ -62,7 +62,7 @@ git-viewer-textual /path/to/repo \
 Ships with three themes: `git-viewer` (default), `one-night`, and `pro-black`.
 Switch from the command palette (`Ctrl+P` -> "Change theme"); the choice is
 remembered between runs. Reset to the default from the palette
-("Reset theme to default") or with `git-viewer-textual --reset-theme`.
+("Reset theme to default").
 
 The command palette also has "Graph: browse / select on move" to toggle whether
 moving over the contribution graph selects a commit immediately (default) or
