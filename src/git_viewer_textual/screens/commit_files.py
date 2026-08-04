@@ -112,7 +112,12 @@ class CommitFilesScreen(ModalScreen[None]):
         title.append(f"{label}  ", style=make_style(palette.foreground, bold=True))
         detail = f"{count} {word} in commit {self._commit_hash[:7]}"
         if len(self._commit_hashes) > 1:
-            detail += f"  ({self._index + 1}/{len(self._commit_hashes)})"
+            # Commits are numbered oldest-first (oldest = 1, newest = the biggest
+            # number), so [ (older) counts down and ] (newer) counts up -- the
+            # same direction the file view steps files. The list is newest-first,
+            # so the position is len - index.
+            total = len(self._commit_hashes)
+            detail += f"  ({total - self._index}/{total})"
         title.append(detail, style=make_style(palette.muted))
         self.query_one("#commit-files-title", Static).update(title)
 
