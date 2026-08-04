@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 
-from textual.app import App
+from textual.app import App, SystemCommand
 from textual.binding import Binding
+from textual.screen import Screen
 
 from . import config
 from .models import RepoContext, RepoScanSnapshot
@@ -39,6 +40,9 @@ class GitViewerApp(App[None]):
         self._repo_scan_in_flight = False
         self._repo_scan_task: asyncio.Task[None] | None = None
         self._initial_context_task: asyncio.Task[None] | None = None
+        # When True the graph previews a day as you move and commits on Enter;
+        # when False it selects as you move (like the commit table).
+        self.graph_browse = config.load_graph_browse()
 
     def on_mount(self) -> None:
         # Register the app themes (palette-as-Textual-theme so CSS $vars and
@@ -54,6 +58,31 @@ class GitViewerApp(App[None]):
 
     def _persist_theme(self, theme_name: str) -> None:
         config.save_theme(theme_name)
+
+    def get_system_commands(self, screen: Screen):
+        yield from super().get_system_commands(screen)
+        yield SystemCommand(
+            "Reset theme to default",
+            "Switch back to the git-viewer theme",
+            self._command_reset_theme,
+        )
+        graph_label = (
+            "Graph: select as you move"
+            if self.graph_browse
+            else "Graph: browse, select on Enter"
+        )
+        yield SystemCommand(
+            graph_label,
+            "Toggle whether moving the graph selects a commit immediately or on Enter",
+            self._command_toggle_graph_browse,
+        )
+
+    def _command_reset_theme(self) -> None:
+        self.theme = APP_THEME_NAME
+
+    def _command_toggle_graph_browse(self) -> None:
+        self.graph_browse = not self.graph_browse
+        config.save_graph_browse(self.graph_browse)
         if not self.context.language_stats or not self.context.files_by_language:
             self._initial_context_task = asyncio.create_task(self._warm_initial_context())
         self._schedule_next_repo_scan(self.REPO_SCAN_DEFAULT_SECONDS)

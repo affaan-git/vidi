@@ -820,10 +820,18 @@ class MainScreen(Screen[None]):
         if self.active_panel == "languages":
             self._open_language_files()
             return
+        _, commits = self._filtered_branch_data()
+        if self.active_panel == "graph" and self.app.graph_browse:
+            # In browse mode, Enter commits the previewed day before opening it.
+            day_commits = [c for c in commits if c.authored_date == self.selected_day]
+            self._set_selected_commit(
+                commits,
+                day_commits[0].commit_hash if day_commits else None,
+                sync_table=True,
+            )
         commit_hash = self.selected_commit_hash
         if not commit_hash:
             return
-        _, commits = self._filtered_branch_data()
         self.app.push_screen(
             CommitDetailScreen(
                 self.service,
@@ -880,11 +888,28 @@ class MainScreen(Screen[None]):
         if new_day < graph_start or new_day > graph_end:
             return
         self.selected_day = new_day
+        if self.app.graph_browse:
+            # Browse: move the highlight and preview the day in the details, but
+            # do not commit the selection or move the commit table -- Enter does.
+            self._render_graph(commits)
+            self._update_day_details(commits, reset_scroll=True)
+            return
         day_commits = [commit for commit in commits if commit.authored_date == new_day]
         self._set_selected_commit(
             commits,
             day_commits[0].commit_hash if day_commits else None,
             sync_table=True,
+        )
+
+    def _render_graph(self, commits: list[CommitRecord]) -> None:
+        counts: collections.Counter[dt.date] = collections.Counter(
+            commit.authored_date for commit in commits
+        )
+        graph_start, graph_end = resolve_graph_window(self.selected_range, self.selected_year)
+        self.query_one("#graph-content", Static).update(
+            render_contribution_graph(
+                counts, graph_start, graph_end, self.selected_day, self._theme_palette
+            )
         )
 
     def action_prev_year(self) -> None:

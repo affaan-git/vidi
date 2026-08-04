@@ -9,12 +9,23 @@ CONFIG_DIR = Path.home() / ".config" / "git-viewer-textual"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 
 
-def _load() -> dict[str, str]:
+def _load() -> dict:
     try:
         data = json.loads(CONFIG_PATH.read_text())
     except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def _set(key: str, value: object) -> None:
+    """Persist one preference; failures are ignored (a viewer, not a vault)."""
+    try:
+        prefs = _load()
+        prefs[key] = value
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        CONFIG_PATH.write_text(json.dumps(prefs, indent=2) + "\n")
+    except OSError:
+        pass
 
 
 def load_theme() -> str | None:
@@ -24,14 +35,17 @@ def load_theme() -> str | None:
 
 
 def save_theme(name: str) -> None:
-    """Persist the chosen theme; failures are ignored (a viewer, not a vault)."""
-    try:
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        prefs = _load()
-        prefs["theme"] = name
-        CONFIG_PATH.write_text(json.dumps(prefs, indent=2) + "\n")
-    except OSError:
-        pass
+    _set("theme", name)
+
+
+def load_graph_browse() -> bool:
+    """Whether the graph browses on move (select on Enter) instead of selecting
+    as you move."""
+    return bool(_load().get("graph_browse", False))
+
+
+def save_graph_browse(value: bool) -> None:
+    _set("graph_browse", bool(value))
 
 
 def reset() -> None:
