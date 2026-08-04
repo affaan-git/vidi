@@ -716,6 +716,32 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(getattr(app.focused, "id", None), "graph-content")
             self.assertEqual(app.screen.active_panel, "graph")
 
+    async def test_file_view_steps_between_files(self) -> None:
+        from git_viewer_textual.screens.file_view import FileViewScreen
+
+        context, service = build_repo_context(
+            repo_dir=sample_repo(),
+            language_mode="bytes",
+            exclude_languages=set(),
+            extra_ignored_dirs=set(),
+        )
+        head = service.get_branch_data(context.current_branch).commits[0].commit_hash
+        _, files_by_language = service.get_commit_language_stats(head)
+        files = sorted(p for paths in files_by_language.values() for p in paths)[:2]
+        self.assertGreaterEqual(len(files), 2)
+
+        app = GitViewerApp(context, service)
+        async with app.run_test() as pilot:
+            app.push_screen(FileViewScreen(service, head, files, 0))
+            await pilot.pause()
+            self.assertEqual(app.screen._index, 0)
+            await pilot.press("]")
+            await pilot.pause()
+            self.assertEqual(app.screen._index, 1)
+            await pilot.press("[")
+            await pilot.pause()
+            self.assertEqual(app.screen._index, 0)
+
     async def test_branch_picker_restores_current_branch_when_filter_is_cleared(self) -> None:
         app = make_app()
         async with app.run_test() as pilot:

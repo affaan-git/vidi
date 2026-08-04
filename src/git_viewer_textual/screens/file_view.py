@@ -20,6 +20,7 @@ class FileViewScreen(ModalScreen[None]):
     MOVE_GROUP = Binding.Group("Move", compact=True)
     PAGE_GROUP = Binding.Group("Page", compact=True)
     JUMP_GROUP = Binding.Group("Jump", compact=True)
+    FILE_GROUP = Binding.Group("File", compact=True)
     BACK_GROUP = Binding.Group("Back", compact=True)
 
     CSS = """
@@ -60,15 +61,24 @@ class FileViewScreen(ModalScreen[None]):
         Binding("pagedown", "page_down", "Page Down", priority=True, group=PAGE_GROUP),
         Binding("home", "scroll_top", "Top", priority=True, group=JUMP_GROUP),
         Binding("end", "scroll_bottom", "Bottom", priority=True, group=JUMP_GROUP),
+        Binding("[", "prev_file", "Prev File", group=FILE_GROUP),
+        Binding("]", "next_file", "Next File", group=FILE_GROUP),
         Binding("escape", "close", "Back", group=BACK_GROUP),
         Binding("q", "close", "Back", show=False, group=BACK_GROUP),
     ]
 
-    def __init__(self, service: RepoService, commit_hash: str, path: str) -> None:
+    def __init__(
+        self, service: RepoService, commit_hash: str, files: list[str], index: int
+    ) -> None:
         super().__init__()
         self._service = service
         self._commit_hash = commit_hash
-        self._path = path
+        self._files = files
+        self._index = index
+
+    @property
+    def _path(self) -> str:
+        return self._files[self._index]
 
     def compose(self) -> ComposeResult:
         with Vertical(id="file-view-box"):
@@ -78,18 +88,36 @@ class FileViewScreen(ModalScreen[None]):
         yield Footer()
 
     def on_mount(self) -> None:
-        palette = resolve_theme_palette(self.app.current_theme)
-        self.styles.background = palette.overlay
-
-        title = Text()
-        title.append(f"{self._path}  ", style=make_style(palette.foreground, bold=True))
-        title.append(f"at {self._commit_hash[:7]}", style=make_style(palette.muted))
-        self.query_one("#file-view-title", Static).update(title)
-
-        self.query_one("#file-view-content", Static).update(self._render_file(palette))
+        self.styles.background = resolve_theme_palette(self.app.current_theme).overlay
+        self._render_view()
         scroll = self.query_one("#file-view-scroll", VerticalScroll)
         scroll.can_focus = True
         scroll.focus()
+
+    def _render_view(self) -> None:
+        palette = resolve_theme_palette(self.app.current_theme)
+        title = Text()
+        title.append(f"{self._path}  ", style=make_style(palette.foreground, bold=True))
+        title.append(f"at {self._commit_hash[:7]}", style=make_style(palette.muted))
+        if len(self._files) > 1:
+            title.append(
+                f"  ({self._index + 1}/{len(self._files)})",
+                style=make_style(palette.muted),
+            )
+        self.query_one("#file-view-title", Static).update(title)
+        self.query_one("#file-view-content", Static).update(self._render_file(palette))
+
+    def action_prev_file(self) -> None:
+        self._go_to_file(self._index - 1)
+
+    def action_next_file(self) -> None:
+        self._go_to_file(self._index + 1)
+
+    def _go_to_file(self, index: int) -> None:
+        if 0 <= index < len(self._files) and index != self._index:
+            self._index = index
+            self._render_view()
+            self.query_one("#file-view-scroll", VerticalScroll).scroll_home(animate=False)
 
     def _render_file(self, palette: ThemePalette) -> Text:
         content = self._service.get_file_at_commit(self._commit_hash, self._path)

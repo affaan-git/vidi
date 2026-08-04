@@ -108,8 +108,12 @@ class LanguageFilesScreen(ModalScreen[None]):
         self._open(event.option.id)
 
     def _open(self, path: str | None) -> None:
-        if path:
-            self.app.push_screen(FileViewScreen(self._service, self._commit_hash, path))
+        if path and path in self._files:
+            self.app.push_screen(
+                FileViewScreen(
+                    self._service, self._commit_hash, self._files, self._files.index(path)
+                )
+            )
 
     def action_close(self) -> None:
         self.dismiss()

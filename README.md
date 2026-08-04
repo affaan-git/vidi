@@ -128,6 +128,7 @@ Press `?` at any time for the in-app reference.
 | Key | Action |
 | --- | --- |
 | `j` / `k` (or arrows) | Scroll |
+| `[` / `]` | Previous / next file |
 | `PageUp` / `PageDown` | Scroll by a page |
 | `Home` / `End` | Jump to the top or bottom |
 | `Esc` / `q` | Back |

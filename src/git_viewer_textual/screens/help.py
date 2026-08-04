@@ -61,6 +61,7 @@ SHORTCUTS: list[tuple[str, list[tuple[str, str]]]] = [
         "File view",
         [
             ("j / k  or  up / down", "Scroll"),
+            ("[ / ]", "Previous / next file"),
             ("page up / page down", "Scroll by a page"),
             ("home / end", "Jump to the top or bottom"),
             ("esc / q", "Back"),
