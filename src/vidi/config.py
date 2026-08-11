@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 _config_home = os.environ.get("XDG_CONFIG_HOME")
-CONFIG_DIR = (Path(_config_home) if _config_home else Path.home() / ".config") / "git-viewer-textual"
+CONFIG_DIR = (Path(_config_home) if _config_home else Path.home() / ".config") / "vidi"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 
 

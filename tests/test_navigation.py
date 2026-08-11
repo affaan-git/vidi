@@ -13,54 +13,54 @@ from textual.binding import Binding
 from textual.widgets import DataTable, Footer, Header, OptionList
 from textual.widgets import Input
 
-from git_viewer_textual.app import GitViewerApp
-from git_viewer_textual.data import (
+from vidi.app import VidiApp
+from vidi.data import (
     compact_label_for_change,
     compact_path_label,
     filter_commits,
     resolve_graph_window,
 )
-from git_viewer_textual.formatting import (
+from vidi.formatting import (
     append_file_change_summary_line,
     build_commit_identity_line,
     build_repo_stats_sub_title,
 )
-from git_viewer_textual.models import (
+from vidi.models import (
     CommitFileChange,
     CommitPatchSection,
     CommitRecord,
     RepoScanSnapshot,
 )
-from git_viewer_textual.render import (
+from vidi.render import (
     build_language_bar,
     build_language_title,
     render_contribution_graph,
     resolve_heatmap_colors,
 )
-from git_viewer_textual.repository import build_initial_repo_context, build_repo_context
-from git_viewer_textual.theme import make_change_stat_style, resolve_theme_palette
+from vidi.repository import build_initial_repo_context, build_repo_context
+from vidi.theme import make_change_stat_style, resolve_theme_palette
 
 from sample_repo import sample_repo
 
 
-def make_app() -> GitViewerApp:
+def make_app() -> VidiApp:
     context, service = build_repo_context(
         repo_dir=sample_repo(),
         language_mode="bytes",
         exclude_languages=set(),
         extra_ignored_dirs=set(),
     )
-    return GitViewerApp(context, service)
+    return VidiApp(context, service)
 
 
-def make_lightweight_app() -> GitViewerApp:
+def make_lightweight_app() -> VidiApp:
     context, service = build_initial_repo_context(
         repo_dir=sample_repo(),
         language_mode="bytes",
         exclude_languages=set(),
         extra_ignored_dirs=set(),
     )
-    return GitViewerApp(context, service)
+    return VidiApp(context, service)
 
 
 class NavigationTests(unittest.IsolatedAsyncioTestCase):
@@ -237,7 +237,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
     async def test_app_registers_all_themes(self) -> None:
         app = make_app()
         async with app.run_test() as pilot:
-            for name in ("git-viewer", "one-night", "pro-black"):
+            for name in ("vidi", "one-night", "pro-black"):
                 self.assertIn(name, app.available_themes)
             self.assertIn(app.current_theme.name, app.available_themes)
 
@@ -245,7 +245,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
         import pathlib
         import tempfile
 
-        from git_viewer_textual import config
+        from vidi import config
 
         orig_dir, orig_path = config.CONFIG_DIR, config.CONFIG_PATH
         try:
@@ -713,7 +713,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
 
         from textual.geometry import Offset
 
-        from git_viewer_textual.data import resolve_graph_window
+        from vidi.data import resolve_graph_window
 
         app = make_app()
         async with app.run_test(size=(160, 44)) as pilot:
@@ -728,7 +728,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(app.screen.active_panel, "graph")
 
     async def test_file_view_steps_between_files(self) -> None:
-        from git_viewer_textual.screens.file_view import FileViewScreen
+        from vidi.screens.file_view import FileViewScreen
 
         context, service = build_repo_context(
             repo_dir=sample_repo(),
@@ -741,7 +741,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
         files = sorted(p for paths in files_by_language.values() for p in paths)[:2]
         self.assertGreaterEqual(len(files), 2)
 
-        app = GitViewerApp(context, service)
+        app = VidiApp(context, service)
         async with app.run_test() as pilot:
             app.push_screen(FileViewScreen(service, head, files, 0))
             await pilot.pause()
@@ -754,7 +754,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(app.screen._index, 0)
 
     async def test_commit_files_browser_steps_commits(self) -> None:
-        from git_viewer_textual.screens.commit_files import CommitFilesScreen
+        from vidi.screens.commit_files import CommitFilesScreen
 
         context, service = build_repo_context(
             repo_dir=sample_repo(),
@@ -765,7 +765,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
         hashes = [c.commit_hash for c in service.get_branch_data(context.current_branch).commits]
         self.assertGreaterEqual(len(hashes), 2)
 
-        app = GitViewerApp(context, service)
+        app = VidiApp(context, service)
         async with app.run_test(size=(120, 40)) as pilot:
             # start on an older commit so both [ and ] have somewhere to go
             app.push_screen(CommitFilesScreen(service, hashes, 1))
@@ -785,7 +785,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
     async def test_commit_files_browser_marks_changed_and_filters(self) -> None:
         import re
 
-        from git_viewer_textual.screens.commit_files import CommitFilesScreen
+        from vidi.screens.commit_files import CommitFilesScreen
 
         context, service = build_repo_context(
             repo_dir=sample_repo(),
@@ -797,7 +797,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
         head = hashes[0]
         changed = {fc.path for fc in service.get_commit_detail(head).file_changes}
 
-        app = GitViewerApp(context, service)
+        app = VidiApp(context, service)
         async with app.run_test(size=(120, 40)) as pilot:
             app.push_screen(CommitFilesScreen(service, hashes, 0))
             await pilot.pause()
@@ -884,7 +884,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(table.has_focus)
 
     async def test_browse_files_key_opens_all_files_from_main_and_detail(self) -> None:
-        from git_viewer_textual.screens.commit_files import CommitFilesScreen
+        from vidi.screens.commit_files import CommitFilesScreen
 
         app = make_app()
         async with app.run_test() as pilot:
@@ -912,7 +912,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsInstance(app.screen, CommitFilesScreen)
 
     async def test_file_view_in_file_search(self) -> None:
-        from git_viewer_textual.screens.file_view import FileViewScreen
+        from vidi.screens.file_view import FileViewScreen
 
         context, service = build_repo_context(
             repo_dir=sample_repo(),
@@ -938,7 +938,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
         expected = [i for i, ln in enumerate(best_lines) if query in ln.lower()]
         self.assertGreaterEqual(len(expected), 2)
 
-        app = GitViewerApp(context, service)
+        app = VidiApp(context, service)
         async with app.run_test(size=(100, 30)) as pilot:
             app.push_screen(FileViewScreen(service, head, [best], 0))
             await pilot.pause()
@@ -1034,7 +1034,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(type(app.screen).__name__, "MainScreen")
 
     async def test_branch_picker_shows_ahead_behind(self) -> None:
-        from git_viewer_textual.screens.branch_picker import BranchPickerScreen
+        from vidi.screens.branch_picker import BranchPickerScreen
 
         app = make_app()
         async with app.run_test(size=(100, 40)) as pilot:
@@ -1062,7 +1062,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
     async def test_commit_detail_files_filter(self) -> None:
         import re
 
-        from git_viewer_textual.screens.commit_detail import CommitDetailScreen
+        from vidi.screens.commit_detail import CommitDetailScreen
 
         context, service = build_repo_context(
             repo_dir=sample_repo(),
@@ -1078,7 +1078,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
         paths = [c.path for c in service.get_commit_detail(target).file_changes]
         self.assertGreaterEqual(len(paths), 2)
 
-        app = GitViewerApp(context, service)
+        app = VidiApp(context, service)
         async with app.run_test(size=(160, 45)) as pilot:
             await pilot.pause()
             app.push_screen(
@@ -1115,8 +1115,8 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(table.row_count, len(paths))
 
     async def test_language_settings_apply_updates_scan_and_persists(self) -> None:
-        from git_viewer_textual import config
-        from git_viewer_textual.screens.language_settings import LanguageSettingsScreen
+        from vidi import config
+        from vidi.screens.language_settings import LanguageSettingsScreen
         from textual.widgets import Select
 
         context, service = build_repo_context(
@@ -1130,7 +1130,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(len(before), 0)
         victim = before[0]
 
-        app = GitViewerApp(context, service)
+        app = VidiApp(context, service)
         async with app.run_test() as pilot:
             await pilot.pause()
             app._command_language_settings()

@@ -7,7 +7,7 @@ import os
 import sys
 
 from . import config
-from .app import GitViewerApp
+from .app import VidiApp
 from .repository import build_initial_repo_context
 
 
@@ -44,4 +44,4 @@ def main() -> None:
         print(f"Error: {exc}")
         sys.exit(1)
 
-    GitViewerApp(context, service).run()
+    VidiApp(context, service).run()

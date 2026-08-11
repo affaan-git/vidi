@@ -35,7 +35,7 @@ def make_change_stat_style(
     return make_style(palette.success if positive else palette.error, bold=True)
 
 
-APP_THEME_NAME = "git-viewer"
+APP_THEME_NAME = "vidi"
 
 
 def build_app_theme(

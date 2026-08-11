@@ -16,7 +16,7 @@ from .screens.language_settings import LanguageSettingsScreen
 from .theme import APP_THEME_NAME, app_themes
 
 
-class GitViewerApp(App[None]):
+class VidiApp(App[None]):
     """Thin Textual app shell."""
 
     REPO_SCAN_MIN_SECONDS = 10.0
@@ -52,7 +52,7 @@ class GitViewerApp(App[None]):
         # Register the app themes (palette-as-Textual-theme so CSS $vars and
         # default widget styles match the programmatic palette) and restore the
         # saved choice, falling back to the default.
-        self._theme_source = self.current_theme  # Textual default, derives git-viewer
+        self._theme_source = self.current_theme  # Textual default, derives vidi
         for theme in app_themes(self._theme_source, transparent=self.transparent_background):
             self.register_theme(theme)
         saved = config.load_theme()
@@ -72,7 +72,7 @@ class GitViewerApp(App[None]):
         yield from super().get_system_commands(screen)
         yield SystemCommand(
             "Reset theme to default",
-            "Switch back to the git-viewer theme",
+            "Switch back to the vidi theme",
             self._command_reset_theme,
         )
         graph_label = (

@@ -1,4 +1,4 @@
-# git-viewer-textual
+# vidi
 
 A read-only, terminal-based viewer for a local Git repository. It opens on a
 GitHub-style dashboard for a repo you already have on disk: a contribution
@@ -49,7 +49,15 @@ Requires Python 3.12 or newer. The only runtime dependency is `textual`.
 ## Run
 
 ```bash
-git-viewer-textual /path/to/repo
+vidi /path/to/repo
+```
+
+It's short enough to type as-is; or alias it. Both `vd` (its initials) and `gv`
+("git view", to sit next to `ga`, `gd`, ...) work, since the alias and the
+command name are independent:
+
+```bash
+alias vd='vidi'   # or: alias gv='vidi'
 ```
 
 Everything else is set from inside the app (command palette, `Ctrl+P`) and
@@ -57,7 +65,7 @@ remembered between runs -- there are no other flags.
 
 ## Themes
 
-Ships with three themes: `git-viewer` (default), `one-night`, and `pro-black`.
+Ships with three themes: `vidi` (default), `one-night`, and `pro-black`.
 Switch from the command palette (`Ctrl+P` -> "Change theme"); the choice is
 remembered between runs. Reset to the default from the palette
 ("Reset theme to default").
