@@ -148,6 +148,21 @@ def render_contribution_graph(
     for style in heatmap_styles:
         legend.append(cell_char, style=style)
     legend.append(" More", style=make_style(palette.muted, bold=True))
+
+    # Always-on readout of the highlighted cell's exact date and count -- the
+    # stand-in for a hover tooltip -- right-aligned to the graph's own width so
+    # it sits under the cells on the otherwise-empty legend row.
+    if selected_day is not None:
+        count = int(commit_counts.get(selected_day, 0))
+        tail = "no commits" if count == 0 else ("1 commit" if count == 1 else f"{count} commits")
+        date_label = f"{selected_day.strftime('%a, %b')} {selected_day.day} {selected_day.year}"
+        graph_width = 4 + header_width
+        gap = max(2, graph_width - len(legend.plain) - len(date_label) - len(tail) - 3)
+        legend.append(" " * gap)
+        legend.append(date_label, style=make_style(palette.foreground))
+        legend.append(" · ", style=make_style(palette.muted))
+        legend.append(tail, style=make_style(palette.muted))
+
     return Group(*lines, legend)
 
 

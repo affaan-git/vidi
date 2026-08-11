@@ -1319,6 +1319,47 @@ class FilterTests(unittest.TestCase):
         self.assertNotIn("▣", graph_text)
         self.assertIn("Sun ■■", graph_text)
 
+    def test_contribution_graph_shows_selected_day_readout(self) -> None:
+        app = make_app()
+        graph = render_contribution_graph(
+            collections.Counter({dt.date(2026, 3, 15): 3}),
+            dt.date(2026, 3, 1),
+            dt.date(2026, 3, 31),
+            dt.date(2026, 3, 15),
+            resolve_theme_palette(app.current_theme),
+        )
+        console = Console(file=io.StringIO(), record=True, width=160)
+        console.print(graph)
+        text = console.export_text()
+        self.assertIn("Sun, Mar 15 2026", text)
+        self.assertIn("3 commits", text)
+
+    def test_contribution_graph_readout_handles_empty_day_and_no_selection(self) -> None:
+        app = make_app()
+        palette = resolve_theme_palette(app.current_theme)
+        # A selected day with no commits reads "no commits".
+        graph = render_contribution_graph(
+            collections.Counter({dt.date(2026, 3, 16): 1}),
+            dt.date(2026, 3, 1),
+            dt.date(2026, 3, 31),
+            dt.date(2026, 3, 12),
+            palette,
+        )
+        console = Console(file=io.StringIO(), record=True, width=160)
+        console.print(graph)
+        self.assertIn("no commits", console.export_text())
+        # With no selection the readout is absent -- the legend has no date/count.
+        graph_none = render_contribution_graph(
+            collections.Counter(),
+            dt.date(2026, 3, 1),
+            dt.date(2026, 3, 31),
+            None,
+            palette,
+        )
+        console_none = Console(file=io.StringIO(), record=True, width=160)
+        console_none.print(graph_none)
+        self.assertNotIn("commit", console_none.export_text())
+
     def test_render_contribution_graph_month_header_is_stable_across_full_year_views(self) -> None:
         app = make_app()
         palette = resolve_theme_palette(app.current_theme)
