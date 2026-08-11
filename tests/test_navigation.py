@@ -33,6 +33,7 @@ from vidi.models import (
 )
 from vidi.render import (
     build_language_bar,
+    build_language_summary,
     build_language_title,
     render_contribution_graph,
     resolve_heatmap_colors,
@@ -1246,6 +1247,39 @@ class FilterTests(unittest.TestCase):
         bar_text = console.export_text().strip("\n")
         self.assertEqual(len(bar_text.splitlines()), 1)
         self.assertEqual(len(bar_text), 20)
+
+    def test_language_bar_keeps_tiny_languages_visible_and_highlightable(self) -> None:
+        app = make_app()
+        palette = resolve_theme_palette(app.current_theme)
+        stats = [
+            {"language": "Python", "count": 23, "percentage": 97.9, "color": "#3572A5"},
+            {"language": "Markdown", "count": 1, "percentage": 1.9, "color": "#083fa1"},
+            {"language": "TOML", "count": 1, "percentage": 0.15, "color": "#6d5cae"},
+            {"language": "Other", "count": 1, "percentage": 0.05, "color": "#8b5cf6"},
+        ]
+        bar = build_language_bar(stats, palette, width=40)
+        # Every listed language gets at least one visible cell -- none collapse.
+        self.assertEqual(len(bar.spans), len(stats))
+        self.assertEqual(len(bar.plain), 40)
+        # Selecting a tiny language highlights its segment (bold + brightened).
+        highlighted = build_language_bar(stats, palette, width=40, highlighted_index=3)
+        self.assertNotIn("bold", str(bar.spans[3].style))
+        self.assertIn("bold", str(highlighted.spans[3].style))
+
+    def test_language_summary_shows_less_than_one_percent_for_tiny_shares(self) -> None:
+        app = make_app()
+        palette = resolve_theme_palette(app.current_theme)
+        stats = [
+            {"language": "Python", "count": 23, "percentage": 97.9, "color": "#3572A5"},
+            {"language": "TOML", "count": 1, "percentage": 0.15, "color": "#6d5cae"},
+        ]
+        summary = build_language_summary(stats, palette, width=80)
+        console = Console(file=io.StringIO(), record=True, width=80)
+        console.print(summary)
+        text = console.export_text()
+        self.assertIn("TOML 1 (<1%)", text)
+        self.assertIn("Python 23 (98%)", text)
+        self.assertNotIn("(0%)", text)
 
     def test_resolve_graph_window_uses_short_window_for_current_year(self) -> None:
         start, end = resolve_graph_window(

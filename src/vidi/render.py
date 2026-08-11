@@ -222,9 +222,19 @@ def _language_label_width(width: int) -> int:
     return max(6, min(16, width // 3))
 
 
+def _format_share(percentage: float) -> str:
+    # A present-but-tiny language reads as "<1%" instead of a misleading "0%";
+    # only a genuine zero share (no bytes at all) still reads "0%".
+    if percentage <= 0:
+        return "0%"
+    if round(percentage) == 0:
+        return "<1%"
+    return f"{percentage:.0f}%"
+
+
 def _language_metric(item: LanguageStat) -> str:
     # File count for the snapshot, with the share in parentheses.
-    return f"{int(item.get('count', 0))} ({float(item['percentage']):.0f}%)"
+    return f"{int(item.get('count', 0))} ({_format_share(float(item['percentage']))})"
 
 
 def _language_entry_text(item: LanguageStat, label_width: int) -> str:
@@ -357,6 +367,19 @@ def build_language_bar(
             )
             for index in order[:remainder]:
                 segment_widths[index] += 1
+
+    # Every listed language keeps at least one cell, so tiny shares stay visible
+    # on the bar and highlight on hover instead of collapsing to zero width. The
+    # cells are borrowed from the widest segments, which can spare them.
+    if len(language_stats) <= bar_width:
+        for index in range(len(language_stats)):
+            if segment_widths[index] > 0:
+                continue
+            donor = max(range(len(segment_widths)), key=segment_widths.__getitem__)
+            if segment_widths[donor] <= 1:
+                break
+            segment_widths[donor] -= 1
+            segment_widths[index] = 1
 
     bar = Text()
     for index, (item, segment_width) in enumerate(zip(language_stats, segment_widths)):
