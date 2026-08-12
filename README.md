@@ -161,3 +161,8 @@ Files changed in the commit are marked with a dot.
 pip install -e .
 python3 -m pytest -q tests/test_navigation.py
 ```
+
+## License
+
+vidi is free software licensed under the GNU General Public License v3.0 or
+later (GPL-3.0-or-later). See [LICENSE](LICENSE) for the full text.
