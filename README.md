@@ -31,10 +31,13 @@ built around reading a repository at a glance.
 
 Move between the commit table, details, and languages panels with `Tab`.
 Selecting a day on the graph, or highlighting a row in the commit table, updates
-the details panel. Press `Enter` on a commit to open its diff, then `[` / `]` to
+the details panel. The legend line beneath the graph shows the selected day's
+exact date and its commit count. Press `Enter` on a commit to open its diff, then `[` / `]` to
 step to the previous / next commit without leaving the detail view. The Languages
 panel is a snapshot of the highlighted commit's tree; press `Enter` on a language
 to list its files at that commit, and `Enter` on a file to view its contents.
+Even a language with a very small share keeps a visible slice on the bar and
+reads as `<1%` rather than `0%`.
 Press `f` (from any panel, or in the commit detail) to browse the whole tree; in
 the file list `[` / `]` step between commits.
 
