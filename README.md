@@ -122,6 +122,7 @@ Press `?` in the app for the same reference.
 | `left` / `right` | Scroll the patch sideways when lines are not wrapped |
 | `page up` / `page down` | Scroll by a page |
 | `home` / `end` | Jump to the top or bottom |
+| drag / `ctrl+c` | Select patch text with the mouse, then copy it |
 | `esc` / `q` | Back (esc first closes the search) |
 
 ### Branch picker
@@ -155,6 +156,7 @@ Press `?` in the app for the same reference.
 | `[` / `]` | Previous / next file |
 | `page up` / `page down` | Scroll by a page |
 | `home` / `end` | Jump to the top or bottom |
+| drag / `ctrl+c` | Select text with the mouse, then copy it |
 | `esc` / `q` | Back (esc first closes the search) |
 
 <!-- keys:end -->

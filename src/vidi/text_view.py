@@ -6,11 +6,13 @@ from bisect import bisect_right
 from itertools import accumulate
 from typing import Sequence, Union
 
-from rich.cells import cell_len, chop_cells
+from rich.cells import cell_len, chop_cells, get_character_cell_size
+from rich.segment import Segment
 from rich.style import Style
 from rich.text import Text
 from textual.geometry import Size
 from textual.scroll_view import ScrollView
+from textual.selection import Selection
 from textual.strip import Strip
 
 TAB_SIZE = 8
@@ -31,6 +33,29 @@ def _row_count(plain: str, width: int) -> int:
     if plain.isascii():
         return (len(plain) - 1) // width + 1 if plain else 1
     return max(1, len(chop_cells(plain, width)))
+
+
+def _offset_at_cell(plain: str, cells: int) -> tuple[int, int]:
+    """The first character at or after a cell column, and the cells between the two."""
+    width = 0
+    for offset, char in enumerate(plain):
+        if width >= cells:
+            return offset, width - cells
+        width += get_character_cell_size(char)
+    return len(plain), max(0, width - cells)
+
+
+def _tabbed_span(raw: str, start: int, end: int) -> str:
+    """The characters of a tabbed line whose expanded columns start from start up to end."""
+    chars: list[str] = []
+    column = 0
+    for char in raw:
+        if column >= end:
+            break
+        if column >= start:
+            chars.append(char)
+        column = (column // TAB_SIZE + 1) * TAB_SIZE if char == "\t" else column + 1
+    return "".join(chars)
 
 
 def _row_starts(plain: str, width: int) -> list[int]:
@@ -73,6 +98,8 @@ class TextView(ScrollView, can_focus=True):
         self._line_numbers = line_numbers
         self._lines: list[Line] = []
         self._plains: list[str] = []
+        # The source text of each line whose tabs were expanded.
+        self._tabbed: dict[int, str] = {}
         self._styles: Sequence[Style] | Style = Style()
         self._gutter_style = Style()
         self._match_style = Style(reverse=True)
@@ -99,6 +126,13 @@ class TextView(ScrollView, can_focus=True):
         gutter_style: Style | None = None,
     ) -> None:
         """Replace the content, keeping the scroll position and the active search."""
+        if self.is_mounted and self.text_selection is not None:
+            self.screen.clear_selection()
+        self._tabbed = {
+            index: line
+            for index, line in enumerate(lines)
+            if isinstance(line, str) and "\t" in line
+        }
         self._lines = [
             line.expandtabs(TAB_SIZE) if isinstance(line, str) and "\t" in line else line
             for line in lines
@@ -140,6 +174,11 @@ class TextView(ScrollView, can_focus=True):
         self._update_layout()
         self.scroll_to(x=0, y=self.row_for_line(top), animate=False)
         self.refresh()
+
+    # Textual 6.2 counts a ScrollView as a container and disables selection in containers.
+    @property
+    def allow_select(self) -> bool:
+        return True
 
     # Layout
 
@@ -219,6 +258,18 @@ class TextView(ScrollView, can_focus=True):
             for found in self._occurrences(index):
                 if found + size > start and found < end:
                     text.stylize(style, max(found, start) - start, min(found + size, end) - start)
+        selection = self.text_selection
+        span = selection.get_span(index) if selection is not None else None
+        if span is not None:
+            first, last = span
+            if last == -1:
+                last = len(self._plains[index])
+            if first < end and last > start:
+                text.stylize(
+                    self.screen.get_component_rich_style("screen--selection"),
+                    max(first, start) - start,
+                    min(last, end) - start,
+                )
         return text
 
     def _occurrences(self, index: int) -> list[int]:
@@ -272,24 +323,35 @@ class TextView(ScrollView, can_focus=True):
         text_width = max(1, width - self._gutter_width())
         console = self.app.console
         first_row = self.row_for_line(index)
+        lead = 0
         if self._wrap:
             start, end = self._row_span(index, row - first_row, text_width)
-            body = Strip(self._segment(index, start, end).render(console))
-            body = body.extend_cell_length(text_width)
         else:
             scroll_x = int(self.scroll_x)
-            if self._plains[index].isascii():
-                text = self._segment(index, scroll_x, scroll_x + text_width)
-                body = Strip(text.render(console)).extend_cell_length(text_width)
+            plain = self._plains[index]
+            if plain.isascii():
+                start, end = scroll_x, scroll_x + text_width
             else:
-                text = self._segment(index, 0, len(self._plains[index]))
-                body = Strip(text.render(console)).crop_extend(
-                    scroll_x, scroll_x + text_width, None
-                )
+                start, lead = _offset_at_cell(plain, scroll_x)
+                end = len(plain)
+        text = self._segment(index, start, end)
+        if lead:
+            # The blank stands for the wide character cut off at the left edge.
+            text = Text(" " * lead, style=self._line_style(index)) + text
+        # Offsets map each cell back to the character it selects.
+        body = (
+            Strip(text.render(console))
+            .crop(0, text_width)
+            .extend_cell_length(text_width)
+            .apply_offsets(start - lead, index)
+        )
         if self._line_numbers:
             gutter = self._gutter_width()
             number = f"{index + 1:>{gutter - 2}}  " if row == first_row else " " * gutter
-            gutter_strip = Strip(Text(number, style=self._gutter_style).render(console))
+            # One segment per cell, each selecting from the start of the row.
+            offset = Style.from_meta({"offset": (start if self._wrap else 0, index)})
+            cell_style = self._gutter_style + offset
+            gutter_strip = Strip([Segment(char, cell_style) for char in number], gutter)
             body = Strip.join([gutter_strip, body])
         return body.apply_style(base).adjust_cell_length(width, base)
 
@@ -354,3 +416,23 @@ class TextView(ScrollView, can_focus=True):
             elif last > left + text_width:
                 x = max(0, last - text_width + margin)
         self.scroll_to(x=x, y=max(0, row - 2), animate=False)
+
+    # Selection
+
+    def get_selection(self, selection: Selection) -> tuple[str, str] | None:
+        """The selected text, with tabs as in the source."""
+        start, end = selection
+        first = 0 if start is None else start.y
+        last = len(self._plains) - 1 if end is None else min(end.y, len(self._plains) - 1)
+        parts: list[str] = []
+        for index in range(first, last + 1):
+            span = selection.get_span(index)
+            if span is None:
+                continue
+            begin, finish = span
+            plain = self._plains[index]
+            if finish == -1:
+                finish = len(plain)
+            raw = self._tabbed.get(index)
+            parts.append(plain[begin:finish] if raw is None else _tabbed_span(raw, begin, finish))
+        return "\n".join(parts), "\n"

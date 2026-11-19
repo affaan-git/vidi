@@ -178,6 +178,100 @@ class TextViewTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
 
 
+async def _drag(pilot, view: TextView, start: tuple[int, int], end: tuple[int, int]) -> str:
+    """Drag the mouse across the view and return the selected text."""
+    await pilot.mouse_down(view, offset=start)
+    await pilot.hover(view, offset=end)
+    await pilot.mouse_up(view, offset=end)
+    await pilot.pause()
+    return (view.screen.get_selected_text() or "").rstrip("\n")
+
+
+def _highlighted(view: TextView) -> list[str]:
+    """The text drawn in the selection style on each row that has any."""
+    color = view.screen.get_component_rich_style("screen--selection").bgcolor
+    rows = []
+    for y in range(view.scrollable_content_region.height):
+        text = "".join(
+            seg.text
+            for seg in view.render_line(y)
+            if seg.style is not None and seg.style.bgcolor == color
+        )
+        if text:
+            rows.append(text)
+    return rows
+
+
+class SelectionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_dragging_copies_the_highlighted_text_with_its_tabs(self) -> None:
+        view = TextView(line_numbers=True)
+        async with _ViewApp(view).run_test(size=(40, 8)) as pilot:
+            view.set_lines(["alpha\tbeta", "second line here", "third"], Style())
+            await pilot.pause()
+            gutter = view._gutter_width()
+            text = await _drag(pilot, view, (gutter + 2, 0), (gutter + 3, 1))
+            self.assertTrue(text.startswith("pha\tbeta\nsec"), text)
+            first, second = text.split("\n")
+            self.assertEqual(_highlighted(view), ["pha   beta", second])
+
+    async def test_dragging_from_the_line_numbers_copies_no_numbers(self) -> None:
+        view = TextView(line_numbers=True)
+        async with _ViewApp(view).run_test(size=(40, 8)) as pilot:
+            view.set_lines(["alpha", "second", "third"], Style())
+            await pilot.pause()
+            text = await _drag(pilot, view, (0, 1), (4, 2))
+            self.assertIn("cond\nt", text)
+            self.assertFalse(any(char.isdigit() for char in text))
+
+    async def test_selection_follows_wrapped_rows(self) -> None:
+        view = TextView(wrap=True)
+        async with _ViewApp(view).run_test(size=(30, 8)) as pilot:
+            width = view.scrollable_content_region.width
+            view.set_lines(["x" * 40 + "TAIL", "next"], Style())
+            await pilot.pause()
+            text = await _drag(pilot, view, (2, 1), (2, 2))
+            self.assertTrue(text.startswith("x" * (40 - width - 2) + "TAIL\nne"), text)
+
+    async def test_selection_follows_sideways_scroll_and_wide_characters(self) -> None:
+        view = TextView()
+        async with _ViewApp(view).run_test(size=(30, 8)) as pilot:
+            view.set_lines(["0123456789" * 6, "\u65e5\u672c\u8a9e" * 10], Style())
+            await pilot.pause()
+            view.scroll_to(x=20, animate=False)
+            await pilot.pause()
+            text = await _drag(pilot, view, (0, 0), (4, 0))
+            self.assertTrue(text.startswith("0123"), text)
+            self.assertEqual(_highlighted(view), [text])
+            view.scroll_to(x=3, animate=False)
+            await pilot.pause()
+            # Cell 3 holds the second half of a wide character, drawn as a blank that selects it.
+            self.assertTrue(_rows(view)[1].startswith(" \u8a9e"))
+            text = await _drag(pilot, view, (0, 1), (5, 1))
+            self.assertTrue(text.startswith("\u672c\u8a9e"), text)
+            text = await _drag(pilot, view, (1, 1), (5, 1))
+            self.assertTrue(text.startswith("\u8a9e\u65e5"), text)
+
+    async def test_dragging_from_a_blank_row_or_past_the_text_starts_a_selection(self) -> None:
+        view = TextView()
+        async with _ViewApp(view).run_test(size=(30, 8)) as pilot:
+            view.set_lines(["ab", "", "cdef"], Style())
+            await pilot.pause()
+            self.assertTrue((await _drag(pilot, view, (0, 1), (2, 2))).startswith("\ncd"))
+            self.assertEqual(await _drag(pilot, view, (10, 0), (10, 1)), "")
+            self.assertTrue((await _drag(pilot, view, (10, 0), (1, 2))).startswith("\n\nc"))
+
+    async def test_new_content_clears_the_selection(self) -> None:
+        view = TextView()
+        async with _ViewApp(view).run_test(size=(30, 8)) as pilot:
+            view.set_lines(["first line", "second line"], Style())
+            await pilot.pause()
+            self.assertTrue(await _drag(pilot, view, (0, 0), (3, 1)))
+            view.set_lines(["other"], Style())
+            await pilot.pause()
+            self.assertIsNone(view.text_selection)
+            self.assertEqual(_highlighted(view), [])
+
+
 class FileViewWrapTests(unittest.IsolatedAsyncioTestCase):
     async def test_file_view_search_scrolls_sideways_to_the_match(self) -> None:
         content = "start\n" + "x" * 300 + " needle\n" + "end\n"
@@ -215,6 +309,33 @@ class FileViewWrapTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 self.assertEqual(app.screen._search_input().value, "abc")
                 self.assertEqual(app.screen._scroll().scroll_x, 0)
+
+    async def test_text_in_the_file_view_and_patch_can_be_copied(self) -> None:
+        files = {"a.txt": "line one\n\tline two\n"}
+        with _temp_config(), _repo_app([{"base.txt": "x\n"}, files]) as (app, hashes):
+            async with app.run_test(size=(100, 30)) as pilot:
+                app.push_screen(FileViewScreen(app.service, hashes[1], ["a.txt"], 0))
+                await pilot.pause()
+                view = app.screen._scroll()
+                gutter = view._gutter_width()
+                text = await _drag(pilot, view, (gutter, 0), (gutter + 11, 1))
+                self.assertTrue(text.startswith("line one\n\tlin"), text)
+                await pilot.press("ctrl+c")
+                self.assertEqual(app.clipboard.rstrip("\n"), text)
+
+                await pilot.press("escape")
+                app.push_screen(CommitDetailScreen(app.service, hashes[1]))
+                await pilot.pause()
+                await pilot.press("p")
+                await pilot.pause()
+                await pilot.pause()
+                patch = app.screen._full_patch_scroll()
+                row = patch.lines.index("+line one")
+                y = row - int(patch.scroll_y)
+                text = await _drag(pilot, patch, (1, y), (5, y))
+                self.assertTrue(text.startswith("line"), text)
+                await pilot.press("ctrl+c")
+                self.assertEqual(app.clipboard.rstrip("\n"), text)
 
     def test_wrap_settings_roundtrip(self) -> None:
         with _temp_config():

@@ -71,7 +71,7 @@ def _markdown_keys(keys: str) -> str:
     """Put each key in backticks, as in "`j` / `k` or `up` / `down`"."""
     groups = []
     for group in keys.split("  or  "):
-        names = [name if name == "type" else f"`{name}`" for name in group.split(" / ")]
+        names = [name if name in ("type", "drag") else f"`{name}`" for name in group.split(" / ")]
         groups.append(" / ".join(names))
     return " or ".join(groups)
 
