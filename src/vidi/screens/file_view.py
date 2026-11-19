@@ -12,17 +12,13 @@ from textual.widgets import Footer, Input, Static
 from ..repository import RepoService
 from ..text_view import TextView
 from ..theme import make_style, resolve_theme_palette
+from .shared import BACK_GROUP, JUMP_GROUP, MOVE_GROUP, PAGE_GROUP, SEARCH_GROUP
 
 
 class FileViewScreen(ModalScreen[None]):
     """Show a file's contents as of a commit, with line numbers and / search."""
 
-    MOVE_GROUP = Binding.Group("Move", compact=True)
-    PAGE_GROUP = Binding.Group("Page", compact=True)
-    JUMP_GROUP = Binding.Group("Jump", compact=True)
     FILE_GROUP = Binding.Group("File", compact=True)
-    SEARCH_GROUP = Binding.Group("Search", compact=True)
-    BACK_GROUP = Binding.Group("Back", compact=True)
 
     CSS = """
     FileViewScreen {
@@ -119,7 +115,7 @@ class FileViewScreen(ModalScreen[None]):
         self._binary = content is None
         view = self._scroll()
         view.set_match_styles(
-            make_style(palette.foreground, background=palette.selected_bg),
+            make_style(palette.selected_fg, background=palette.selected_bg),
             make_style(palette.selected_fg, background=palette.primary, bold=True),
         )
         if content is None:

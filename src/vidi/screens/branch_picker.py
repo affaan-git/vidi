@@ -13,13 +13,11 @@ from textual.widgets.option_list import Option
 
 from ..theme import make_style, resolve_theme_palette
 from ..utils import fuzzy_score, truncate_middle
+from .shared import BACK_GROUP, MOVE_GROUP
 
 
 class BranchPickerScreen(ModalScreen[Optional[str]]):
     """Modal branch picker."""
-
-    BACK_GROUP = Binding.Group("Back", compact=True)
-    MOVE_GROUP = Binding.Group("Move", compact=True)
 
     CSS = """
     BranchPickerScreen {
@@ -88,10 +86,14 @@ class BranchPickerScreen(ModalScreen[Optional[str]]):
         self._divergence = divergence or {}
         self._base_branch = base_branch
         self.filtered_branches = branches[:]
-        self.highlighted_branch = current_branch if current_branch in branches else (
-            branches[0] if branches else ""
-        )
+        self.highlighted_branch = self._default_highlight(branches)
         self._theme_palette = resolve_theme_palette(self.app.current_theme)
+
+    def _default_highlight(self, branches: list[str]) -> str:
+        """The current branch when listed, else the first branch."""
+        if self.current_branch in branches:
+            return self.current_branch
+        return branches[0] if branches else ""
 
     def compose(self) -> ComposeResult:
         with Static(id="branch-picker"):
@@ -163,11 +165,7 @@ class BranchPickerScreen(ModalScreen[Optional[str]]):
         query = event.value.strip()
         if not query:
             self.filtered_branches = self.branches[:]
-            self.highlighted_branch = (
-                self.current_branch
-                if self.current_branch in self.filtered_branches
-                else (self.filtered_branches[0] if self.filtered_branches else "")
-            )
+            self.highlighted_branch = self._default_highlight(self.filtered_branches)
             self._refresh_options()
             return
 
@@ -178,12 +176,6 @@ class BranchPickerScreen(ModalScreen[Optional[str]]):
                 ranked.append((score, branch))
         ranked.sort(key=lambda item: (item[0], item[1]))
         self.filtered_branches = [branch for _score, branch in ranked]
-        if self.highlighted_branch in self.filtered_branches:
-            pass
-        elif self.filtered_branches:
-            self.highlighted_branch = self.filtered_branches[0]
-        else:
-            self.highlighted_branch = ""
         self._refresh_options()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:

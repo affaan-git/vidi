@@ -13,6 +13,7 @@ from textual.widgets.option_list import Option
 from ..repository import RepoService
 from ..theme import make_style, resolve_theme_palette
 from .file_view import FileViewScreen
+from .shared import BACK_GROUP, COMMIT_GROUP, MOVE_GROUP
 
 
 class CommitFilesScreen(ModalScreen[None]):
@@ -22,10 +23,6 @@ class CommitFilesScreen(ModalScreen[None]):
     without it the whole tree. Files changed in the commit are marked with a dot.
     The commit list is newest-first and the commits are numbered oldest-first.
     """
-
-    MOVE_GROUP = Binding.Group("Move", compact=True)
-    COMMIT_GROUP = Binding.Group("Commit", compact=True)
-    BACK_GROUP = Binding.Group("Back", compact=True)
 
     CSS = """
     CommitFilesScreen {

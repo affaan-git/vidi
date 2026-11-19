@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import contextlib
 import os
-import pathlib
-import subprocess
 import tempfile
 import time
 import unittest
@@ -14,54 +12,31 @@ from textual.app import App, ComposeResult
 
 from vidi import config
 from vidi.app import VidiApp
-from vidi.repository import build_repo_context
 from vidi.screens.commit_detail import CommitDetailScreen
 from vidi.screens.file_view import FileViewScreen
 from vidi.text_view import TextView
 
-
-def _git(repo: str, *args: str) -> None:
-    subprocess.run(
-        ["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", *args],
-        check=True,
-        capture_output=True,
-    )
+from sample_repo import git, load_repo, new_repo, temp_config
 
 
 def _commit(repo: str, files: dict[str, str], message: str) -> None:
     for path, content in files.items():
         with open(os.path.join(repo, path), "w") as handle:
             handle.write(content)
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-q", "-m", message)
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", message)
 
 
 @contextlib.contextmanager
 def _repo_app(commits: list[dict[str, str]]) -> Iterator[tuple[VidiApp, list[str]]]:
     """An app over a fresh repo, with the commit hashes oldest first."""
     with tempfile.TemporaryDirectory() as tmp:
-        repo = os.path.join(tmp, "repo")
-        os.makedirs(repo)
-        _git(repo, "init", "-q", "-b", "main")
+        repo = new_repo(tmp)
         for index, files in enumerate(commits):
             _commit(repo, files, f"commit {index}")
-        context, service = build_repo_context(
-            repo_dir=repo, language_mode="bytes", exclude_languages=set(), extra_ignored_dirs=set()
-        )
+        context, service = load_repo(repo)
         hashes = [c.commit_hash for c in service.get_branch_data(context.current_branch).commits]
         yield VidiApp(context, service), hashes[::-1]
-
-
-@contextlib.contextmanager
-def _temp_config() -> Iterator[None]:
-    orig_dir, orig_path = config.CONFIG_DIR, config.CONFIG_PATH
-    try:
-        with tempfile.TemporaryDirectory() as tmp:
-            config.CONFIG_DIR = pathlib.Path(tmp)
-            config.CONFIG_PATH = config.CONFIG_DIR / "config.json"
-            yield
-    finally:
-        config.CONFIG_DIR, config.CONFIG_PATH = orig_dir, orig_path
 
 
 def _rows(view: TextView) -> list[str]:
@@ -275,7 +250,7 @@ class SelectionTests(unittest.IsolatedAsyncioTestCase):
 class FileViewWrapTests(unittest.IsolatedAsyncioTestCase):
     async def test_file_view_search_scrolls_sideways_to_the_match(self) -> None:
         content = "start\n" + "x" * 300 + " needle\n" + "end\n"
-        with _temp_config(), _repo_app([{"a.txt": content}]) as (app, hashes):
+        with temp_config(), _repo_app([{"a.txt": content}]) as (app, hashes):
             async with app.run_test(size=(80, 24)) as pilot:
                 app.push_screen(FileViewScreen(app.service, hashes[0], ["a.txt"], 0))
                 await pilot.pause()
@@ -301,7 +276,7 @@ class FileViewWrapTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_left_and_right_edit_the_search_box(self) -> None:
         content = "y" * 300 + "\n"
-        with _temp_config(), _repo_app([{"a.txt": content}]) as (app, hashes):
+        with temp_config(), _repo_app([{"a.txt": content}]) as (app, hashes):
             async with app.run_test(size=(80, 24)) as pilot:
                 app.push_screen(FileViewScreen(app.service, hashes[0], ["a.txt"], 0))
                 await pilot.pause()
@@ -312,7 +287,7 @@ class FileViewWrapTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_text_in_the_file_view_and_patch_can_be_copied(self) -> None:
         files = {"a.txt": "line one\n\tline two\n"}
-        with _temp_config(), _repo_app([{"base.txt": "x\n"}, files]) as (app, hashes):
+        with temp_config(), _repo_app([{"base.txt": "x\n"}, files]) as (app, hashes):
             async with app.run_test(size=(100, 30)) as pilot:
                 app.push_screen(FileViewScreen(app.service, hashes[1], ["a.txt"], 0))
                 await pilot.pause()
@@ -338,7 +313,7 @@ class FileViewWrapTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(app.clipboard.rstrip("\n"), text)
 
     def test_wrap_settings_roundtrip(self) -> None:
-        with _temp_config():
+        with temp_config():
             self.assertFalse(config.load_wrap_file_view())
             self.assertTrue(config.load_wrap_diffs())
             config.save_wrap_file_view(True)
@@ -347,7 +322,7 @@ class FileViewWrapTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(config.load_wrap_diffs())
 
     async def test_wrap_commands_toggle_open_views_and_persist(self) -> None:
-        with _temp_config(), _repo_app([{"a.txt": "a\n"}, {"a.txt": "b\n"}]) as (app, hashes):
+        with temp_config(), _repo_app([{"a.txt": "a\n"}, {"a.txt": "b\n"}]) as (app, hashes):
             async with app.run_test(size=(120, 30)) as pilot:
                 app.push_screen(CommitDetailScreen(app.service, hashes[1]))
                 await pilot.pause()
@@ -377,7 +352,7 @@ class PatchWrapTests(unittest.IsolatedAsyncioTestCase):
     async def test_full_patch_outline_follows_wrapped_rows(self) -> None:
         long_lines = "".join(f"{i} " + "w" * 150 + "\n" for i in range(20))
         files = {"a.txt": long_lines, "b.txt": "short\n" * 5}
-        with _temp_config(), _repo_app([{"base.txt": "x\n"}, files]) as (app, hashes):
+        with temp_config(), _repo_app([{"base.txt": "x\n"}, files]) as (app, hashes):
             async with app.run_test(size=(100, 30)) as pilot:
                 app.push_screen(CommitDetailScreen(app.service, hashes[1]))
                 await pilot.pause()
@@ -420,7 +395,7 @@ class PerformanceGuardTests(unittest.IsolatedAsyncioTestCase):
         return line * (2 * 1024 * 1024 // len(line))
 
     async def test_large_file_view_opens_and_searches_quickly(self) -> None:
-        with _temp_config(), _repo_app([{"big.py": self._big_file()}]) as (app, hashes):
+        with temp_config(), _repo_app([{"big.py": self._big_file()}]) as (app, hashes):
             async with app.run_test(size=(140, 40)) as pilot:
                 started = time.perf_counter()
                 app.push_screen(FileViewScreen(app.service, hashes[0], ["big.py"], 0))
@@ -434,7 +409,7 @@ class PerformanceGuardTests(unittest.IsolatedAsyncioTestCase):
                 self.assertGreater(len(app.screen._match_lines), 10000)
 
     async def test_large_commit_diff_opens_and_searches_quickly(self) -> None:
-        with _temp_config(), _repo_app([{"a.txt": "a\n"}, {"big.py": self._big_file()}]) as (
+        with temp_config(), _repo_app([{"a.txt": "a\n"}, {"big.py": self._big_file()}]) as (
             app,
             hashes,
         ):

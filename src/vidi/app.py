@@ -32,12 +32,7 @@ class VidiApp(App[None]):
         super().__init__()
         self.context = context
         self.service = service
-        self._repo_scan_snapshot = RepoScanSnapshot(
-            branch_heads=context.branch_heads,
-            current_branch=context.current_branch,
-            repo_commit_count=context.repo_commit_count,
-            scanned_file_count=service.scanned_file_count(context),
-        )
+        self._repo_scan_snapshot = self._snapshot_of(context)
         self._repo_scan_in_flight = False
         self._repo_scan_task: asyncio.Task[None] | None = None
         self._initial_context_task: asyncio.Task[None] | None = None
@@ -48,6 +43,14 @@ class VidiApp(App[None]):
         # Whether long lines wrap in the file view and in diffs.
         self.wrap_file_view = config.load_wrap_file_view()
         self.wrap_diffs = config.load_wrap_diffs()
+
+    def _snapshot_of(self, context: RepoContext) -> RepoScanSnapshot:
+        return RepoScanSnapshot(
+            branch_heads=context.branch_heads,
+            current_branch=context.current_branch,
+            repo_commit_count=context.repo_commit_count,
+            scanned_file_count=self.service.scanned_file_count(context),
+        )
 
     def on_mount(self) -> None:
         # Register the app themes and restore the saved one, or the default.
@@ -227,17 +230,11 @@ class VidiApp(App[None]):
             previous_context = self.context
             previous_snapshot = self._repo_scan_snapshot
             new_context = await asyncio.to_thread(self.service.refresh_context)
-            new_snapshot = RepoScanSnapshot(
-                branch_heads=new_context.branch_heads,
-                current_branch=new_context.current_branch,
-                repo_commit_count=new_context.repo_commit_count,
-                scanned_file_count=self.service.scanned_file_count(new_context),
-            )
             self._apply_refreshed_context(
                 previous_context,
                 new_context,
                 previous_snapshot,
-                new_snapshot,
+                self._snapshot_of(new_context),
             )
         finally:
             self._initial_context_task = None

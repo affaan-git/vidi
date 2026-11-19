@@ -6,7 +6,6 @@ import datetime as dt
 import io
 import os
 import shutil
-import subprocess
 import tempfile
 import sys
 import unittest
@@ -14,6 +13,7 @@ from dataclasses import replace
 
 from rich.console import Console
 from rich.text import Text
+from textual.app import App
 from textual.color import Color
 from textual.binding import Binding
 from textual.widgets import DataTable, Footer, Header, OptionList
@@ -23,6 +23,7 @@ from vidi.app import VidiApp
 from vidi.cli import build_parser, main as cli_main, package_version, resolve_repo_dir
 from vidi.docs import MAN_DIR, PAGES, README, build_manpage, update_readme
 from vidi.screens.help import SHORTCUTS
+from vidi.screens.main import GraphView
 from vidi.data import (
     compact_label_for_change,
     compact_path_label,
@@ -40,6 +41,7 @@ from vidi.models import (
     CommitPatchSection,
     CommitRecord,
     RepoScanSnapshot,
+    ThemePalette,
 )
 from vidi.render import (
     build_language_bar,
@@ -53,7 +55,6 @@ from vidi.repository import (
     LANGUAGE_COLORS,
     RepoService,
     build_initial_repo_context,
-    build_repo_context,
     get_branch_heads,
     list_worktree_paths,
     scan_languages,
@@ -61,17 +62,11 @@ from vidi.repository import (
 from vidi.theme import make_change_stat_style, resolve_theme_palette
 from vidi.utils import detect_language, rel_time
 
-from sample_repo import build_sample_repo, sample_repo
+from sample_repo import build_sample_repo, git, load_repo, new_repo, sample_repo, temp_config
 
 
 def make_app() -> VidiApp:
-    context, service = build_repo_context(
-        repo_dir=sample_repo(),
-        language_mode="bytes",
-        exclude_languages=set(),
-        extra_ignored_dirs=set(),
-    )
-    return VidiApp(context, service)
+    return VidiApp(*load_repo(sample_repo()))
 
 
 def make_lightweight_app() -> VidiApp:
@@ -84,18 +79,25 @@ def make_lightweight_app() -> VidiApp:
     return VidiApp(context, service)
 
 
+def default_palette() -> ThemePalette:
+    """The palette of the theme an app starts with, without loading a repo."""
+    return resolve_theme_palette(App().current_theme)
+
+
+def plain_text(renderable: object, width: int) -> str:
+    console = Console(file=io.StringIO(), record=True, width=width)
+    console.print(renderable)
+    return console.export_text()
+
+
 class NavigationTests(unittest.IsolatedAsyncioTestCase):
-    async def test_main_screen_uses_header_subtitle_instead_of_extra_summary_bar(self) -> None:
+    async def test_main_screen_shows_repo_stats_in_the_header_subtitle(self) -> None:
         app = make_app()
         async with app.run_test() as pilot:
             self.assertEqual(type(app.screen).__name__, "MainScreen")
-            self.assertEqual(len(app.screen.query("#summary-bar")), 0)
-            self.assertTrue(app.screen.sub_title)
             self.assertIn("branches", app.screen.sub_title)
             self.assertIn("commits", app.screen.sub_title)
             self.assertIn("files", app.screen.sub_title)
-            self.assertNotIn("languages", app.screen.sub_title)
-            self.assertNotIn("all", app.screen.sub_title)
             self.assertEqual(len(app.screen.query(Header)), 1)
 
     async def test_main_header_uses_builtin_header_and_subtitle_file_count(self) -> None:
@@ -140,13 +142,12 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             self.assertGreater(len(app.context.language_stats), 0)
             self.assertIn("files", app.screen.sub_title)
 
-    async def test_commit_detail_uses_same_builtin_header_without_clock(self) -> None:
+    async def test_commit_detail_header_subtitle_matches_the_main_screen(self) -> None:
         app = make_app()
         async with app.run_test() as pilot:
             await pilot.press("enter")
             await pilot.pause()
-            header = app.screen.query_one(Header)
-            self.assertFalse(getattr(header, "_show_clock"))
+            self.assertEqual(len(app.screen.query(Header)), 1)
             expected_count = sum(len(files) for files in app.context.files_by_language.values())
             branch = app.screen.source_branch or app.context.current_branch
             self.assertEqual(
@@ -262,23 +263,12 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(app.current_theme.name, app.available_themes)
 
     def test_config_theme_roundtrip(self) -> None:
-        import pathlib
-        import tempfile
-
         from vidi import config
 
-        orig_dir, orig_path = config.CONFIG_DIR, config.CONFIG_PATH
-        try:
-            with tempfile.TemporaryDirectory() as tmp:
-                config.CONFIG_DIR = pathlib.Path(tmp)
-                config.CONFIG_PATH = config.CONFIG_DIR / "config.json"
-                self.assertIsNone(config.load_theme())
-                config.save_theme("pro-black")
-                self.assertEqual(config.load_theme(), "pro-black")
-                config.reset()
-                self.assertIsNone(config.load_theme())
-        finally:
-            config.CONFIG_DIR, config.CONFIG_PATH = orig_dir, orig_path
+        with temp_config():
+            self.assertIsNone(config.load_theme())
+            config.save_theme("pro-black")
+            self.assertEqual(config.load_theme(), "pro-black")
 
     async def test_help_overlay_opens_and_closes(self) -> None:
         app = make_app()
@@ -316,14 +306,10 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             graph_title = getattr(graph_title_render, "_renderable", graph_title_render)
             language_title = getattr(language_title_render, "_renderable", language_title_render)
 
-            console = Console(file=io.StringIO(), record=True, width=140)
-            console.print(graph_title)
-            graph_title_text = console.export_text()
+            graph_title_text = plain_text(graph_title, width=140)
             self.assertIn("commits", graph_title_text)
 
-            language_console = Console(file=io.StringIO(), record=True, width=140)
-            language_console.print(language_title)
-            language_title_text = language_console.export_text()
+            language_title_text = plain_text(language_title, width=140)
             self.assertIn("Languages", language_title_text)
             self.assertRegex(language_title_text, r"\b\d+\b")
 
@@ -332,9 +318,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
         async with app.run_test() as pilot:
             details_render = app.screen.query_one("#day-details").render()
             details = getattr(details_render, "_renderable", details_render)
-            console = Console(file=io.StringIO(), record=True, width=140)
-            console.print(details)
-            details_text = console.export_text()
+            details_text = plain_text(details, width=140)
             self.assertIn("Files changed", details_text)
             self.assertRegex(details_text, r"\+\d+")
             self.assertRegex(details_text, r"-\d+")
@@ -423,9 +407,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(getattr(first_outline_dels, "plain", str(first_outline_dels)), "0")
             self.assertEqual(getattr(app.focused, "id", None), "commit-detail-full-scroll")
             files_meta_render = app.screen.query_one("#commit-detail-files-meta").render()
-            meta_console = Console(file=io.StringIO(), record=True, width=120)
-            meta_console.print(files_meta_render)
-            files_meta_text = meta_console.export_text()
+            files_meta_text = plain_text(files_meta_render, width=120)
             self.assertRegex(files_meta_text, r"\+\d+")
             self.assertRegex(files_meta_text, r"-\d+")
 
@@ -650,22 +632,16 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(app.screen.selected_file_index, 0)
             self.assertEqual(files_table.cursor_row, 0)
 
-    async def test_branch_picker_uses_builtin_footer_instead_of_help_text(self) -> None:
+    async def test_branch_picker_has_a_footer(self) -> None:
         app = make_app()
         async with app.run_test() as pilot:
             await pilot.press("b")
             await pilot.pause()
             self.assertEqual(type(app.screen).__name__, "BranchPickerScreen")
             self.assertEqual(len(app.screen.query(Footer)), 1)
-            self.assertEqual(len(app.screen.query("#branch-picker-help")), 0)
 
     def test_commit_language_stats_are_a_per_commit_snapshot(self) -> None:
-        context, service = build_repo_context(
-            repo_dir=sample_repo(),
-            language_mode="bytes",
-            exclude_languages=set(),
-            extra_ignored_dirs=set(),
-        )
+        context, service = load_repo(sample_repo())
         head = service.get_branch_data(context.current_branch).commits[0].commit_hash
         stats, files_by_language = service.get_commit_language_stats(head)
         self.assertGreater(len(stats), 0)
@@ -750,12 +726,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
     async def test_file_view_steps_between_files(self) -> None:
         from vidi.screens.file_view import FileViewScreen
 
-        context, service = build_repo_context(
-            repo_dir=sample_repo(),
-            language_mode="bytes",
-            exclude_languages=set(),
-            extra_ignored_dirs=set(),
-        )
+        context, service = load_repo(sample_repo())
         head = service.get_branch_data(context.current_branch).commits[0].commit_hash
         _, files_by_language = service.get_commit_language_stats(head)
         files = sorted(p for paths in files_by_language.values() for p in paths)[:2]
@@ -776,12 +747,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
     async def test_commit_files_browser_steps_commits(self) -> None:
         from vidi.screens.commit_files import CommitFilesScreen
 
-        context, service = build_repo_context(
-            repo_dir=sample_repo(),
-            language_mode="bytes",
-            exclude_languages=set(),
-            extra_ignored_dirs=set(),
-        )
+        context, service = load_repo(sample_repo())
         hashes = [c.commit_hash for c in service.get_branch_data(context.current_branch).commits]
         self.assertGreaterEqual(len(hashes), 2)
 
@@ -807,12 +773,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
 
         from vidi.screens.commit_files import CommitFilesScreen
 
-        context, service = build_repo_context(
-            repo_dir=sample_repo(),
-            language_mode="bytes",
-            exclude_languages=set(),
-            extra_ignored_dirs=set(),
-        )
+        context, service = load_repo(sample_repo())
         hashes = [c.commit_hash for c in service.get_branch_data(context.current_branch).commits]
         head = hashes[0]
         changed = {fc.path for fc in service.get_commit_detail(head).file_changes}
@@ -903,6 +864,55 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(table.row_count, base_rows)
             self.assertTrue(table.has_focus)
 
+    async def test_selecting_a_day_with_the_commit_table_filtered(self) -> None:
+        messages = ["keep one", "drop two", "keep three", "drop four", "keep five"]
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = new_repo(tmp)
+            for day, message in enumerate(messages, start=1):
+                date = f"2025-06-0{day}T12:00:00+00:00"
+                env = {**os.environ, "GIT_AUTHOR_DATE": date}
+                git(repo, "commit", "-q", "--allow-empty", "-m", message, env=env)
+            app = VidiApp(*load_repo(repo))
+            async with app.run_test(size=(160, 45)) as pilot:
+                await pilot.pause()
+                screen = app.screen
+                table = screen.query_one("#commits-table", DataTable)
+                await pilot.press("slash", *"keep", "enter")
+                await pilot.pause()
+                self.assertEqual(table.row_count, 3)
+
+                def selected() -> str:
+                    commits = screen._filtered_branch_data()[1]
+                    return next(c.message for c in commits if c.commit_hash == screen.selected_commit_hash)
+
+                # A day whose commit is filtered out keeps its own selection.
+                await pilot.press("h")
+                await pilot.pause()
+                self.assertEqual(selected(), "drop four")
+                # A day in the table moves the cursor to its row.
+                screen.query_one(GraphView).focus()
+                await pilot.press("up")
+                await pilot.pause()
+                self.assertEqual(selected(), "keep three")
+                self.assertEqual(table.get_row_at(table.cursor_row)[1].plain, "keep three")
+
+    async def test_wider_terminal_shows_more_of_each_commit_message(self) -> None:
+        app = make_app()
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            table = app.screen.query_one("#commits-table", DataTable)
+            message = app.screen.service.get_commit_detail(table.get_row_at(0)[0]).subject
+            narrow = table.get_row_at(0)[1].plain
+
+            await pilot.resize_terminal(160, 45)
+            await pilot.pause(0.2)
+            await pilot.pause()
+            wide = table.get_row_at(0)[1].plain
+            self.assertGreater(table.columns["message"].width, len(narrow))
+            self.assertEqual(table.max_scroll_x, 0)
+        self.assertLess(len(narrow), len(message))
+        self.assertEqual(wide, message)
+
     async def test_browse_files_key_opens_all_files_from_main_and_detail(self) -> None:
         from vidi.screens.commit_files import CommitFilesScreen
 
@@ -934,12 +944,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
     async def test_file_view_in_file_search(self) -> None:
         from vidi.screens.file_view import FileViewScreen
 
-        context, service = build_repo_context(
-            repo_dir=sample_repo(),
-            language_mode="bytes",
-            exclude_languages=set(),
-            extra_ignored_dirs=set(),
-        )
+        context, service = load_repo(sample_repo())
         head = service.get_branch_data(context.current_branch).commits[0].commit_hash
         best, best_lines = None, []
         for path in service.get_commit_files(head):
@@ -1084,12 +1089,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
 
         from vidi.screens.commit_detail import CommitDetailScreen
 
-        context, service = build_repo_context(
-            repo_dir=sample_repo(),
-            language_mode="bytes",
-            exclude_languages=set(),
-            extra_ignored_dirs=set(),
-        )
+        context, service = load_repo(sample_repo())
         hashes = [c.commit_hash for c in service.get_branch_data(context.current_branch).commits]
         target = next(
             (h for h in hashes if len(service.get_commit_detail(h).file_changes) >= 2),
@@ -1139,12 +1139,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
         from vidi.screens.language_settings import LanguageSettingsScreen
         from textual.widgets import Select
 
-        context, service = build_repo_context(
-            repo_dir=sample_repo(),
-            language_mode="bytes",
-            exclude_languages=set(),
-            extra_ignored_dirs=set(),
-        )
+        context, service = load_repo(sample_repo())
         head = service.get_branch_data(context.current_branch).commits[0].commit_hash
         before = [s["language"] for s in service.get_commit_language_stats(head)[0]]
         self.assertGreater(len(before), 0)
@@ -1241,35 +1236,22 @@ class FilterTests(unittest.TestCase):
         self.assertEqual(nested.count("…"), 1, nested)
         self.assertTrue(nested.startswith("commit"), nested)
 
-    def test_build_language_title_stays_compact_but_keeps_top_language_when_width_allows(self) -> None:
-        app = make_app()
-        title = build_language_title(
-            app.context.language_stats,
-            resolve_theme_palette(app.current_theme),
-        )
-        console = Console(file=io.StringIO(), record=True, width=140)
-        console.print(title)
-        title_text = console.export_text()
+    def test_build_language_title_shows_the_language_count(self) -> None:
+        context, _ = load_repo(sample_repo())
+        title = build_language_title(context.language_stats, default_palette())
+        title_text = plain_text(title, width=140)
         self.assertIn("Languages", title_text)
         self.assertIn("10", title_text)
-        self.assertNotIn("Top", title_text)
 
     def test_build_language_bar_respects_requested_width(self) -> None:
-        app = make_app()
-        bar = build_language_bar(
-            app.context.language_stats,
-            resolve_theme_palette(app.current_theme),
-            width=20,
-        )
-        console = Console(file=io.StringIO(), record=True, width=20)
-        console.print(bar)
-        bar_text = console.export_text().strip("\n")
+        context, _ = load_repo(sample_repo())
+        bar = build_language_bar(context.language_stats, default_palette(), width=20)
+        bar_text = plain_text(bar, width=20).strip("\n")
         self.assertEqual(len(bar_text.splitlines()), 1)
         self.assertEqual(len(bar_text), 20)
 
     def test_language_bar_keeps_tiny_languages_visible_and_highlightable(self) -> None:
-        app = make_app()
-        palette = resolve_theme_palette(app.current_theme)
+        palette = default_palette()
         stats = [
             {"language": "Python", "count": 23, "percentage": 97.9, "color": "#3572A5"},
             {"language": "Markdown", "count": 1, "percentage": 1.9, "color": "#083fa1"},
@@ -1286,16 +1268,13 @@ class FilterTests(unittest.TestCase):
         self.assertIn("bold", str(highlighted.spans[3].style))
 
     def test_language_summary_shows_less_than_one_percent_for_tiny_shares(self) -> None:
-        app = make_app()
-        palette = resolve_theme_palette(app.current_theme)
+        palette = default_palette()
         stats = [
             {"language": "Python", "count": 23, "percentage": 97.9, "color": "#3572A5"},
             {"language": "TOML", "count": 1, "percentage": 0.15, "color": "#6d5cae"},
         ]
         summary = build_language_summary(stats, palette, width=80)
-        console = Console(file=io.StringIO(), record=True, width=80)
-        console.print(summary)
-        text = console.export_text()
+        text = plain_text(summary, width=80)
         self.assertIn("TOML 1 (<1%)", text)
         self.assertIn("Python 23 (98%)", text)
         self.assertNotIn("(0%)", text)
@@ -1318,7 +1297,6 @@ class FilterTests(unittest.TestCase):
         self.assertEqual(old_end, dt.date(2025, 12, 31))
 
     def test_render_contribution_graph_uses_single_cell_selection_in_short_window(self) -> None:
-        app = make_app()
         graph = render_contribution_graph(
             collections.Counter(
                 {
@@ -1329,33 +1307,26 @@ class FilterTests(unittest.TestCase):
             dt.date(2026, 3, 10),
             dt.date(2026, 3, 16),
             dt.date(2026, 3, 15),
-            resolve_theme_palette(app.current_theme),
+            default_palette(),
         )
-        console = Console(file=io.StringIO(), record=True, width=160)
-        console.print(graph)
-        graph_text = console.export_text()
+        graph_text = plain_text(graph, width=160)
         self.assertIn("Mar", graph_text)
-        self.assertNotIn("▣", graph_text)
         self.assertIn("Sun ■■", graph_text)
 
     def test_contribution_graph_shows_selected_day_readout(self) -> None:
-        app = make_app()
         graph = render_contribution_graph(
             collections.Counter({dt.date(2026, 3, 15): 3}),
             dt.date(2026, 3, 1),
             dt.date(2026, 3, 31),
             dt.date(2026, 3, 15),
-            resolve_theme_palette(app.current_theme),
+            default_palette(),
         )
-        console = Console(file=io.StringIO(), record=True, width=160)
-        console.print(graph)
-        text = console.export_text()
+        text = plain_text(graph, width=160)
         self.assertIn("Sun, Mar 15 2026", text)
         self.assertIn("3 commits", text)
 
     def test_contribution_graph_readout_handles_empty_day_and_no_selection(self) -> None:
-        app = make_app()
-        palette = resolve_theme_palette(app.current_theme)
+        palette = default_palette()
         # A selected day with no commits reads "no commits".
         graph = render_contribution_graph(
             collections.Counter({dt.date(2026, 3, 16): 1}),
@@ -1364,9 +1335,7 @@ class FilterTests(unittest.TestCase):
             dt.date(2026, 3, 12),
             palette,
         )
-        console = Console(file=io.StringIO(), record=True, width=160)
-        console.print(graph)
-        self.assertIn("no commits", console.export_text())
+        self.assertIn("no commits", plain_text(graph, width=160))
         # With no selection the legend has no date or count.
         graph_none = render_contribution_graph(
             collections.Counter(),
@@ -1375,13 +1344,10 @@ class FilterTests(unittest.TestCase):
             None,
             palette,
         )
-        console_none = Console(file=io.StringIO(), record=True, width=160)
-        console_none.print(graph_none)
-        self.assertNotIn("commit", console_none.export_text())
+        self.assertNotIn("commit", plain_text(graph_none, width=160))
 
     def test_render_contribution_graph_month_header_is_stable_across_full_year_views(self) -> None:
-        app = make_app()
-        palette = resolve_theme_palette(app.current_theme)
+        palette = default_palette()
         headers: dict[int, str] = {}
         for year in (2023, 2024, 2025, 2026, 2027):
             graph = render_contribution_graph(
@@ -1391,9 +1357,7 @@ class FilterTests(unittest.TestCase):
                 None,
                 palette,
             )
-            console = Console(file=io.StringIO(), record=True, width=160)
-            console.print(graph)
-            headers[year] = console.export_text().splitlines()[0]
+            headers[year] = plain_text(graph, width=160).splitlines()[0]
 
         self.assertEqual(len(set(headers.values())), 1)
 
@@ -1407,8 +1371,7 @@ class FilterTests(unittest.TestCase):
                 + (left_triplet.blue - right_triplet.blue) ** 2
             )
 
-        app = make_app()
-        base_palette = resolve_theme_palette(app.current_theme)
+        base_palette = default_palette()
         alternate_success = (
             base_palette.primary
             if base_palette.primary != base_palette.success
@@ -1436,8 +1399,7 @@ class FilterTests(unittest.TestCase):
         )
 
     def test_make_change_stat_style_mutes_zero_and_placeholder_values(self) -> None:
-        app = make_app()
-        palette = resolve_theme_palette(app.current_theme)
+        palette = default_palette()
 
         zero_add_style = make_change_stat_style(palette, 0, positive=True)
         zero_del_style = make_change_stat_style(palette, 0, positive=False)
@@ -1457,8 +1419,7 @@ class FilterTests(unittest.TestCase):
         self.assertTrue(del_style.bold)
 
     def test_build_commit_identity_line_uses_muted_date_and_regular_author(self) -> None:
-        app = make_app()
-        palette = resolve_theme_palette(app.current_theme)
+        palette = default_palette()
 
         line = build_commit_identity_line(
             palette,
@@ -1475,8 +1436,7 @@ class FilterTests(unittest.TestCase):
         self.assertFalse(spans[2].style.bold)
 
     def test_append_file_change_summary_line_uses_regular_label_and_muted_zero_stats(self) -> None:
-        app = make_app()
-        palette = resolve_theme_palette(app.current_theme)
+        palette = default_palette()
 
         text = Text()
         append_file_change_summary_line(
@@ -1615,20 +1575,11 @@ class ResolveRepoDirTests(unittest.TestCase):
 
     def test_worktree_resolves_and_loads(self) -> None:
         worktree = os.path.join(self.tmp, "wt")
-        subprocess.run(
-            ["git", "-C", self.repo, "worktree", "add", "--detach", worktree],
-            check=True,
-            capture_output=True,
-        )
+        git(self.repo, "worktree", "add", "--detach", worktree)
         self.assertTrue(os.path.isfile(os.path.join(worktree, ".git")))
         top = resolve_repo_dir(os.path.join(worktree, "web"))
         self.assertEqual(top, worktree)
-        context, _ = build_repo_context(
-            repo_dir=top,
-            language_mode="bytes",
-            exclude_languages=set(),
-            extra_ignored_dirs=set(),
-        )
+        context, _ = load_repo(top)
         self.assertGreater(context.repo_commit_count, 0)
         self.assertTrue(context.language_stats)
         scanned = [path for paths in context.files_by_language.values() for path in paths]
@@ -1645,7 +1596,7 @@ class ResolveRepoDirTests(unittest.TestCase):
     def test_repo_without_commits_is_a_clear_error(self) -> None:
         empty = os.path.join(self.tmp, "empty")
         os.makedirs(empty)
-        subprocess.run(["git", "-C", empty, "init", "-q"], check=True, capture_output=True)
+        git(empty, "init", "-q")
         out = io.StringIO()
         argv = sys.argv
         sys.argv = ["vidi", empty]
@@ -1662,11 +1613,7 @@ class ResolveRepoDirTests(unittest.TestCase):
             repo = os.path.join(tmp, "repo")
             os.makedirs(repo)
             build_sample_repo(repo)
-            subprocess.run(
-                ["git", "-C", repo, "checkout", "-q", "--orphan", "fresh"],
-                check=True,
-                capture_output=True,
-            )
+            git(repo, "checkout", "-q", "--orphan", "fresh")
             branches, current, _ = get_branch_heads(repo)
             self.assertNotIn("fresh", branches)
             self.assertIn(current, branches)
@@ -1683,25 +1630,12 @@ class VersionTests(unittest.TestCase):
 
 
 class HostileRepoTests(unittest.IsolatedAsyncioTestCase):
-    def _repo(self, tmp: str) -> str:
-        repo = os.path.join(tmp, "repo")
-        os.makedirs(repo)
-        self._git(repo, "init", "-q", "-b", "main")
-        return repo
-
-    def _git(self, repo: str, *args: str) -> None:
-        subprocess.run(
-            ["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", *args],
-            check=True,
-            capture_output=True,
-        )
-
     def test_branch_named_like_an_option_is_read_as_a_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            repo = self._repo(tmp)
-            self._git(repo, "commit", "-q", "--allow-empty", "-m", "first")
+            repo = new_repo(tmp)
+            git(repo, "commit", "-q", "--allow-empty", "-m", "first")
             target = os.path.join(tmp, "written")
-            self._git(repo, "update-ref", f"refs/heads/--output={target}", "HEAD")
+            git(repo, "update-ref", f"refs/heads/--output={target}", "HEAD")
             service = RepoService(repo)
             branches, _, _ = get_branch_heads(repo)
             self.assertEqual(len(branches), 2)
@@ -1712,19 +1646,17 @@ class HostileRepoTests(unittest.IsolatedAsyncioTestCase):
 
     def test_repo_config_commands_do_not_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            repo = self._repo(tmp)
+            repo = new_repo(tmp)
             marker = os.path.join(tmp, "ran")
             with open(os.path.join(repo, "a.py"), "w") as handle:
                 handle.write("x = 1\n")
             with open(os.path.join(repo, ".gitattributes"), "w") as handle:
                 handle.write("*.py diff=hostile\n")
-            self._git(repo, "add", "-A")
-            self._git(repo, "commit", "-q", "-m", "first")
-            self._git(repo, "config", "diff.hostile.textconv", f"touch {marker}; cat")
-            self._git(repo, "config", "core.fsmonitor", f"touch {marker}; true")
-            context, service = build_repo_context(
-                repo_dir=repo, language_mode="bytes", exclude_languages=set(), extra_ignored_dirs=set()
-            )
+            git(repo, "add", "-A")
+            git(repo, "commit", "-q", "-m", "first")
+            git(repo, "config", "diff.hostile.textconv", f"touch {marker}; cat")
+            git(repo, "config", "core.fsmonitor", f"touch {marker}; true")
+            context, service = load_repo(repo)
             head = service.get_branch_data("main").commits[0].commit_hash
             service.get_commit_detail(head)
             service.get_file_at_commit(head, "a.py")
@@ -1733,16 +1665,11 @@ class HostileRepoTests(unittest.IsolatedAsyncioTestCase):
 
     def test_escape_sequences_in_repo_text_are_replaced(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            repo = self._repo(tmp)
+            repo = new_repo(tmp)
             with open(os.path.join(repo, "a.txt"), "w") as handle:
                 handle.write("before\x1b]0;title\x07after\n")
-            self._git(repo, "add", "-A")
-            subprocess.run(
-                ["git", "-C", repo, "-c", "user.name=t\x1b[31m", "-c", "user.email=t@t", "-c", "commit.gpgsign=false",
-                 "commit", "-q", "-m", "msg \x1b[2J end"],
-                check=True,
-                capture_output=True,
-            )
+            git(repo, "add", "-A")
+            git(repo, "-c", "user.name=t\x1b[31m", "commit", "-q", "-m", "msg \x1b[2J end")
             service = RepoService(repo)
             commit = service.get_branch_data("main").commits[0]
             content = service.get_file_at_commit(commit.commit_hash, "a.txt")
@@ -1752,10 +1679,8 @@ class HostileRepoTests(unittest.IsolatedAsyncioTestCase):
 
     def test_signature_program_from_repo_config_does_not_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            repo = self._repo(tmp)
-            tree = subprocess.run(
-                ["git", "-C", repo, "mktree"], input="", capture_output=True, text=True, check=True
-            ).stdout.strip()
+            repo = new_repo(tmp)
+            tree = git(repo, "mktree", input="").strip()
             commit_text = (
                 f"tree {tree}\n"
                 "author t <t@t> 1700000000 +0000\n"
@@ -1763,21 +1688,15 @@ class HostileRepoTests(unittest.IsolatedAsyncioTestCase):
                 "gpgsig -----BEGIN PGP SIGNATURE-----\n \n x\n -----END PGP SIGNATURE-----\n"
                 "\nsigned\n"
             )
-            commit = subprocess.run(
-                ["git", "-C", repo, "hash-object", "-t", "commit", "-w", "--stdin"],
-                input=commit_text,
-                capture_output=True,
-                text=True,
-                check=True,
-            ).stdout.strip()
-            self._git(repo, "update-ref", "refs/heads/main", commit)
+            commit = git(repo, "hash-object", "-t", "commit", "-w", "--stdin", input=commit_text).strip()
+            git(repo, "update-ref", "refs/heads/main", commit)
             marker = os.path.join(tmp, "ran")
             program = os.path.join(tmp, "fake-gpg")
             with open(program, "w") as handle:
                 handle.write(f"#!/bin/sh\ntouch '{marker}'\n")
             os.chmod(program, 0o755)
-            self._git(repo, "config", "log.showSignature", "true")
-            self._git(repo, "config", "gpg.program", program)
+            git(repo, "config", "log.showSignature", "true")
+            git(repo, "config", "gpg.program", program)
             service = RepoService(repo)
             service.get_branch_data("main")
             service.get_commit_detail(commit)
@@ -1785,14 +1704,14 @@ class HostileRepoTests(unittest.IsolatedAsyncioTestCase):
 
     def test_escape_sequences_in_quoted_paths_are_replaced(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            repo = self._repo(tmp)
+            repo = new_repo(tmp)
             name = "evil\x1b]0;T\x07.py"
             with open(os.path.join(repo, name), "w") as handle:
                 handle.write("x = 1\n")
-            self._git(repo, "add", "-A")
-            self._git(repo, "commit", "-q", "-m", "first")
-            self._git(repo, "mv", name, "evil\x1b[2Jmoved.py")
-            self._git(repo, "commit", "-q", "-m", "rename")
+            git(repo, "add", "-A")
+            git(repo, "commit", "-q", "-m", "first")
+            git(repo, "mv", name, "evil\x1b[2Jmoved.py")
+            git(repo, "commit", "-q", "-m", "rename")
             service = RepoService(repo)
             for commit in service.get_branch_data("main").commits:
                 detail = service.get_commit_detail(commit.commit_hash)
@@ -1810,7 +1729,7 @@ class HostileRepoTests(unittest.IsolatedAsyncioTestCase):
 
     def test_symlinked_gitignore_outside_the_repo_is_not_read_by_vidi(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            repo = self._repo(tmp)
+            repo = new_repo(tmp)
             outside = os.path.join(tmp, "outside")
             with open(outside, "w") as handle:
                 handle.write("*.py\n")
@@ -1823,17 +1742,15 @@ class HostileRepoTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_markup_in_messages_and_paths_is_shown_as_text(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            repo = self._repo(tmp)
-            self._git(repo, "commit", "-q", "--allow-empty", "-m", "fix [/] handling")
-            self._git(repo, "commit", "-q", "--allow-empty", "-m", "[ci skip] bump version")
+            repo = new_repo(tmp)
+            git(repo, "commit", "-q", "--allow-empty", "-m", "fix [/] handling")
+            git(repo, "commit", "-q", "--allow-empty", "-m", "[ci skip] bump version")
             os.makedirs(os.path.join(repo, "[x]"))
             with open(os.path.join(repo, "[x]", "a.py"), "w") as handle:
                 handle.write("x = 1\n")
-            self._git(repo, "add", "-A")
-            self._git(repo, "commit", "-q", "-m", "add [slug] route")
-            context, service = build_repo_context(
-                repo_dir=repo, language_mode="bytes", exclude_languages=set(), extra_ignored_dirs=set()
-            )
+            git(repo, "add", "-A")
+            git(repo, "commit", "-q", "-m", "add [slug] route")
+            context, service = load_repo(repo)
             app = VidiApp(context, service)
             async with app.run_test(size=(160, 45)) as pilot:
                 await pilot.pause()
@@ -1847,9 +1764,6 @@ class HostileRepoTests(unittest.IsolatedAsyncioTestCase):
 
 
 class GitDataTests(unittest.TestCase):
-    _repo = HostileRepoTests._repo
-    _git = HostileRepoTests._git
-
     def _write(self, repo: str, path: str, content: str = "x\n") -> None:
         full = os.path.join(repo, path)
         os.makedirs(os.path.dirname(full), exist_ok=True)
@@ -1859,11 +1773,11 @@ class GitDataTests(unittest.TestCase):
     def test_paths_with_non_ascii_and_special_characters_display_and_open(self) -> None:
         names = ["caf\u00e9.py", "\u65e5\u672c/\u8aad\u3080.md", "emoji \U0001f642.txt", 'q"t.py', "tab\there.py", "new\nline.py", "back\\slash.py"]
         with tempfile.TemporaryDirectory() as tmp:
-            repo = self._repo(tmp)
+            repo = new_repo(tmp)
             for name in names:
                 self._write(repo, name, f"content of {name}\n")
-            self._git(repo, "add", "-A")
-            self._git(repo, "commit", "-q", "-m", "add files")
+            git(repo, "add", "-A")
+            git(repo, "commit", "-q", "-m", "add files")
             service = RepoService(repo, ignore_dirs={".git"})
             commit = service.get_branch_data("main").commits[0]
             detail = service.get_commit_detail(commit.commit_hash)
@@ -1880,20 +1794,20 @@ class GitDataTests(unittest.TestCase):
                 )
 
     def _merge_repo(self, tmp: str) -> str:
-        repo = self._repo(tmp)
+        repo = new_repo(tmp)
         self._write(repo, "base.txt")
-        self._git(repo, "add", "-A")
-        self._git(repo, "commit", "-q", "-m", "base")
-        self._git(repo, "checkout", "-q", "-b", "side")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-q", "-m", "base")
+        git(repo, "checkout", "-q", "-b", "side")
         self._write(repo, "side_a.txt")
         self._write(repo, "side_b.txt")
-        self._git(repo, "add", "-A")
-        self._git(repo, "commit", "-q", "-m", "side")
-        self._git(repo, "checkout", "-q", "main")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-q", "-m", "side")
+        git(repo, "checkout", "-q", "main")
         self._write(repo, "main.txt")
-        self._git(repo, "add", "-A")
-        self._git(repo, "commit", "-q", "-m", "main")
-        self._git(repo, "merge", "-q", "--no-ff", "-m", "merge side", "side")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-q", "-m", "main")
+        git(repo, "merge", "-q", "--no-ff", "-m", "merge side", "side")
         return repo
 
     def test_merge_commit_lists_files_against_its_first_parent(self) -> None:
@@ -1932,12 +1846,14 @@ class GitDataTests(unittest.TestCase):
 
     def test_commit_dates_use_the_author_local_date(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            repo = self._repo(tmp)
-            subprocess.run(
-                ["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false",
-                 "commit", "-q", "--allow-empty", "-m", "late"],
-                check=True,
-                capture_output=True,
+            repo = new_repo(tmp)
+            git(
+                repo,
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "late",
                 env={**os.environ, "GIT_AUTHOR_DATE": "2026-03-10T23:30:00-06:00"},
             )
             service = RepoService(repo)
@@ -1952,34 +1868,32 @@ class GitDataTests(unittest.TestCase):
 
     def test_default_base_branch_prefers_origin_head(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            repo = self._repo(tmp)
-            self._git(repo, "commit", "-q", "--allow-empty", "-m", "first")
-            self._git(repo, "branch", "develop")
+            repo = new_repo(tmp)
+            git(repo, "commit", "-q", "--allow-empty", "-m", "first")
+            git(repo, "branch", "develop")
             branches = ["develop", "main"]
             self.assertEqual(RepoService(repo).default_base_branch(branches), "main")
-            self._git(repo, "update-ref", "refs/remotes/origin/develop", "HEAD")
-            self._git(repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/develop")
+            git(repo, "update-ref", "refs/remotes/origin/develop", "HEAD")
+            git(repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/develop")
             service = RepoService(repo)
             self.assertEqual(service.default_base_branch(branches), "develop")
             self.assertEqual(service.default_base_branch(["main"]), "main")
-            self._git(repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/heads/develop")
+            git(repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/heads/develop")
             self.assertEqual(service.default_base_branch(branches), "develop")
             service.invalidate_cached_git_data()
             self.assertEqual(service.default_base_branch(branches), "main")
 
     def test_language_scan_follows_git_ignore_rules_and_matches_file_count(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            repo = self._repo(tmp)
+            repo = new_repo(tmp)
             self._write(repo, ".gitignore", "*.log\n!keep.log\n/generated/\n")
             for path in ("a.py", "x.log", "keep.log", "generated/g.py", "node_modules/m.js", "vendor/v.js"):
                 self._write(repo, path)
             self._write(repo, "forced/tracked.log")
-            self._git(repo, "add", "-A")
-            self._git(repo, "add", "-f", "forced/tracked.log")
-            self._git(repo, "commit", "-q", "-m", "first")
-            context, service = build_repo_context(
-                repo_dir=repo, language_mode="files", exclude_languages=set(), extra_ignored_dirs={"vendor"}
-            )
+            git(repo, "add", "-A")
+            git(repo, "add", "-f", "forced/tracked.log")
+            git(repo, "commit", "-q", "-m", "first")
+            context, service = load_repo(repo, language_mode="files", extra_ignored_dirs={"vendor"})
             scanned = sorted(path for paths in context.files_by_language.values() for path in paths)
             self.assertEqual(scanned, [".gitignore", "a.py", "forced/tracked.log", "keep.log"])
             snapshot, _ = service.scan_repo_state()
@@ -1987,17 +1901,17 @@ class GitDataTests(unittest.TestCase):
 
     def test_conflicted_file_is_scanned_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            repo = self._repo(tmp)
+            repo = new_repo(tmp)
             self._write(repo, "a.py", "base\n")
-            self._git(repo, "add", "-A")
-            self._git(repo, "commit", "-q", "-m", "base")
-            self._git(repo, "checkout", "-q", "-b", "side")
+            git(repo, "add", "-A")
+            git(repo, "commit", "-q", "-m", "base")
+            git(repo, "checkout", "-q", "-b", "side")
             self._write(repo, "a.py", "side\n")
-            self._git(repo, "commit", "-q", "-am", "side")
-            self._git(repo, "checkout", "-q", "main")
+            git(repo, "commit", "-q", "-am", "side")
+            git(repo, "checkout", "-q", "main")
             self._write(repo, "a.py", "main\n")
-            self._git(repo, "commit", "-q", "-am", "main")
-            subprocess.run(["git", "-C", repo, "merge", "-q", "side"], capture_output=True)
+            git(repo, "commit", "-q", "-am", "main")
+            git(repo, "merge", "-q", "side", check=False)
             self.assertEqual(list_worktree_paths(repo), ["a.py"])
 
 

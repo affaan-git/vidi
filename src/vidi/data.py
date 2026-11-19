@@ -187,6 +187,10 @@ def section_for_change(
     )
 
 
+def _is_binary(change: CommitFileChange) -> bool:
+    return change.additions is None or change.deletions is None
+
+
 def display_label_for_change(
     change: CommitFileChange,
     section: CommitPatchSection | None,
@@ -195,7 +199,7 @@ def display_label_for_change(
         label = f"{section.old_path} -> {section.new_path}"
     else:
         label = change.path
-    if change.additions is None or change.deletions is None:
+    if _is_binary(change):
         label += " [binary]"
     return label
 
@@ -209,7 +213,7 @@ def compact_label_for_change(
     if len(full_label) <= max_len:
         return full_label
 
-    suffix = " [binary]" if change.additions is None or change.deletions is None else ""
+    suffix = " [binary]" if _is_binary(change) else ""
     label_budget = max(max_len - len(suffix), 4)
     if section and section.is_rename:
         arrow = " -> "

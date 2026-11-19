@@ -107,11 +107,3 @@ def save_language_settings(
             "ignore_dirs": list(ignore_dirs),
         }
     )
-
-
-def reset() -> None:
-    """Forget saved preferences."""
-    try:
-        CONFIG_PATH.unlink()
-    except OSError:
-        pass

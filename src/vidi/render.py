@@ -6,6 +6,7 @@ import collections
 import datetime as dt
 
 from rich.console import Group
+from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 from textual.color import Color
@@ -67,6 +68,13 @@ def render_contribution_graph(
             return month_offsets[2] - 1
         return month_offsets[day.month - 1] + day.day - 1
 
+    def header_column(day: dt.date) -> int:
+        if is_full_year:
+            fraction = day_offset(day) / (month_offsets[-1] - 1)
+        else:
+            fraction = (day - start_date).days / total_days
+        return round(fraction * (header_width - 1))
+
     month_cursor = dt.date(start_date.year, start_date.month, 1)
     while month_cursor <= end_date:
         next_month = (
@@ -78,22 +86,8 @@ def render_contribution_graph(
         visible_start = max(month_cursor, start_date)
         visible_end = min(month_end, end_date)
         label = month_cursor.strftime("%b")
-        if is_full_year:
-            projected_start = round(
-                (day_offset(visible_start) / (month_offsets[-1] - 1))
-                * (header_width - 1)
-            )
-            projected_end = round(
-                (day_offset(visible_end) / (month_offsets[-1] - 1))
-                * (header_width - 1)
-            )
-        else:
-            projected_start = round(
-                ((visible_start - start_date).days / total_days) * (header_width - 1)
-            )
-            projected_end = round(
-                ((visible_end - start_date).days / total_days) * (header_width - 1)
-            )
+        projected_start = header_column(visible_start)
+        projected_end = header_column(visible_end)
         span_width = max(1, projected_end - projected_start + 1)
         if span_width >= len(label):
             index = projected_start + (span_width - len(label)) // 2
@@ -247,12 +241,28 @@ def _language_metric(item: LanguageStat) -> str:
     return f"{int(item.get('count', 0))} ({_format_share(float(item['percentage']))})"
 
 
-def _language_entry_text(item: LanguageStat, label_width: int) -> str:
-    return (
-        "● "
-        + truncate_middle(str(item["language"]), label_width)
-        + " "
-        + _language_metric(item)
+def _language_entry(
+    item: LanguageStat,
+    label_width: int,
+    palette: ThemePalette | None = None,
+    highlighted: bool = False,
+) -> Text:
+    """One legend entry, unstyled without a palette."""
+    if palette is None:
+        label_style = gap_style = metric_style = Style()
+    else:
+        label_style = make_style(
+            palette.primary if highlighted else palette.foreground, bold=highlighted
+        )
+        gap_style = make_style(palette.muted)
+        metric_style = make_style(
+            palette.primary if highlighted else palette.muted, bold=highlighted
+        )
+    return Text.assemble(
+        ("● ", str(item["color"])),
+        (truncate_middle(str(item["language"]), label_width), label_style),
+        (" ", gap_style),
+        (_language_metric(item), metric_style),
     )
 
 
@@ -263,7 +273,7 @@ def language_legend_rows(language_stats: list[LanguageStat], width: int) -> list
     current: list[int] = []
     current_width = 0
     for index, item in enumerate(language_stats):
-        entry_width = len(_language_entry_text(item, label_width))
+        entry_width = len(_language_entry(item, label_width).plain)
         if current and current_width + LANGUAGE_ENTRY_SEPARATOR + entry_width > width:
             rows.append(current)
             current = []
@@ -290,7 +300,7 @@ def language_index_at(
     for position, index in enumerate(rows[row]):
         if position:
             x += LANGUAGE_ENTRY_SEPARATOR
-        entry_width = len(_language_entry_text(language_stats[index], label_width))
+        entry_width = len(_language_entry(language_stats[index], label_width).plain)
         if x <= column < x + entry_width:
             return index
         x += entry_width
@@ -313,28 +323,17 @@ def build_language_summary(
         return Group(Text("No language data", style=make_style(palette.muted)))
 
     label_width = _language_label_width(width)
-
-    def append_entry(line: Text, index: int) -> None:
-        item = language_stats[index]
-        highlighted = index == highlighted_index
-        line.append("● ", style=str(item["color"]))
-        line.append(
-            truncate_middle(str(item["language"]), label_width),
-            style=make_style(palette.primary if highlighted else palette.foreground, bold=highlighted),
-        )
-        line.append(" ", style=make_style(palette.muted))
-        line.append(
-            _language_metric(item),
-            style=make_style(palette.primary if highlighted else palette.muted, bold=highlighted),
-        )
-
     lines: list[Text] = []
     for row in language_legend_rows(language_stats, width):
         line = Text()
         for position, index in enumerate(row):
             if position:
                 line.append(" " * LANGUAGE_ENTRY_SEPARATOR, style=make_style(palette.muted))
-            append_entry(line, index)
+            line.append_text(
+                _language_entry(
+                    language_stats[index], label_width, palette, index == highlighted_index
+                )
+            )
         lines.append(line)
     return Group(*lines)
 

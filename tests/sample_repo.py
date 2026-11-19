@@ -6,11 +6,17 @@ and pinned dates.
 from __future__ import annotations
 
 import atexit
+import contextlib
 import functools
 import os
 import shutil
 import subprocess
 import tempfile
+from dataclasses import replace
+from pathlib import Path
+
+from vidi import config
+from vidi.repository import build_initial_repo_context
 
 _IDENTITY = "Example User"
 _EMAIL = "example@example.com"
@@ -116,3 +122,41 @@ def sample_repo() -> str:
     atexit.register(shutil.rmtree, path, ignore_errors=True)
     build_sample_repo(path)
     return path
+
+
+def git(repo, *args, input=None, env=None, check=True):
+    """Run git in a test repo with a fixed identity and signing off, and return its output."""
+    return subprocess.run(
+        ['git', '-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', *args],
+        input=input, env=env, check=check, capture_output=True, text=True,
+    ).stdout
+
+
+def new_repo(parent):
+    """An empty repo on branch main in a `repo` folder inside parent."""
+    repo = os.path.join(parent, 'repo')
+    os.makedirs(repo)
+    git(repo, 'init', '-q', '-b', 'main')
+    return repo
+
+
+@contextlib.contextmanager
+def temp_config():
+    """Point the config module at an empty temporary folder."""
+    orig_dir, orig_path = config.CONFIG_DIR, config.CONFIG_PATH
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            config.CONFIG_DIR = Path(tmp)
+            config.CONFIG_PATH = config.CONFIG_DIR / 'config.json'
+            yield
+    finally:
+        config.CONFIG_DIR, config.CONFIG_PATH = orig_dir, orig_path
+
+
+def load_repo(repo_dir, *, language_mode='bytes', extra_ignored_dirs=()):
+    """The context and service for a repo with the language scan and the current
+    branch's history already loaded."""
+    _, service = build_initial_repo_context(repo_dir, language_mode, set(), set(extra_ignored_dirs))
+    context = service.refresh_context()
+    branch_data = service.get_branch_data(context.current_branch)
+    return replace(context, initial_branch_data=branch_data), service

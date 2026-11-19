@@ -28,6 +28,14 @@ def build_commit_identity_line(
     return text
 
 
+def change_stat_labels(additions: int | None, deletions: int | None) -> tuple[str, str]:
+    """The "+adds" and "-dels" labels, with "+-" and "--" for a binary file."""
+    return (
+        "+-" if additions is None else f"+{additions}",
+        "--" if deletions is None else f"-{deletions}",
+    )
+
+
 def append_file_change_summary_line(
     text: Text,
     palette: ThemePalette,
@@ -35,8 +43,7 @@ def append_file_change_summary_line(
     additions: int | None,
     deletions: int | None,
 ) -> None:
-    additions_text = "+-" if additions is None else f"+{additions}"
-    deletions_text = "--" if deletions is None else f"-{deletions}"
+    additions_text, deletions_text = change_stat_labels(additions, deletions)
     text.append("  - ", style=make_style(palette.muted))
     text.append(label, style=make_style(palette.foreground))
     text.append("  ", style=make_style(palette.muted))

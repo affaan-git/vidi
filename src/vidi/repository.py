@@ -6,7 +6,7 @@ import os
 import subprocess
 import time
 from functools import lru_cache
-from pathlib import Path
+from typing import Iterator
 
 from .data import parse_patch_sections
 from .models import (
@@ -245,6 +245,25 @@ def list_worktree_paths(repo_dir: str) -> list[str]:
     return list(dict.fromkeys(path for path in output.split("\0") if path))
 
 
+def _in_ignored_dir(path: str, ignore_dirs: set[str]) -> bool:
+    return any(component in ignore_dirs for component in path.split("/"))
+
+
+def _scanned_files(
+    repo_dir: str, exclude_languages: set[str], ignore_dirs: set[str]
+) -> Iterator[tuple[str, str, str]]:
+    """The relative path, full path, and language of each work-tree file the scan counts."""
+    for rel_path in list_worktree_paths(repo_dir):
+        if _in_ignored_dir(rel_path, ignore_dirs):
+            continue
+        full_path = os.path.join(repo_dir, rel_path)
+        if not os.path.isfile(full_path):
+            continue
+        language = detect_language(rel_path, EXTENSION_TO_LANGUAGE)
+        if language not in exclude_languages:
+            yield rel_path, full_path, language
+
+
 def scan_languages(
     repo_dir: str,
     language_mode: str,
@@ -253,17 +272,7 @@ def scan_languages(
 ) -> tuple[list[LanguageStat], dict[str, list[str]]]:
     totals: dict[str, int] = {}
     files_by_language: dict[str, list[str]] = {}
-    total_value = 0
-
-    for rel_path in list_worktree_paths(repo_dir):
-        if any(component in ignore_dirs for component in rel_path.split("/")):
-            continue
-        full_path = os.path.join(repo_dir, rel_path)
-        if not os.path.isfile(full_path):
-            continue
-        language = detect_language(rel_path, EXTENSION_TO_LANGUAGE)
-        if language in exclude_languages:
-            continue
+    for rel_path, full_path, language in _scanned_files(repo_dir, exclude_languages, ignore_dirs):
         files_by_language.setdefault(language, []).append(rel_path)
         if language_mode == "files":
             value = 1
@@ -273,8 +282,14 @@ def scan_languages(
             except OSError:
                 value = 0
         totals[language] = totals.get(language, 0) + value
-        total_value += value
+    return _language_stats(totals, files_by_language)
 
+
+def _language_stats(
+    totals: dict[str, int], files_by_language: dict[str, list[str]]
+) -> tuple[list[LanguageStat], dict[str, list[str]]]:
+    """Per-language shares of the totals, largest first, and the sorted file lists."""
+    total_value = sum(totals.values())
     stats: list[LanguageStat] = []
     for language, value in totals.items():
         percentage = (value / total_value * 100.0) if total_value else 0.0
@@ -283,6 +298,7 @@ def scan_languages(
                 "language": language,
                 "value": value,
                 "percentage": percentage,
+                "count": len(files_by_language[language]),
                 "color": LANGUAGE_COLORS.get(language, random_color(language)),
             }
         )
@@ -292,45 +308,30 @@ def scan_languages(
     return stats, files_by_language
 
 
-def _resolve_ignore_dirs(extra_ignored_dirs: set[str]) -> set[str]:
-    return DEFAULT_IGNORED_DIRS | set(extra_ignored_dirs)
+def _repo_commit_count(repo_dir: str) -> int:
+    return int(run_git(repo_dir, ["rev-list", "--all", "--count"]).strip() or "0")
 
 
-def build_repo_context(
+def _repo_context(
     repo_dir: str,
-    language_mode: str,
-    exclude_languages: set[str],
-    extra_ignored_dirs: set[str],
-) -> tuple[RepoContext, "RepoService"]:
+    language_stats: list[LanguageStat],
+    files_by_language: dict[str, list[str]],
+) -> RepoContext:
     branches, current_branch, branch_heads = get_branch_heads(repo_dir)
-    ignore_dirs = _resolve_ignore_dirs(extra_ignored_dirs)
-    language_stats, files_by_language = scan_languages(
-        repo_dir,
-        language_mode,
-        exclude_languages,
-        ignore_dirs,
-    )
-    scanned_file_count = sum(len(files) for files in files_by_language.values())
-    service = RepoService(
-        repo_dir,
-        language_mode=language_mode,
-        exclude_languages=exclude_languages,
-        ignore_dirs=ignore_dirs,
-        extra_ignored_dirs=extra_ignored_dirs,
-        initial_scanned_file_count=scanned_file_count,
-    )
-    context = RepoContext(
+    return RepoContext(
         repo_dir=repo_dir,
         project_name=os.path.basename(os.path.abspath(repo_dir)),
-        repo_commit_count=int(run_git(repo_dir, ["rev-list", "--all", "--count"]).strip() or "0"),
+        repo_commit_count=_repo_commit_count(repo_dir),
         branches=branches,
         branch_heads=tuple(sorted(branch_heads.items())),
         current_branch=current_branch,
         language_stats=language_stats,
         files_by_language=files_by_language,
-        initial_branch_data=service.get_branch_data(current_branch),
     )
-    return context, service
+
+
+def _resolve_ignore_dirs(extra_ignored_dirs: set[str]) -> set[str]:
+    return DEFAULT_IGNORED_DIRS | set(extra_ignored_dirs)
 
 
 def build_initial_repo_context(
@@ -339,26 +340,13 @@ def build_initial_repo_context(
     exclude_languages: set[str],
     extra_ignored_dirs: set[str],
 ) -> tuple[RepoContext, "RepoService"]:
-    branches, current_branch, branch_heads = get_branch_heads(repo_dir)
-    ignore_dirs = _resolve_ignore_dirs(extra_ignored_dirs)
-    context = RepoContext(
-        repo_dir=repo_dir,
-        project_name=os.path.basename(os.path.abspath(repo_dir)),
-        repo_commit_count=int(run_git(repo_dir, ["rev-list", "--all", "--count"]).strip() or "0"),
-        branches=branches,
-        branch_heads=tuple(sorted(branch_heads.items())),
-        current_branch=current_branch,
-        language_stats=[],
-        files_by_language={},
-        initial_branch_data=None,
-    )
-    return context, RepoService(
+    """The branch and commit counts without the language scan or any branch history."""
+    return _repo_context(repo_dir, [], {}), RepoService(
         repo_dir,
         language_mode=language_mode,
         exclude_languages=exclude_languages,
-        ignore_dirs=ignore_dirs,
+        ignore_dirs=_resolve_ignore_dirs(extra_ignored_dirs),
         extra_ignored_dirs=extra_ignored_dirs,
-        initial_scanned_file_count=None,
     )
 
 
@@ -373,7 +361,6 @@ class RepoService:
         exclude_languages: set[str] | None = None,
         ignore_dirs: set[str] | None = None,
         extra_ignored_dirs: set[str] | None = None,
-        initial_scanned_file_count: int | None = None,
     ):
         self.repo_dir = repo_dir
         self.language_mode = language_mode
@@ -381,7 +368,7 @@ class RepoService:
         self.ignore_dirs = set(ignore_dirs or set())
         # The user-supplied extras alone, without the defaults.
         self.extra_ignored_dirs = set(extra_ignored_dirs or set())
-        self._cached_scanned_file_count = initial_scanned_file_count
+        self._cached_scanned_file_count: int | None = None
         self._origin_head: str | None = None
         # Per-instance caches. A class-level lru_cache would keep every service alive.
         self.get_branch_data = lru_cache(maxsize=64)(self._branch_data)
@@ -409,6 +396,11 @@ class RepoService:
         except (RuntimeError, ValueError):
             return (0, 0)
         return (ahead, behind)
+
+    def trunk_divergence(self, branch: str, branches: list[str]) -> tuple[int, int]:
+        """Commits `branch` is ahead of and behind the default branch."""
+        base = self.default_base_branch(branches)
+        return self.get_branch_divergence(branch, base) if base else (0, 0)
 
     def default_base_branch(self, branches: list[str]) -> str | None:
         """The trunk to measure branches against, or None if there is none.
@@ -447,9 +439,7 @@ class RepoService:
         self.get_commit_language_stats.cache_clear()
         self.get_commit_files.cache_clear()
         # Recount the header file count with the new excludes.
-        self._cached_scanned_file_count = self._count_scanned_paths(
-            self._list_scanned_paths()
-        )
+        self._cached_scanned_file_count = self._count_scanned_files()
 
     def _commit_language_stats(
         self, commit_hash: str
@@ -459,7 +449,6 @@ class RepoService:
         output = run_git(self.repo_dir, ["ls-tree", "-r", "-l", "-z", commit_hash])
         totals: dict[str, int] = {}
         files_by_language: dict[str, list[str]] = {}
-        total_value = 0
         for record in output.split("\0"):
             meta, _, path = record.partition("\t")
             if not path:
@@ -467,9 +456,9 @@ class RepoService:
             parts = meta.split()
             if len(parts) < 4 or parts[1] != "blob":
                 continue
-            if any(component in self.ignore_dirs for component in path.split("/")):
+            if _in_ignored_dir(path, self.ignore_dirs):
                 continue
-            language = detect_language(os.path.basename(path), EXTENSION_TO_LANGUAGE)
+            language = detect_language(path, EXTENSION_TO_LANGUAGE)
             if language in self.exclude_languages:
                 continue
             files_by_language.setdefault(language, []).append(path)
@@ -481,34 +470,13 @@ class RepoService:
                 except ValueError:
                     value = 0
             totals[language] = totals.get(language, 0) + value
-            total_value += value
-
-        stats: list[LanguageStat] = []
-        for language, value in totals.items():
-            percentage = (value / total_value * 100.0) if total_value else 0.0
-            stats.append(
-                {
-                    "language": language,
-                    "value": value,
-                    "percentage": percentage,
-                    "count": len(files_by_language[language]),
-                    "color": LANGUAGE_COLORS.get(language, random_color(language)),
-                }
-            )
-        stats.sort(key=lambda item: float(item["percentage"]), reverse=True)
-        for language in files_by_language:
-            files_by_language[language].sort()
-        return stats, files_by_language
+        return _language_stats(totals, files_by_language)
 
     def _commit_files(self, commit_hash: str) -> list[str]:
         """Every file in the tree at a commit, sorted and without ignored directories."""
         output = run_git(self.repo_dir, ["ls-tree", "-r", "--name-only", "-z", commit_hash])
-        files = [
-            path
-            for path in output.split("\0")
-            if path and not any(component in self.ignore_dirs for component in path.split("/"))
-        ]
-        return sorted(files)
+        paths = (path for path in output.split("\0") if path)
+        return sorted(path for path in paths if not _in_ignored_dir(path, self.ignore_dirs))
 
     def get_cached_scanned_file_count(self) -> int | None:
         return self._cached_scanned_file_count
@@ -529,32 +497,15 @@ class RepoService:
             return None
         return None if "\x00" in content else content
 
-    def _list_scanned_paths(self) -> list[str]:
-        return list_worktree_paths(self.repo_dir)
-
-    def _count_scanned_paths(self, paths: list[str]) -> int:
-        count = 0
-        repo_root = Path(self.repo_dir)
-        for raw_path in paths:
-            path = Path(raw_path)
-            if any(part in self.ignore_dirs for part in path.parts):
-                continue
-            full_path = repo_root / path
-            if not full_path.is_file():
-                continue
-            language = detect_language(raw_path, EXTENSION_TO_LANGUAGE)
-            if language in self.exclude_languages:
-                continue
-            count += 1
-        return count
+    def _count_scanned_files(self) -> int:
+        files = _scanned_files(self.repo_dir, self.exclude_languages, self.ignore_dirs)
+        return sum(1 for _ in files)
 
     def scan_repo_state(self) -> tuple[RepoScanSnapshot, float]:
         started = time.perf_counter()
         branches, current_branch, branch_heads = get_branch_heads(self.repo_dir)
-        repo_commit_count = int(
-            run_git(self.repo_dir, ["rev-list", "--all", "--count"]).strip() or "0"
-        )
-        scanned_file_count = self._count_scanned_paths(self._list_scanned_paths())
+        repo_commit_count = _repo_commit_count(self.repo_dir)
+        scanned_file_count = self._count_scanned_files()
         self._cached_scanned_file_count = scanned_file_count
         snapshot = RepoScanSnapshot(
             branch_heads=tuple(sorted(branch_heads.items())),
@@ -565,7 +516,6 @@ class RepoService:
         return snapshot, time.perf_counter() - started
 
     def refresh_context(self) -> RepoContext:
-        branches, current_branch, branch_heads = get_branch_heads(self.repo_dir)
         language_stats, files_by_language = scan_languages(
             self.repo_dir,
             self.language_mode,
@@ -574,18 +524,7 @@ class RepoService:
         )
         scanned_file_count = sum(len(files) for files in files_by_language.values())
         self._cached_scanned_file_count = scanned_file_count
-        return RepoContext(
-            repo_dir=self.repo_dir,
-            project_name=os.path.basename(os.path.abspath(self.repo_dir)),
-            repo_commit_count=int(
-                run_git(self.repo_dir, ["rev-list", "--all", "--count"]).strip() or "0"
-            ),
-            branches=branches,
-            branch_heads=tuple(sorted(branch_heads.items())),
-            current_branch=current_branch,
-            language_stats=language_stats,
-            files_by_language=files_by_language,
-        )
+        return _repo_context(self.repo_dir, language_stats, files_by_language)
 
     def _branch_data(self, branch: str) -> BranchData:
         meta_out = run_git(

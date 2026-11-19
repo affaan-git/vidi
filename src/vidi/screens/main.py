@@ -26,6 +26,7 @@ from ..formatting import (
     append_file_change_summary_line,
     build_commit_identity_line,
     build_repo_stats_sub_title,
+    change_stat_labels,
 )
 from ..models import BranchData, CommitRecord, LanguageStat, RepoContext
 from ..render import (
@@ -44,14 +45,18 @@ from ..utils import rel_time, truncate_middle, utc_now
 from .branch_picker import BranchPickerScreen
 from .commit_detail import CommitDetailScreen
 from .commit_files import CommitFilesScreen
+from .shared import MOVE_GROUP, DebouncedResize
 
 # Commit table row cap, set to cover the commits the graph spans.
 MAX_VISIBLE_COMMITS = 500
-# Delay before re-rendering after a burst of resize events.
-RESIZE_DEBOUNCE_SECONDS = 0.05
 # Column widths, shared with the truncation budget.
-COMMIT_MESSAGE_WIDTH = 28
+COMMIT_MESSAGE_MIN_WIDTH = 28
 COMMIT_AUTHOR_WIDTH = 12
+
+
+def _first_hash_on(commits: list[CommitRecord], day: dt.date | None) -> str | None:
+    """The hash of the first listed commit made on a day, or None."""
+    return next((commit.commit_hash for commit in commits if commit.authored_date == day), None)
 
 
 class GraphView(Static):
@@ -124,10 +129,9 @@ class LanguageList(VerticalScroll):
         self.screen._click_language(event.offset.x, event.offset.y + int(self.scroll_y))
 
 
-class MainScreen(Screen[None]):
+class MainScreen(DebouncedResize, Screen[None]):
     """Primary analytics screen."""
 
-    MOVE_GROUP = Binding.Group("Move", compact=True)
     PANEL_GROUP = Binding.Group("Panel")
     YEAR_GROUP = Binding.Group("Year", compact=True)
     DAY_GROUP = Binding.Group("Day", compact=True)
@@ -301,7 +305,6 @@ class MainScreen(Screen[None]):
         # Language breakdown of the highlighted commit's tree.
         self._language_stats: list[LanguageStat] = []
         self._language_files: dict[str, list[str]] = {}
-        self._resize_timer = None
         self.scanned_file_count = service.scanned_file_count(context)
         self._theme_palette = resolve_theme_palette(self.app.current_theme)
         self._branch_data_cache: dict[str, BranchData] = {}
@@ -311,7 +314,9 @@ class MainScreen(Screen[None]):
         self._day_keys: list[dt.date] = []
         self._suspend_table_events = False
         self._commit_query = ""
-        self._mounted = False
+        # The commits in the table rows and the width their messages are cut to.
+        self._table_commits: list[CommitRecord] = []
+        self._message_width = COMMIT_MESSAGE_MIN_WIDTH
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -343,7 +348,7 @@ class MainScreen(Screen[None]):
         commits_table.cursor_type = "row"
         commits_table.show_horizontal_scrollbar = False
         commits_table.add_column("Hash", width=8)
-        commits_table.add_column("Message", width=COMMIT_MESSAGE_WIDTH)
+        commits_table.add_column("Message", width=self._message_width, key="message")
         commits_table.add_column("Author", width=COMMIT_AUTHOR_WIDTH)
         commits_table.add_column("When", width=7)
         commits_table.add_column("Files", width=5)
@@ -352,7 +357,6 @@ class MainScreen(Screen[None]):
         self.query_one("#day-details-scroll", VerticalScroll).can_focus = True
         self.query_one("#language-scroll", VerticalScroll).can_focus = True
 
-        self._mounted = True
         self._apply_theme()
         self._refresh_year_options()
         self.sub_title = self._build_repo_stats_sub_title()
@@ -383,22 +387,15 @@ class MainScreen(Screen[None]):
 
     def _on_theme_change(self, old_value: str, new_value: str) -> None:
         self._apply_theme()
-        branch_data, commits, counts = self._current_view_state(normalize_selection=False)
-        self._render_view(commits, counts, include_table=False, reset_scroll=False)
-
-    def on_resize(self, event: events.Resize) -> None:
-        if not self._mounted:
-            return
-        # Coalesce the resize burst into one re-render.
-        if self._resize_timer is not None:
-            self._resize_timer.stop()
-        self._resize_timer = self.set_timer(RESIZE_DEBOUNCE_SECONDS, self._render_after_resize)
+        self._redraw_panels()
 
     def _render_after_resize(self) -> None:
-        self._resize_timer = None
-        if not self._mounted or not self.is_mounted:
-            return
-        branch_data, commits, counts = self._current_view_state(normalize_selection=False)
+        self._fit_message_column()
+        self._redraw_panels()
+
+    def _redraw_panels(self) -> None:
+        """Re-render everything but the commit table, keeping the scroll positions."""
+        _, commits, counts = self._current_view_state(normalize_selection=False)
         self._render_view(commits, counts, include_table=False, reset_scroll=False)
 
     def on_unmount(self) -> None:
@@ -473,15 +470,8 @@ class MainScreen(Screen[None]):
             if self.selected_day is None or self.selected_day not in counts:
                 self.selected_day = max(counts) if counts else None
             if self.selected_commit_hash not in {commit.commit_hash for commit in commits}:
-                day_commits = [
-                    commit
-                    for commit in commits
-                    if self.selected_day and commit.authored_date == self.selected_day
-                ]
-                self.selected_commit_hash = (
-                    day_commits[0].commit_hash
-                    if day_commits
-                    else (commits[0].commit_hash if commits else None)
+                self.selected_commit_hash = _first_hash_on(commits, self.selected_day) or (
+                    commits[0].commit_hash if commits else None
                 )
         return branch_data, commits, counts
 
@@ -511,16 +501,7 @@ class MainScreen(Screen[None]):
         if include_table:
             self._update_commits_table(commits)
         self._day_keys = sorted(counts.keys(), reverse=True)
-        graph_start, graph_end = resolve_graph_window(self.selected_range, self.selected_year)
-        self.query_one("#graph-content", Static).update(
-            render_contribution_graph(
-                counts,
-                graph_start,
-                graph_end,
-                self.selected_day,
-                self._theme_palette,
-            )
-        )
+        self._render_graph(commits)
         self._update_day_details(commits, reset_scroll=reset_scroll)
         self._refresh_language_panel()
 
@@ -538,31 +519,13 @@ class MainScreen(Screen[None]):
         )
         if selected is not None:
             self.selected_day = selected.authored_date
-        counts: collections.Counter[dt.date] = collections.Counter(
-            commit.authored_date for commit in commits
-        )
         if sync_table and self.selected_commit_hash:
-            visible_hashes = [commit.commit_hash for commit in commits[:MAX_VISIBLE_COMMITS]]
-            if self.selected_commit_hash in visible_hashes:
-                table = self.query_one("#commits-table", DataTable)
-                row_index = visible_hashes.index(self.selected_commit_hash)
-                self._suspend_table_events = True
-                try:
-                    table.move_cursor(row=row_index, animate=False, scroll=True)
-                except Exception:
-                    pass
-                finally:
-                    self._suspend_table_events = False
-        graph_start, graph_end = resolve_graph_window(self.selected_range, self.selected_year)
-        self.query_one("#graph-content", Static).update(
-            render_contribution_graph(
-                counts,
-                graph_start,
-                graph_end,
-                self.selected_day,
-                self._theme_palette,
-            )
-        )
+            self._suspend_table_events = True
+            try:
+                self._move_table_cursor()
+            finally:
+                self._suspend_table_events = False
+        self._render_graph(commits)
         self._update_day_details(commits, reset_scroll=True)
         self._refresh_language_panel()
 
@@ -587,26 +550,63 @@ class MainScreen(Screen[None]):
         table = self.query_one("#commits-table", DataTable)
         table.scroll_home(immediate=True, x_axis=True, y_axis=True)
         table.clear(columns=False)
+        self._table_commits = visible
         now = utc_now()
         for commit in visible:
             table.add_row(
                 commit.commit_hash[:7],
-                Text(truncate_middle(commit.message, COMMIT_MESSAGE_WIDTH)),
+                self._message_cell(commit),
                 Text(truncate_middle(commit.author_name, COMMIT_AUTHOR_WIDTH)),
                 rel_time(commit.authored_at, now),
                 str(len(commit.changed_files)),
                 key=commit.commit_hash,
             )
-        visible_hashes = [commit.commit_hash for commit in visible]
-        if self.selected_commit_hash in visible_hashes:
-            try:
-                table.move_cursor(
-                    row=visible_hashes.index(self.selected_commit_hash),
-                    animate=False,
-                    scroll=True,
-                )
-            except Exception:
-                pass
+        self._move_table_cursor()
+
+    def _move_table_cursor(self) -> None:
+        """Put the table cursor on the selected commit when its row is in the table."""
+        hashes = [commit.commit_hash for commit in self._table_commits]
+        if self.selected_commit_hash not in hashes:
+            return
+        table = self.query_one("#commits-table", DataTable)
+        try:
+            table.move_cursor(
+                row=hashes.index(self.selected_commit_hash), animate=False, scroll=True
+            )
+        except Exception:
+            pass
+
+    def _message_cell(self, commit: CommitRecord) -> Text:
+        return Text(truncate_middle(commit.message, self._message_width))
+
+    def _fit_message_column(self) -> None:
+        """Give the Message column the table width the other columns leave free."""
+        table = self.query_one("#commits-table", DataTable)
+        columns = table.columns
+        others = sum(
+            column.get_render_width(table) for key, column in columns.items() if key != "message"
+        )
+        # Leave room for the vertical scrollbar.
+        free = (
+            table.content_region.width
+            - table.styles.scrollbar_size_vertical
+            - others
+            - 2 * table.cell_padding
+        )
+        width = max(COMMIT_MESSAGE_MIN_WIDTH, free)
+        if width == self._message_width:
+            return
+        self._message_width = width
+        columns["message"].width = width
+        last = len(self._table_commits) - 1
+        for index, commit in enumerate(self._table_commits):
+            # One width update re-measures the table. More are quadratic when the column narrows.
+            table.update_cell(
+                commit.commit_hash,
+                "message",
+                self._message_cell(commit),
+                update_width=index == last,
+            )
 
     def _update_commits_title(self, shown: int, total: int) -> None:
         title = "Year Commits"
@@ -614,32 +614,27 @@ class MainScreen(Screen[None]):
             title = f"Year Commits  ({shown} of {total})"
         self.query_one("#commits-title", Static).update(title)
 
+    def _show_details_message(self, message: str, *, bold: bool, reset_scroll: bool) -> None:
+        self.query_one("#details-title", Static).update("Commit Details")
+        self.query_one("#day-details", Static).update(
+            Text().append(message, style=make_style(self._theme_palette.muted, bold=bold))
+        )
+        if reset_scroll:
+            self._scroll_details_home()
+
+    def _scroll_details_home(self) -> None:
+        self.query_one("#day-details-scroll", VerticalScroll).scroll_home(animate=False)
+
     def _update_day_details(self, commits: list[CommitRecord], *, reset_scroll: bool) -> None:
-        palette = self._theme_palette
-        details = Text()
         if self.selected_branch not in self._branch_data_cache:
-            self.query_one("#details-title", Static).update("Commit Details")
-            details.append(
-                f"Loading {self.selected_branch} history...",
-                style=make_style(palette.muted, bold=True),
+            self._show_details_message(
+                f"Loading {self.selected_branch} history...", bold=True, reset_scroll=reset_scroll
             )
-            self.query_one("#day-details", Static).update(details)
-            if reset_scroll:
-                self.query_one("#day-details-scroll", VerticalScroll).scroll_home(
-                    animate=False
-                )
             return
         if self.selected_day is None:
-            self.query_one("#details-title", Static).update("Commit Details")
-            details.append(
-                "No active day in current selection.",
-                style=make_style(palette.muted, bold=True),
+            self._show_details_message(
+                "No active day in current selection.", bold=True, reset_scroll=reset_scroll
             )
-            self.query_one("#day-details", Static).update(details)
-            if reset_scroll:
-                self.query_one("#day-details-scroll", VerticalScroll).scroll_home(
-                    animate=False
-                )
             return
 
         day_commits = [commit for commit in commits if commit.authored_date == self.selected_day]
@@ -648,15 +643,12 @@ class MainScreen(Screen[None]):
             day_commits[0] if day_commits else None,
         )
         if selected_commit is None:
-            self.query_one("#details-title", Static).update("Commit Details")
-            details.append("No commit selected.", style=make_style(palette.muted))
-            self.query_one("#day-details", Static).update(details)
-            if reset_scroll:
-                self.query_one("#day-details-scroll", VerticalScroll).scroll_home(
-                    animate=False
-                )
+            self._show_details_message(
+                "No commit selected.", bold=False, reset_scroll=reset_scroll
+            )
             return
 
+        palette = self._theme_palette
         title_row = Table.grid(expand=True)
         title_row.add_column(ratio=1)
         title_row.add_column(justify="right", width=7)
@@ -666,6 +658,7 @@ class MainScreen(Screen[None]):
         )
         self.query_one("#details-title", Static).update(title_row)
 
+        details = Text()
         details.append_text(
             build_commit_identity_line(
                 palette,
@@ -691,8 +684,7 @@ class MainScreen(Screen[None]):
             suffix = "\n" if index < len(commit_detail.file_changes) - 1 else ""
             section = section_for_change(commit_detail.patch_sections, index, change)
             # Leave room in the path for the exact "+adds -dels" stat.
-            additions_text = "+-" if change.additions is None else f"+{change.additions}"
-            deletions_text = "--" if change.deletions is None else f"-{change.deletions}"
+            additions_text, deletions_text = change_stat_labels(change.additions, change.deletions)
             stat_width = len(additions_text) + 1 + len(deletions_text)
             label_width = max(8, content_width - len("  - ") - 2 - stat_width)
             append_file_change_summary_line(
@@ -704,11 +696,9 @@ class MainScreen(Screen[None]):
             )
             if suffix:
                 details.append(suffix, style=make_style(palette.muted))
-        self.query_one("#day-details", Static).update(details)
+        details_static.update(details)
         if reset_scroll:
-            self.query_one("#day-details-scroll", VerticalScroll).scroll_home(
-                animate=False
-            )
+            self._scroll_details_home()
 
     def reload_language_panel(self) -> None:
         """Re-read languages after the scan settings changed."""
@@ -743,8 +733,7 @@ class MainScreen(Screen[None]):
         highlighted = (
             self._language_index if stats and self.active_panel == "languages" else None
         )
-        scroll = self.query_one("#language-scroll", VerticalScroll)
-        width = scroll.content_region.width or scroll.size.width or 32
+        width = self._legend_width()
         self.query_one("#language-list", Static).update(
             build_language_summary(
                 stats,
@@ -764,10 +753,12 @@ class MainScreen(Screen[None]):
             )
         )
 
-    def _language_rows(self) -> list[list[int]]:
+    def _legend_width(self) -> int:
         scroll = self.query_one("#language-scroll", VerticalScroll)
-        width = scroll.content_region.width or scroll.size.width or 32
-        return language_legend_rows(self._language_stats, width)
+        return scroll.content_region.width or scroll.size.width or 32
+
+    def _language_rows(self) -> list[list[int]]:
+        return language_legend_rows(self._language_stats, self._legend_width())
 
     def _set_language_index(self, new_index: int) -> None:
         if new_index == self._language_index:
@@ -808,8 +799,7 @@ class MainScreen(Screen[None]):
         # Clicking a legend entry selects that language and focuses the panel.
         if not self._language_stats:
             return
-        width = self.query_one("#language-scroll", VerticalScroll).content_region.width or 32
-        index = language_index_at(self._language_stats, width, column, row)
+        index = language_index_at(self._language_stats, self._legend_width(), column, row)
         if index is None:
             return
         self._language_index = index
@@ -894,10 +884,7 @@ class MainScreen(Screen[None]):
             self.query_one("#commits-table", CommitTable).focus()
 
     def _build_repo_stats_sub_title(self) -> str:
-        base = self.service.default_base_branch(self.context.branches)
-        ahead, behind = (
-            self.service.get_branch_divergence(self.selected_branch, base) if base else (0, 0)
-        )
+        ahead, behind = self.service.trunk_divergence(self.selected_branch, self.context.branches)
         return build_repo_stats_sub_title(
             self.context, self.scanned_file_count, self.selected_branch, ahead, behind
         )
@@ -930,17 +917,20 @@ class MainScreen(Screen[None]):
             return
         row_key = event.row_key.value if event.row_key else None
         if row_key:
-            branch_data, commits = self._filtered_branch_data()
+            _, commits = self._filtered_branch_data()
             commit_hash = str(row_key)
             self._set_selected_commit(commits, commit_hash, sync_table=False)
-            self.app.push_screen(
-                CommitDetailScreen(
-                    self.service,
-                    commit_hash,
-                    source_branch=self.selected_branch,
-                    commit_hashes=[commit.commit_hash for commit in commits],
-                )
+            self._open_commit_detail(commit_hash, commits)
+
+    def _open_commit_detail(self, commit_hash: str, commits: list[CommitRecord]) -> None:
+        self.app.push_screen(
+            CommitDetailScreen(
+                self.service,
+                commit_hash,
+                source_branch=self.selected_branch,
+                commit_hashes=[commit.commit_hash for commit in commits],
             )
+        )
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         if self._suspend_table_events or event.data_table.id != "commits-table":
@@ -957,24 +947,17 @@ class MainScreen(Screen[None]):
         if self.active_panel == "graph":
             # Enter hands the graph's day off to the commit table and focuses it.
             _, commits = self._filtered_branch_data()
-            day_commits = [c for c in commits if c.authored_date == self.selected_day]
-            if not day_commits:
+            day_hash = _first_hash_on(commits, self.selected_day)
+            if day_hash is None:
                 return
-            self._set_selected_commit(commits, day_commits[0].commit_hash, sync_table=True)
+            self._set_selected_commit(commits, day_hash, sync_table=True)
             self.query_one("#commits-table", CommitTable).focus()
             return
         commit_hash = self.selected_commit_hash
         if not commit_hash:
             return
         _, commits = self._filtered_branch_data()
-        self.app.push_screen(
-            CommitDetailScreen(
-                self.service,
-                commit_hash,
-                source_branch=self.selected_branch,
-                commit_hashes=[commit.commit_hash for commit in commits],
-            )
-        )
+        self._open_commit_detail(commit_hash, commits)
 
     def action_focus_next_panel(self) -> None:
         self.focus_next()
@@ -1035,12 +1018,7 @@ class MainScreen(Screen[None]):
             # In on-enter mode, only the square highlight moves until Enter.
             self._render_graph(commits)
             return
-        day_commits = [commit for commit in commits if commit.authored_date == day]
-        self._set_selected_commit(
-            commits,
-            day_commits[0].commit_hash if day_commits else None,
-            sync_table=True,
-        )
+        self._set_selected_commit(commits, _first_hash_on(commits, day), sync_table=True)
 
     def _click_graph(self, column: int, row: int) -> None:
         # Clicking a square selects that day like the arrows do, then focuses the graph.
@@ -1064,27 +1042,21 @@ class MainScreen(Screen[None]):
         )
 
     def action_prev_year(self) -> None:
-        branch_data = self._get_branch_data(self.selected_branch)
-        if branch_data is None:
-            self._ensure_branch_loaded(self.selected_branch)
-            return
-        years = sorted(branch_data.years)
-        if self.selected_year in years:
-            idx = years.index(self.selected_year)
-            if idx > 0:
-                self.selected_year = years[idx - 1]
-                self.refresh_view()
+        self._step_year(-1)
 
     def action_next_year(self) -> None:
+        self._step_year(1)
+
+    def _step_year(self, delta: int) -> None:
         branch_data = self._get_branch_data(self.selected_branch)
         if branch_data is None:
             self._ensure_branch_loaded(self.selected_branch)
             return
         years = sorted(branch_data.years)
         if self.selected_year in years:
-            idx = years.index(self.selected_year)
-            if idx < len(years) - 1:
-                self.selected_year = years[idx + 1]
+            idx = years.index(self.selected_year) + delta
+            if 0 <= idx < len(years):
+                self.selected_year = years[idx]
                 self.refresh_view()
 
     def action_cycle_range(self) -> None:
@@ -1118,39 +1090,21 @@ class MainScreen(Screen[None]):
         self._ensure_branch_loaded(branch)
 
     def action_day_down(self) -> None:
-        if not self._day_keys:
-            return
-        if self.selected_day not in self._day_keys:
-            next_day = self._day_keys[0]
-        else:
-            idx = self._day_keys.index(self.selected_day)
-            if idx < len(self._day_keys) - 1:
-                next_day = self._day_keys[idx + 1]
-            else:
-                return
-        branch_data, commits = self._filtered_branch_data()
-        day_commits = [commit for commit in commits if commit.authored_date == next_day]
-        self._set_selected_commit(
-            commits,
-            day_commits[0].commit_hash if day_commits else None,
-            sync_table=True,
-        )
+        self._step_active_day(1)
 
     def action_day_up(self) -> None:
+        self._step_active_day(-1)
+
+    def _step_active_day(self, delta: int) -> None:
+        # The day keys run newest first and a positive delta steps to an older day.
         if not self._day_keys:
             return
         if self.selected_day not in self._day_keys:
             next_day = self._day_keys[0]
         else:
-            idx = self._day_keys.index(self.selected_day)
-            if idx > 0:
-                next_day = self._day_keys[idx - 1]
-            else:
+            idx = self._day_keys.index(self.selected_day) + delta
+            if not 0 <= idx < len(self._day_keys):
                 return
-        branch_data, commits = self._filtered_branch_data()
-        day_commits = [commit for commit in commits if commit.authored_date == next_day]
-        self._set_selected_commit(
-            commits,
-            day_commits[0].commit_hash if day_commits else None,
-            sync_table=True,
-        )
+            next_day = self._day_keys[idx]
+        _, commits = self._filtered_branch_data()
+        self._set_selected_commit(commits, _first_hash_on(commits, next_day), sync_table=True)
