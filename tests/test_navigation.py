@@ -1554,6 +1554,26 @@ class HostileRepoTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(os.path.exists(marker))
 
 
+    def test_escape_sequences_in_repo_text_are_replaced(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo(tmp)
+            with open(os.path.join(repo, "a.txt"), "w") as handle:
+                handle.write("before\x1b]0;title\x07after\n")
+            self._git(repo, "add", "-A")
+            subprocess.run(
+                ["git", "-C", repo, "-c", "user.name=t\x1b[31m", "-c", "user.email=t@t", "-c", "commit.gpgsign=false",
+                 "commit", "-q", "-m", "msg \x1b[2J end"],
+                check=True,
+                capture_output=True,
+            )
+            service = RepoService(repo)
+            commit = service.get_branch_data("main").commits[0]
+            content = service.get_file_at_commit(commit.commit_hash, "a.txt")
+            for text in (commit.message, commit.author_name, content):
+                self.assertNotIn("\x1b", text)
+                self.assertIn("\ufffd", text)
+
+
     async def test_markup_in_messages_and_paths_is_shown_as_text(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = self._repo(tmp)

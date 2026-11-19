@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import time
 from functools import lru_cache
@@ -125,9 +126,13 @@ LANGUAGE_COLORS = {
 }
 
 
+# Escape and C1 control characters in repo text are shown as a replacement character.
+_TERMINAL_CONTROL = re.compile(r"[\x1b\x7f-\x9f]")
+
+
 def run_git(repo_dir: str, args: list[str]) -> str:
     try:
-        return subprocess.check_output(
+        output = subprocess.check_output(
             ["git", "-c", "core.fsmonitor=false", *args],
             cwd=repo_dir,
             text=True,
@@ -136,6 +141,7 @@ def run_git(repo_dir: str, args: list[str]) -> str:
     except subprocess.CalledProcessError as exc:
         stderr = exc.stderr.strip() if exc.stderr else "unknown git error"
         raise RuntimeError(f"git {' '.join(args)} failed: {stderr}") from exc
+    return _TERMINAL_CONTROL.sub("\ufffd", output)
 
 
 def get_branch_heads(repo_dir: str) -> tuple[list[str], str, dict[str, str]]:
