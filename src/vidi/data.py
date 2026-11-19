@@ -6,7 +6,7 @@ import collections
 import datetime as dt
 
 from .models import CommitFileChange, CommitPatchSection, CommitRecord
-from .utils import truncate_middle, utc_now
+from .utils import truncate_middle, unquote_git_path, utc_now
 
 
 RANGE_PRESETS = [
@@ -46,7 +46,8 @@ def resolve_graph_window(
     if range_value == "all":
         return year_start, year_end
 
-    today = (utc_now() if now is None else now).date()
+    # The viewer's local date. A naive `now` is taken as local time.
+    today = (utc_now() if now is None else now).astimezone().date()
     if year != today.year:
         return year_start, year_end
 
@@ -111,29 +112,30 @@ def _build_patch_section(lines: list[str]) -> CommitPatchSection:
     is_rename = False
 
     for line in lines:
+        if line.startswith("@@"):
+            break
         if line.startswith("rename from "):
-            old_path = line.removeprefix("rename from ").strip()
+            old_path = unquote_git_path(line.removeprefix("rename from "))
             is_rename = True
         elif line.startswith("rename to "):
-            new_path = line.removeprefix("rename to ").strip()
+            new_path = unquote_git_path(line.removeprefix("rename to "))
             is_rename = True
         elif line.startswith("--- "):
-            candidate = line[4:].strip()
+            candidate = unquote_git_path(line[4:].rstrip("\t"))
             if candidate != "/dev/null":
                 old_path = candidate.removeprefix("a/")
         elif line.startswith("+++ "):
-            candidate = line[4:].strip()
+            candidate = unquote_git_path(line[4:].rstrip("\t"))
             if candidate != "/dev/null":
                 new_path = candidate.removeprefix("b/")
 
     if not old_path or not new_path:
         header = next((line for line in lines if line.startswith("diff --git ")), "")
-        parts = header.split()
-        if len(parts) >= 4:
-            if not old_path:
-                old_path = parts[2].removeprefix("a/")
-            if not new_path:
-                new_path = parts[3].removeprefix("b/")
+        header_old, header_new = _diff_header_paths(header.removeprefix("diff --git "))
+        if not old_path:
+            old_path = header_old
+        if not new_path:
+            new_path = header_new
 
     path = new_path or old_path or "unknown"
     return CommitPatchSection(
@@ -144,6 +146,22 @@ def _build_patch_section(lines: list[str]) -> CommitPatchSection:
         is_binary=is_binary,
         is_rename=is_rename or ((old_path or path) != (new_path or path)),
     )
+
+
+def _diff_header_paths(rest: str) -> tuple[str, str]:
+    """The old and new paths of a `diff --git` header after its prefix.
+
+    A header without `---` and `+++` lines names the same file on both sides.
+    It is split at its middle space when both halves match.
+    """
+    middle = len(rest) // 2
+    if rest[middle : middle + 1] == " ":
+        old = unquote_git_path(rest[:middle]).removeprefix("a/")
+        new = unquote_git_path(rest[middle + 1 :]).removeprefix("b/")
+        if old == new:
+            return old, new
+    old, _, new = rest.partition(" ")
+    return unquote_git_path(old).removeprefix("a/"), unquote_git_path(new).removeprefix("b/")
 
 
 def section_for_change(

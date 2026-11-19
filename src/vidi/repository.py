@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 import time
 from functools import lru_cache
@@ -19,7 +18,13 @@ from .models import (
     RepoContext,
     RepoScanSnapshot,
 )
-from .utils import detect_language, parse_iso_datetime, random_color
+from .utils import (
+    detect_language,
+    parse_iso_datetime,
+    random_color,
+    replace_terminal_control,
+    unquote_git_path,
+)
 
 
 DEFAULT_IGNORED_DIRS = {
@@ -91,6 +96,35 @@ EXTENSION_TO_LANGUAGE = {
     ".bat": "Batchfile",
     ".cmd": "Batchfile",
     ".dockerfile": "Dockerfile",
+    ".vue": "Vue",
+    ".svelte": "Svelte",
+    ".astro": "Astro",
+    ".scss": "SCSS",
+    ".sass": "Sass",
+    ".less": "Less",
+    ".tf": "HCL",
+    ".tfvars": "HCL",
+    ".hcl": "HCL",
+    ".ipynb": "Jupyter Notebook",
+    ".zig": "Zig",
+    ".ex": "Elixir",
+    ".exs": "Elixir",
+    ".erl": "Erlang",
+    ".hrl": "Erlang",
+    ".hs": "Haskell",
+    ".ml": "OCaml",
+    ".mli": "OCaml",
+    ".jl": "Julia",
+    ".nix": "Nix",
+    ".proto": "Protocol Buffer",
+    ".clj": "Clojure",
+    ".cljs": "Clojure",
+    ".cljc": "Clojure",
+    ".groovy": "Groovy",
+    ".mk": "Makefile",
+    ".cmake": "CMake",
+    ".mts": "TypeScript",
+    ".cts": "TypeScript",
 }
 
 LANGUAGE_COLORS = {
@@ -123,25 +157,54 @@ LANGUAGE_COLORS = {
     "PowerShell": "#012456",
     "Batchfile": "#C1F12E",
     "Dockerfile": "#384d54",
+    "Vue": "#41b883",
+    "Svelte": "#ff3e00",
+    "Astro": "#ff5a03",
+    "SCSS": "#c6538c",
+    "Sass": "#a53b70",
+    "Less": "#1d365d",
+    "HCL": "#844FBA",
+    "Jupyter Notebook": "#DA5B0B",
+    "Zig": "#ec915c",
+    "Elixir": "#6e4a7e",
+    "Erlang": "#B83998",
+    "Haskell": "#5e5086",
+    "OCaml": "#ef7a08",
+    "Julia": "#a270ba",
+    "Nix": "#7e7eff",
+    "Clojure": "#db5855",
+    "Groovy": "#4298b8",
+    "Makefile": "#427819",
+    "CMake": "#DA3434",
 }
 
 
-# Escape and C1 control characters in repo text are shown as a replacement character.
-_TERMINAL_CONTROL = re.compile(r"[\x1b\x7f-\x9f]")
+def run_git(repo_dir: str, args: list[str], *, errors: str = "replace") -> str:
+    """Run git and return its output with non-ASCII paths left unescaped.
 
-
-def run_git(repo_dir: str, args: list[str]) -> str:
+    Bytes that are not UTF-8 become U+FFFD unless `errors` is "strict".
+    """
     try:
         output = subprocess.check_output(
-            ["git", "-c", "core.fsmonitor=false", *args],
+            [
+                "git",
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "core.quotePath=false",
+                "-c",
+                "log.showSignature=false",
+                *args,
+            ],
             cwd=repo_dir,
-            text=True,
+            encoding="utf-8",
+            errors=errors,
             stderr=subprocess.PIPE,
         )
     except subprocess.CalledProcessError as exc:
         stderr = exc.stderr.strip() if exc.stderr else "unknown git error"
         raise RuntimeError(f"git {' '.join(args)} failed: {stderr}") from exc
-    return _TERMINAL_CONTROL.sub("\ufffd", output)
+    return replace_terminal_control(output)
 
 
 def get_branch_heads(repo_dir: str) -> tuple[list[str], str, dict[str, str]]:
@@ -157,31 +220,29 @@ def get_branch_heads(repo_dir: str) -> tuple[list[str], str, dict[str, str]]:
         name, _, object_name = line.partition("\t")
         if name and object_name:
             branch_heads[name] = object_name
-    head = run_git(repo_dir, ["rev-parse", "--abbrev-ref", "HEAD"]).strip()
+    try:
+        head = run_git(repo_dir, ["rev-parse", "--abbrev-ref", "HEAD"]).strip()
+    except RuntimeError:
+        # An unborn HEAD in a new repo or on an orphan branch.
+        head = ""
     if head and head != "HEAD" and head not in branch_heads:
         branch_heads[head] = run_git(repo_dir, ["rev-parse", head]).strip()
     branches = sorted(branch_heads)
     if not branches:
+        if not head:
+            raise RuntimeError(f"no commits yet: {repo_dir}")
         raise RuntimeError("No branches found in repository.")
     return branches, head if head else branches[0], branch_heads
 
 
-GITIGNORE_MAX_BYTES = 1_000_000
-
-
-def parse_gitignore(repo_dir: str) -> set[str]:
-    path = Path(repo_dir) / ".gitignore"
-    names: set[str] = set()
-    if path.is_symlink() or not path.is_file() or path.stat().st_size > GITIGNORE_MAX_BYTES:
-        return names
-    for raw in path.read_text(encoding="utf-8", errors="ignore").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "/" in line or "*" in line or line.startswith("!"):
-            continue
-        names.add(line.rstrip("/"))
-    return names
+def list_worktree_paths(repo_dir: str) -> list[str]:
+    """Tracked and untracked files that git does not ignore, each listed once."""
+    output = run_git(
+        repo_dir,
+        ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+    )
+    # A file with a merge conflict is listed once per stage.
+    return list(dict.fromkeys(path for path in output.split("\0") if path))
 
 
 def scan_languages(
@@ -194,28 +255,25 @@ def scan_languages(
     files_by_language: dict[str, list[str]] = {}
     total_value = 0
 
-    for root, dirs, files in os.walk(repo_dir):
-        dirs[:] = [directory for directory in dirs if directory not in ignore_dirs]
-        for filename in files:
-            if filename == ".git":
-                continue
-            full_path = os.path.join(root, filename)
-            if not os.path.isfile(full_path):
-                continue
-            language = detect_language(filename, EXTENSION_TO_LANGUAGE)
-            if language in exclude_languages:
-                continue
-            rel_path = os.path.relpath(full_path, repo_dir)
-            files_by_language.setdefault(language, []).append(rel_path)
-            if language_mode == "files":
-                value = 1
-            else:
-                try:
-                    value = os.path.getsize(full_path)
-                except OSError:
-                    value = 0
-            totals[language] = totals.get(language, 0) + value
-            total_value += value
+    for rel_path in list_worktree_paths(repo_dir):
+        if any(component in ignore_dirs for component in rel_path.split("/")):
+            continue
+        full_path = os.path.join(repo_dir, rel_path)
+        if not os.path.isfile(full_path):
+            continue
+        language = detect_language(rel_path, EXTENSION_TO_LANGUAGE)
+        if language in exclude_languages:
+            continue
+        files_by_language.setdefault(language, []).append(rel_path)
+        if language_mode == "files":
+            value = 1
+        else:
+            try:
+                value = os.path.getsize(full_path)
+            except OSError:
+                value = 0
+        totals[language] = totals.get(language, 0) + value
+        total_value += value
 
     stats: list[LanguageStat] = []
     for language, value in totals.items():
@@ -234,11 +292,8 @@ def scan_languages(
     return stats, files_by_language
 
 
-def _resolve_ignore_dirs(repo_dir: str, extra_ignored_dirs: set[str]) -> set[str]:
-    ignore_dirs = set(DEFAULT_IGNORED_DIRS)
-    ignore_dirs.update(parse_gitignore(repo_dir))
-    ignore_dirs.update(extra_ignored_dirs)
-    return ignore_dirs
+def _resolve_ignore_dirs(extra_ignored_dirs: set[str]) -> set[str]:
+    return DEFAULT_IGNORED_DIRS | set(extra_ignored_dirs)
 
 
 def build_repo_context(
@@ -248,7 +303,7 @@ def build_repo_context(
     extra_ignored_dirs: set[str],
 ) -> tuple[RepoContext, "RepoService"]:
     branches, current_branch, branch_heads = get_branch_heads(repo_dir)
-    ignore_dirs = _resolve_ignore_dirs(repo_dir, extra_ignored_dirs)
+    ignore_dirs = _resolve_ignore_dirs(extra_ignored_dirs)
     language_stats, files_by_language = scan_languages(
         repo_dir,
         language_mode,
@@ -285,7 +340,7 @@ def build_initial_repo_context(
     extra_ignored_dirs: set[str],
 ) -> tuple[RepoContext, "RepoService"]:
     branches, current_branch, branch_heads = get_branch_heads(repo_dir)
-    ignore_dirs = _resolve_ignore_dirs(repo_dir, extra_ignored_dirs)
+    ignore_dirs = _resolve_ignore_dirs(extra_ignored_dirs)
     context = RepoContext(
         repo_dir=repo_dir,
         project_name=os.path.basename(os.path.abspath(repo_dir)),
@@ -324,9 +379,10 @@ class RepoService:
         self.language_mode = language_mode
         self.exclude_languages = set(exclude_languages or set())
         self.ignore_dirs = set(ignore_dirs or set())
-        # The user-supplied extras alone, without the defaults or gitignore.
+        # The user-supplied extras alone, without the defaults.
         self.extra_ignored_dirs = set(extra_ignored_dirs or set())
         self._cached_scanned_file_count = initial_scanned_file_count
+        self._origin_head: str | None = None
         # Per-instance caches. A class-level lru_cache would keep every service alive.
         self.get_branch_data = lru_cache(maxsize=64)(self._branch_data)
         self.get_commit_detail = lru_cache(maxsize=256)(self._commit_detail)
@@ -340,6 +396,7 @@ class RepoService:
         self.get_commit_language_stats.cache_clear()
         self.get_commit_files.cache_clear()
         self.get_branch_divergence.cache_clear()
+        self._origin_head = None
 
     def _branch_divergence(self, branch: str, base: str) -> tuple[int, int]:
         """Commits `branch` is ahead of and behind `base`, both 0 when they match or
@@ -353,13 +410,28 @@ class RepoService:
             return (0, 0)
         return (ahead, behind)
 
-    @staticmethod
-    def default_base_branch(branches: list[str]) -> str | None:
-        """The trunk to measure branches against, main or master, or None if neither exists."""
-        for candidate in ("main", "master"):
-            if candidate in branches:
+    def default_base_branch(self, branches: list[str]) -> str | None:
+        """The trunk to measure branches against, or None if there is none.
+
+        Prefers the local branch that origin/HEAD points at, then main, then master.
+        """
+        if self._origin_head is None:
+            self._origin_head = self._read_origin_head()
+        for candidate in (self._origin_head, "main", "master"):
+            if candidate and candidate in branches:
                 return candidate
         return None
+
+    def _read_origin_head(self) -> str:
+        """The branch name origin/HEAD points at, or an empty string."""
+        try:
+            target = run_git(
+                self.repo_dir, ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]
+            ).strip()
+        except RuntimeError:
+            return ""
+        prefix = "refs/remotes/origin/"
+        return target.removeprefix(prefix) if target.startswith(prefix) else ""
 
     def update_language_settings(
         self,
@@ -371,7 +443,7 @@ class RepoService:
         self.language_mode = language_mode
         self.exclude_languages = set(exclude_languages)
         self.extra_ignored_dirs = set(extra_ignored_dirs)
-        self.ignore_dirs = _resolve_ignore_dirs(self.repo_dir, self.extra_ignored_dirs)
+        self.ignore_dirs = _resolve_ignore_dirs(self.extra_ignored_dirs)
         self.get_commit_language_stats.cache_clear()
         self.get_commit_files.cache_clear()
         # Recount the header file count with the new excludes.
@@ -384,12 +456,12 @@ class RepoService:
     ) -> tuple[list[LanguageStat], dict[str, list[str]]]:
         """Language breakdown of the whole tree at a commit from `git ls-tree`,
         with the same excludes as the working-tree scan."""
-        output = run_git(self.repo_dir, ["ls-tree", "-r", "-l", commit_hash])
+        output = run_git(self.repo_dir, ["ls-tree", "-r", "-l", "-z", commit_hash])
         totals: dict[str, int] = {}
         files_by_language: dict[str, list[str]] = {}
         total_value = 0
-        for line in output.splitlines():
-            meta, _, path = line.partition("\t")
+        for record in output.split("\0"):
+            meta, _, path = record.partition("\t")
             if not path:
                 continue
             parts = meta.split()
@@ -430,10 +502,10 @@ class RepoService:
 
     def _commit_files(self, commit_hash: str) -> list[str]:
         """Every file in the tree at a commit, sorted and without ignored directories."""
-        output = run_git(self.repo_dir, ["ls-tree", "-r", "--name-only", commit_hash])
+        output = run_git(self.repo_dir, ["ls-tree", "-r", "--name-only", "-z", commit_hash])
         files = [
             path
-            for path in output.splitlines()
+            for path in output.split("\0")
             if path and not any(component in self.ignore_dirs for component in path.split("/"))
         ]
         return sorted(files)
@@ -452,17 +524,13 @@ class RepoService:
         """The text of a file at a commit, or None if it is binary, missing, or
         unreadable."""
         try:
-            content = run_git(self.repo_dir, ["show", f"{commit_hash}:{path}"])
+            content = run_git(self.repo_dir, ["show", f"{commit_hash}:{path}"], errors="strict")
         except (RuntimeError, UnicodeDecodeError):
             return None
         return None if "\x00" in content else content
 
     def _list_scanned_paths(self) -> list[str]:
-        output = run_git(
-            self.repo_dir,
-            ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
-        )
-        return [path for path in output.split("\0") if path]
+        return list_worktree_paths(self.repo_dir)
 
     def _count_scanned_paths(self, paths: list[str]) -> int:
         count = 0
@@ -530,11 +598,17 @@ class RepoService:
                 branch,
             ],
         )
+        # A merge lists its files against the first parent, like the commit detail.
+        # Older git ignores the config and repeats a merge once per parent. Only the first list is kept.
         files_out = run_git(
             self.repo_dir,
             [
+                "-c",
+                "log.diffMerges=first-parent",
                 "log",
-                "--pretty=format:__COMMIT__%H",
+                "-m",
+                "--find-renames",
+                "--pretty=format:%x01%H",
                 "--name-only",
                 "--end-of-options",
                 branch,
@@ -543,16 +617,17 @@ class RepoService:
 
         files_by_commit: dict[str, list[str]] = {}
         current_hash = ""
-        for raw in files_out.splitlines():
-            line = raw.strip()
+        for line in files_out.split("\n"):
             if not line:
                 continue
-            if line.startswith("__COMMIT__"):
-                current_hash = line.removeprefix("__COMMIT__")
-                files_by_commit.setdefault(current_hash, [])
+            # Git quotes paths with control characters. No path line starts with \x01.
+            if line.startswith("\x01"):
+                commit_hash = line[1:]
+                current_hash = "" if commit_hash in files_by_commit else commit_hash
+                files_by_commit.setdefault(commit_hash, [])
                 continue
             if current_hash:
-                files_by_commit[current_hash].append(line)
+                files_by_commit[current_hash].append(unquote_git_path(line))
 
         commits: list[CommitRecord] = []
         for line in meta_out.splitlines():
@@ -587,43 +662,38 @@ class RepoService:
                 commit_hash,
             ],
         )
-        numstat_out = run_git(
-            self.repo_dir,
-            [
-                "show",
-                "--format=",
-                "--numstat",
-                "--find-renames",
-                "--no-textconv",
-                commit_hash,
-            ],
-        )
-        patch_out = run_git(
-            self.repo_dir,
-            [
-                "show",
-                "--format=",
-                "--patch",
-                "--find-renames",
-                "--no-textconv",
-                commit_hash,
-            ],
-        )
-
         meta_lines = meta_out.splitlines()
         if len(meta_lines) < 6:
             raise RuntimeError(f"Could not parse commit metadata for {commit_hash}")
         full_hash, parents_raw, author_name, author_email, authored_raw, subject = meta_lines[:6]
         body = "\n".join(meta_lines[6:]).strip()
+        parents = tuple(part for part in parents_raw.split() if part)
+
+        # A merge is compared with its first parent, like the commit table.
+        compared = (
+            ["--end-of-options", parents[0], full_hash]
+            if parents
+            else ["--root", "--end-of-options", full_hash]
+        )
+        diff_tree = ["diff-tree", "-r", "--no-commit-id", "--find-renames", "--no-textconv"]
+        numstat_out = run_git(self.repo_dir, [*diff_tree, "--numstat", "-z", *compared])
+        patch_out = run_git(self.repo_dir, [*diff_tree, "--patch", *compared])
 
         file_changes: list[CommitFileChange] = []
-        for raw in numstat_out.splitlines():
-            if not raw.strip():
-                continue
-            parts = raw.split("\t", 2)
+        records = numstat_out.split("\0")
+        index = 0
+        while index < len(records):
+            parts = records[index].split("\t", 2)
+            index += 1
             if len(parts) != 3:
                 continue
             added_raw, deleted_raw, path = parts
+            if not path:
+                # A rename lists its old and new paths as the next two records.
+                path = records[index + 1] if index + 1 < len(records) else ""
+                index += 2
+            if not path:
+                continue
             additions = None if added_raw == "-" else int(added_raw)
             deletions = None if deleted_raw == "-" else int(deleted_raw)
             file_changes.append(
@@ -636,7 +706,7 @@ class RepoService:
 
         return CommitDetail(
             commit_hash=full_hash,
-            parents=tuple(part for part in parents_raw.split() if part),
+            parents=parents,
             author_name=author_name,
             author_email=author_email,
             authored_at=parse_iso_datetime(authored_raw),

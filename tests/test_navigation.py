@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import sys
 import unittest
 from dataclasses import replace
 
@@ -19,13 +20,14 @@ from textual.widgets import DataTable, Footer, Header, OptionList
 from textual.widgets import Input
 
 from vidi.app import VidiApp
-from vidi.cli import build_parser, package_version, resolve_repo_dir
+from vidi.cli import build_parser, main as cli_main, package_version, resolve_repo_dir
 from vidi.docs import MAN_DIR, PAGES, README, build_manpage, update_readme
 from vidi.screens.help import SHORTCUTS
 from vidi.data import (
     compact_label_for_change,
     compact_path_label,
     filter_commits,
+    parse_patch_sections,
     resolve_graph_window,
 )
 from vidi.formatting import (
@@ -47,13 +49,17 @@ from vidi.render import (
     resolve_heatmap_colors,
 )
 from vidi.repository import (
+    EXTENSION_TO_LANGUAGE,
+    LANGUAGE_COLORS,
     RepoService,
     build_initial_repo_context,
     build_repo_context,
     get_branch_heads,
-    parse_gitignore,
+    list_worktree_paths,
+    scan_languages,
 )
 from vidi.theme import make_change_stat_style, resolve_theme_palette
+from vidi.utils import detect_language, rel_time
 
 from sample_repo import build_sample_repo, sample_repo
 
@@ -1513,6 +1519,76 @@ class FilterTests(unittest.TestCase):
         filtered = filter_commits([recent, old], "7", None, now=now)
         self.assertEqual([item.commit_hash for item in filtered], [recent.commit_hash])
 
+    def test_rel_time_uses_30_day_months_and_365_day_years(self) -> None:
+        now = dt.datetime(2026, 3, 16, 12, 0, 0, tzinfo=dt.timezone.utc)
+        cases = [
+            (29, "4w ago"),
+            (30, "1mo ago"),
+            (59, "1mo ago"),
+            (60, "2mo ago"),
+            (350, "11mo ago"),
+            (364, "12mo ago"),
+            (365, "1y ago"),
+            (729, "1y ago"),
+            (730, "2y ago"),
+        ]
+        for days, expected in cases:
+            with self.subTest(days=days):
+                self.assertEqual(rel_time(now - dt.timedelta(days=days), now), expected)
+
+    def test_detect_language_knows_common_extensions_and_filenames(self) -> None:
+        cases = {
+            "Makefile": "Makefile",
+            "src/GNUmakefile": "Makefile",
+            "CMakeLists.txt": "CMake",
+            "Gemfile": "Ruby",
+            "Rakefile": "Ruby",
+            "Jenkinsfile": "Groovy",
+            "Dockerfile": "Dockerfile",
+            "web/App.vue": "Vue",
+            "web/Page.svelte": "Svelte",
+            "styles/site.scss": "SCSS",
+            "infra/main.tf": "HCL",
+            "notes/analysis.ipynb": "Jupyter Notebook",
+            "lib/app.ex": "Elixir",
+            "Main.hs": "Haskell",
+            "api.proto": "Protocol Buffer",
+        }
+        for path, language in cases.items():
+            with self.subTest(path=path):
+                self.assertEqual(detect_language(path, EXTENSION_TO_LANGUAGE), language)
+        self.assertEqual(LANGUAGE_COLORS["Vue"], "#41b883")
+        self.assertEqual(LANGUAGE_COLORS["Makefile"], "#427819")
+
+    def test_patch_section_paths_come_from_headers_only(self) -> None:
+        patch = "\n".join(
+            [
+                "diff --git a/db/schema.sql b/db/schema.sql",
+                "index 1111111..2222222 100644",
+                "--- a/db/schema.sql",
+                "+++ b/db/schema.sql",
+                "@@ -1,2 +1,1 @@",
+                "--- old comment",
+                "+++ new comment",
+                "diff --git a/my file.bin b/my file.bin",
+                "new file mode 100644",
+                "index 0000000..3333333",
+                "Binary files /dev/null and b/my file.bin differ",
+                'diff --git "a/tab\\there.py" "b/tab\\there.py"',
+                "new file mode 100644",
+                "index 0000000..4444444",
+            ]
+        )
+        sections = parse_patch_sections(patch)
+        self.assertEqual(
+            [(section.old_path, section.new_path, section.is_rename) for section in sections],
+            [
+                ("db/schema.sql", "db/schema.sql", False),
+                ("my file.bin", "my file.bin", False),
+                ("tab\there.py", "tab\there.py", False),
+            ],
+        )
+
 
 class ResolveRepoDirTests(unittest.TestCase):
     @classmethod
@@ -1565,6 +1641,35 @@ class ResolveRepoDirTests(unittest.TestCase):
             resolve_repo_dir(outside)
         with self.assertRaisesRegex(ValueError, "does not exist"):
             resolve_repo_dir(os.path.join(self.tmp, "missing"))
+
+    def test_repo_without_commits_is_a_clear_error(self) -> None:
+        empty = os.path.join(self.tmp, "empty")
+        os.makedirs(empty)
+        subprocess.run(["git", "-C", empty, "init", "-q"], check=True, capture_output=True)
+        out = io.StringIO()
+        argv = sys.argv
+        sys.argv = ["vidi", empty]
+        try:
+            with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as exit_:
+                cli_main()
+        finally:
+            sys.argv = argv
+        self.assertEqual(exit_.exception.code, 1)
+        self.assertEqual(out.getvalue().strip(), f"Error: no commits yet: {empty}")
+
+    def test_unborn_current_branch_falls_back_to_an_existing_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = os.path.join(tmp, "repo")
+            os.makedirs(repo)
+            build_sample_repo(repo)
+            subprocess.run(
+                ["git", "-C", repo, "checkout", "-q", "--orphan", "fresh"],
+                check=True,
+                capture_output=True,
+            )
+            branches, current, _ = get_branch_heads(repo)
+            self.assertNotIn("fresh", branches)
+            self.assertIn(current, branches)
 
 
 class VersionTests(unittest.TestCase):
@@ -1645,22 +1750,76 @@ class HostileRepoTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn("\x1b", text)
                 self.assertIn("\ufffd", text)
 
-    def test_gitignore_is_only_read_when_a_small_regular_file(self) -> None:
+    def test_signature_program_from_repo_config_does_not_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = self._repo(tmp)
-            gitignore = os.path.join(repo, ".gitignore")
+            tree = subprocess.run(
+                ["git", "-C", repo, "mktree"], input="", capture_output=True, text=True, check=True
+            ).stdout.strip()
+            commit_text = (
+                f"tree {tree}\n"
+                "author t <t@t> 1700000000 +0000\n"
+                "committer t <t@t> 1700000000 +0000\n"
+                "gpgsig -----BEGIN PGP SIGNATURE-----\n \n x\n -----END PGP SIGNATURE-----\n"
+                "\nsigned\n"
+            )
+            commit = subprocess.run(
+                ["git", "-C", repo, "hash-object", "-t", "commit", "-w", "--stdin"],
+                input=commit_text,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            self._git(repo, "update-ref", "refs/heads/main", commit)
+            marker = os.path.join(tmp, "ran")
+            program = os.path.join(tmp, "fake-gpg")
+            with open(program, "w") as handle:
+                handle.write(f"#!/bin/sh\ntouch '{marker}'\n")
+            os.chmod(program, 0o755)
+            self._git(repo, "config", "log.showSignature", "true")
+            self._git(repo, "config", "gpg.program", program)
+            service = RepoService(repo)
+            service.get_branch_data("main")
+            service.get_commit_detail(commit)
+            self.assertFalse(os.path.exists(marker))
+
+    def test_escape_sequences_in_quoted_paths_are_replaced(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo(tmp)
+            name = "evil\x1b]0;T\x07.py"
+            with open(os.path.join(repo, name), "w") as handle:
+                handle.write("x = 1\n")
+            self._git(repo, "add", "-A")
+            self._git(repo, "commit", "-q", "-m", "first")
+            self._git(repo, "mv", name, "evil\x1b[2Jmoved.py")
+            self._git(repo, "commit", "-q", "-m", "rename")
+            service = RepoService(repo)
+            for commit in service.get_branch_data("main").commits:
+                detail = service.get_commit_detail(commit.commit_hash)
+                paths = [
+                    *commit.changed_files,
+                    *(change.path for change in detail.file_changes),
+                    *service.get_commit_files(commit.commit_hash),
+                ]
+                for section in detail.patch_sections:
+                    paths += [section.path, section.old_path, section.new_path]
+                self.assertTrue(paths)
+                for path in paths:
+                    self.assertNotIn("\x1b", path)
+                    self.assertIn("\ufffd", path)
+
+    def test_symlinked_gitignore_outside_the_repo_is_not_read_by_vidi(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo(tmp)
             outside = os.path.join(tmp, "outside")
             with open(outside, "w") as handle:
-                handle.write("from-outside\n")
-            os.symlink(outside, gitignore)
-            self.assertEqual(parse_gitignore(repo), set())
-            os.remove(gitignore)
-            with open(gitignore, "w") as handle:
-                handle.write("too-big\n" + "#" * 1_000_000 + "\n")
-            self.assertEqual(parse_gitignore(repo), set())
-            with open(gitignore, "w") as handle:
-                handle.write("node_modules\n")
-            self.assertEqual(parse_gitignore(repo), {"node_modules"})
+                handle.write("*.py\n")
+            with open(os.path.join(repo, "a.py"), "w") as handle:
+                handle.write("x = 1\n")
+            os.symlink(outside, os.path.join(repo, ".gitignore"))
+            git_listed = [path for path in list_worktree_paths(repo) if path.endswith(".py")]
+            _, files_by_language = scan_languages(repo, "files", set(), {".git"})
+            self.assertEqual(files_by_language.get("Python", []), git_listed)
 
     async def test_markup_in_messages_and_paths_is_shown_as_text(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1685,6 +1844,161 @@ class HostileRepoTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 files = app.screen.query_one("#commit-detail-files-diff", DataTable)
                 self.assertEqual(files.get_row_at(0)[0].plain, "[x]/a.py")
+
+
+class GitDataTests(unittest.TestCase):
+    _repo = HostileRepoTests._repo
+    _git = HostileRepoTests._git
+
+    def _write(self, repo: str, path: str, content: str = "x\n") -> None:
+        full = os.path.join(repo, path)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "w", encoding="utf-8") as handle:
+            handle.write(content)
+
+    def test_paths_with_non_ascii_and_special_characters_display_and_open(self) -> None:
+        names = ["caf\u00e9.py", "\u65e5\u672c/\u8aad\u3080.md", "emoji \U0001f642.txt", 'q"t.py', "tab\there.py", "new\nline.py", "back\\slash.py"]
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo(tmp)
+            for name in names:
+                self._write(repo, name, f"content of {name}\n")
+            self._git(repo, "add", "-A")
+            self._git(repo, "commit", "-q", "-m", "add files")
+            service = RepoService(repo, ignore_dirs={".git"})
+            commit = service.get_branch_data("main").commits[0]
+            detail = service.get_commit_detail(commit.commit_hash)
+            _, files_by_language = service.get_commit_language_stats(commit.commit_hash)
+            self.assertEqual(sorted(commit.changed_files), sorted(names))
+            self.assertEqual(sorted(change.path for change in detail.file_changes), sorted(names))
+            self.assertEqual(sorted(section.path for section in detail.patch_sections), sorted(names))
+            self.assertFalse(any(section.is_rename for section in detail.patch_sections))
+            self.assertEqual(service.get_commit_files(commit.commit_hash), sorted(names))
+            self.assertEqual(sorted(sum(files_by_language.values(), [])), sorted(names))
+            for name in names:
+                self.assertEqual(
+                    service.get_file_at_commit(commit.commit_hash, name), f"content of {name}\n"
+                )
+
+    def _merge_repo(self, tmp: str) -> str:
+        repo = self._repo(tmp)
+        self._write(repo, "base.txt")
+        self._git(repo, "add", "-A")
+        self._git(repo, "commit", "-q", "-m", "base")
+        self._git(repo, "checkout", "-q", "-b", "side")
+        self._write(repo, "side_a.txt")
+        self._write(repo, "side_b.txt")
+        self._git(repo, "add", "-A")
+        self._git(repo, "commit", "-q", "-m", "side")
+        self._git(repo, "checkout", "-q", "main")
+        self._write(repo, "main.txt")
+        self._git(repo, "add", "-A")
+        self._git(repo, "commit", "-q", "-m", "main")
+        self._git(repo, "merge", "-q", "--no-ff", "-m", "merge side", "side")
+        return repo
+
+    def test_merge_commit_lists_files_against_its_first_parent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._merge_repo(tmp)
+            service = RepoService(repo)
+            merge = service.get_branch_data("main").commits[0]
+            detail = service.get_commit_detail(merge.commit_hash)
+            self.assertEqual(len(detail.parents), 2)
+            self.assertEqual(sorted(merge.changed_files), ["side_a.txt", "side_b.txt"])
+            self.assertEqual(
+                sorted(change.path for change in detail.file_changes), ["side_a.txt", "side_b.txt"]
+            )
+            self.assertEqual(
+                sorted(section.path for section in detail.patch_sections), ["side_a.txt", "side_b.txt"]
+            )
+
+    def test_merge_files_from_git_without_diff_merges_config(self) -> None:
+        import vidi.repository as repository
+
+        real_run_git = repository.run_git
+
+        def separate_merges(repo_dir: str, args: list[str], **kwargs: str) -> str:
+            args = ["log.diffMerges=separate" if arg == "log.diffMerges=first-parent" else arg for arg in args]
+            return real_run_git(repo_dir, args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._merge_repo(tmp)
+            repository.run_git = separate_merges
+            try:
+                commits = RepoService(repo).get_branch_data("main").commits
+            finally:
+                repository.run_git = real_run_git
+            self.assertEqual([commit.message for commit in commits], ["merge side", "main", "side", "base"])
+            self.assertEqual(sorted(commits[0].changed_files), ["side_a.txt", "side_b.txt"])
+
+    def test_commit_dates_use_the_author_local_date(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo(tmp)
+            subprocess.run(
+                ["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false",
+                 "commit", "-q", "--allow-empty", "-m", "late"],
+                check=True,
+                capture_output=True,
+                env={**os.environ, "GIT_AUTHOR_DATE": "2026-03-10T23:30:00-06:00"},
+            )
+            service = RepoService(repo)
+            commit = service.get_branch_data("main").commits[0]
+            detail = service.get_commit_detail(commit.commit_hash)
+            self.assertEqual(commit.authored_date, dt.date(2026, 3, 10))
+            self.assertEqual(detail.authored_at.strftime("%Y-%m-%d %H:%M"), "2026-03-10 23:30")
+            now = dt.datetime(2026, 3, 14, 5, 29, tzinfo=dt.timezone.utc)
+            self.assertEqual(rel_time(commit.authored_at, now), "2d ago")
+            self.assertEqual(filter_commits([commit], "7", 2026, now=now), [commit])
+            self.assertEqual(filter_commits([commit], "7", 2026, now=now + dt.timedelta(days=5)), [])
+
+    def test_default_base_branch_prefers_origin_head(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo(tmp)
+            self._git(repo, "commit", "-q", "--allow-empty", "-m", "first")
+            self._git(repo, "branch", "develop")
+            branches = ["develop", "main"]
+            self.assertEqual(RepoService(repo).default_base_branch(branches), "main")
+            self._git(repo, "update-ref", "refs/remotes/origin/develop", "HEAD")
+            self._git(repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/develop")
+            service = RepoService(repo)
+            self.assertEqual(service.default_base_branch(branches), "develop")
+            self.assertEqual(service.default_base_branch(["main"]), "main")
+            self._git(repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/heads/develop")
+            self.assertEqual(service.default_base_branch(branches), "develop")
+            service.invalidate_cached_git_data()
+            self.assertEqual(service.default_base_branch(branches), "main")
+
+    def test_language_scan_follows_git_ignore_rules_and_matches_file_count(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo(tmp)
+            self._write(repo, ".gitignore", "*.log\n!keep.log\n/generated/\n")
+            for path in ("a.py", "x.log", "keep.log", "generated/g.py", "node_modules/m.js", "vendor/v.js"):
+                self._write(repo, path)
+            self._write(repo, "forced/tracked.log")
+            self._git(repo, "add", "-A")
+            self._git(repo, "add", "-f", "forced/tracked.log")
+            self._git(repo, "commit", "-q", "-m", "first")
+            context, service = build_repo_context(
+                repo_dir=repo, language_mode="files", exclude_languages=set(), extra_ignored_dirs={"vendor"}
+            )
+            scanned = sorted(path for paths in context.files_by_language.values() for path in paths)
+            self.assertEqual(scanned, [".gitignore", "a.py", "forced/tracked.log", "keep.log"])
+            snapshot, _ = service.scan_repo_state()
+            self.assertEqual(snapshot.scanned_file_count, len(scanned))
+
+    def test_conflicted_file_is_scanned_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo(tmp)
+            self._write(repo, "a.py", "base\n")
+            self._git(repo, "add", "-A")
+            self._git(repo, "commit", "-q", "-m", "base")
+            self._git(repo, "checkout", "-q", "-b", "side")
+            self._write(repo, "a.py", "side\n")
+            self._git(repo, "commit", "-q", "-am", "side")
+            self._git(repo, "checkout", "-q", "main")
+            self._write(repo, "a.py", "main\n")
+            self._git(repo, "commit", "-q", "-am", "main")
+            subprocess.run(["git", "-C", repo, "merge", "-q", "side"], capture_output=True)
+            self.assertEqual(list_worktree_paths(repo), ["a.py"])
 
 
 class ManPageTests(unittest.TestCase):
