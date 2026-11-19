@@ -4,16 +4,26 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Mapping
 from pathlib import Path
 
-_config_home = os.environ.get("XDG_CONFIG_HOME")
-CONFIG_DIR = (Path(_config_home) if _config_home else Path.home() / ".config") / "vidi"
+
+def _config_dir(environ: Mapping[str, str], windows: bool) -> Path:
+    """The folder for the settings file."""
+    if environ.get("XDG_CONFIG_HOME"):
+        return Path(environ["XDG_CONFIG_HOME"]) / "vidi"
+    if windows and environ.get("APPDATA"):
+        return Path(environ["APPDATA"]) / "vidi"
+    return Path.home() / ".config" / "vidi"
+
+
+CONFIG_DIR = _config_dir(os.environ, os.name == "nt")
 CONFIG_PATH = CONFIG_DIR / "config.json"
 
 
 def _load() -> dict:
     try:
-        data = json.loads(CONFIG_PATH.read_text())
+        data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}
@@ -25,7 +35,7 @@ def _set_many(values: dict[str, object]) -> None:
         prefs = _load()
         prefs.update(values)
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        CONFIG_PATH.write_text(json.dumps(prefs, indent=2) + "\n")
+        CONFIG_PATH.write_text(json.dumps(prefs, indent=2) + "\n", encoding="utf-8")
     except OSError:
         pass
 

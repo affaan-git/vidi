@@ -92,11 +92,17 @@ def update_readme(text: str) -> str:
     return text[:start] + build_readme_keys() + text[end:]
 
 
+def _write(path: Path, text: str) -> None:
+    # The same bytes on every system, without CRLF line endings on Windows.
+    with open(path, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(text)
+
+
 def write_docs() -> None:
     MAN_DIR.mkdir(parents=True, exist_ok=True)
     for prog in PAGES:
-        (MAN_DIR / f"{prog}.1").write_text(build_manpage(prog))
-    README.write_text(update_readme(README.read_text()))
+        _write(MAN_DIR / f"{prog}.1", build_manpage(prog))
+    _write(README, update_readme(README.read_text(encoding="utf-8")))
 
 
 if __name__ == "__main__":

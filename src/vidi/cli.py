@@ -6,11 +6,13 @@ import argparse
 import os
 import subprocess
 import sys
+import textwrap
 from importlib.metadata import PackageNotFoundError, version
 
 from . import config
 from .app import VidiApp
 from .repository import build_initial_repo_context
+from .screens.help import SHORTCUTS
 
 
 def package_version() -> str:
@@ -21,12 +23,32 @@ def package_version() -> str:
         return "unknown"
 
 
+def keys_reference(width: int = 79) -> str:
+    """Every key section of the in-app help as plain text."""
+    key_width = max(len(key) for _, keys in SHORTCUTS for key, _ in keys)
+    indent = " " * (4 + key_width + 2)
+    lines = ["keys:"]
+    for section, keys in SHORTCUTS:
+        lines.append(f"  {section}:")
+        for key, description in keys:
+            lines += textwrap.wrap(
+                description,
+                width,
+                initial_indent=f"    {key:<{key_width}}  ",
+                subsequent_indent=indent,
+            )
+    lines.append("")
+    lines.append("Press ? in the app for the same keys.")
+    return "\n".join(lines)
+
+
 def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     """Description for the command line `-h` and the man page."""
     parser = argparse.ArgumentParser(
         prog=prog,
         description="browse a local git repository in the terminal",
-        epilog="Press ? in the app for the keys. For the full manual, run git view --help or man vidi",
+        epilog=keys_reference(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "--version",
@@ -56,16 +78,17 @@ def resolve_repo_dir(path: str) -> str:
     if not os.path.isdir(path):
         raise ValueError(f"directory does not exist: {path}")
     try:
-        top = subprocess.check_output(
+        output = subprocess.check_output(
             ["git", "-C", path, "rev-parse", "--show-toplevel"],
-            text=True,
             stderr=subprocess.DEVNULL,
-        ).strip()
+        )
     except (OSError, subprocess.CalledProcessError):
-        top = ""
+        output = b""
+    # Git prints the path as the file system stores it and with forward slashes on Windows.
+    top = os.fsdecode(output).strip()
     if not top:
         raise ValueError(f"not inside a git work tree: {path}")
-    return top
+    return os.path.normpath(top)
 
 
 def main() -> None:

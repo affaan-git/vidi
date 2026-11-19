@@ -126,10 +126,30 @@ def sample_repo() -> str:
 
 def git(repo, *args, input=None, env=None, check=True):
     """Run git in a test repo with a fixed identity and signing off, and return its output."""
+    # Bytes in and out keep the input exact, without newline or locale conversion on Windows.
     return subprocess.run(
         ['git', '-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', *args],
-        input=input, env=env, check=check, capture_output=True, text=True,
-    ).stdout
+        input=None if input is None else input.encode('utf-8'),
+        env=env, check=check, capture_output=True,
+    ).stdout.decode('utf-8')
+
+
+def write_file(folder, path, content='x\n'):
+    """Write a UTF-8 file with the given line endings, creating its folders."""
+    full = os.path.join(folder, path)
+    os.makedirs(os.path.dirname(full), exist_ok=True)
+    with open(full, 'w', encoding='utf-8', newline='') as handle:
+        handle.write(content)
+
+
+def commit_files(repo, files, message):
+    """Commit files straight into git without writing them to the work tree."""
+    records = []
+    for path, content in files.items():
+        blob = git(repo, 'hash-object', '-w', '--stdin', input=content).strip()
+        records.append(f'100644 blob {blob}\t{path}\0')
+    git(repo, 'update-index', '-z', '--index-info', input=''.join(records))
+    git(repo, 'commit', '-q', '-m', message)
 
 
 def new_repo(parent):

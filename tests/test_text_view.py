@@ -16,13 +16,12 @@ from vidi.screens.commit_detail import CommitDetailScreen
 from vidi.screens.file_view import FileViewScreen
 from vidi.text_view import TextView
 
-from sample_repo import git, load_repo, new_repo, temp_config
+from sample_repo import git, load_repo, new_repo, temp_config, write_file
 
 
 def _commit(repo: str, files: dict[str, str], message: str) -> None:
     for path, content in files.items():
-        with open(os.path.join(repo, path), "w") as handle:
-            handle.write(content)
+        write_file(repo, path, content)
     git(repo, "add", "-A")
     git(repo, "commit", "-q", "-m", message)
 

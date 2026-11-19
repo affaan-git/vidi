@@ -36,7 +36,8 @@ that commit and `Enter` on a file to read it.
 Press `f` from any panel or from the commit detail to browse the whole tree.
 Use `[` and `]` in the file list to step between commits. Files changed in
 the commit are marked with a dot. The branch picker shows how many commits each
-branch is ahead of or behind the default branch (from `origin/HEAD` or `main`/`master`).
+branch is ahead of or behind the default branch (derived from `origin/HEAD` or
+`main`/`master`).
 
 ## Install
 
@@ -65,7 +66,8 @@ git view    # or vidi
 ## Settings
 
 Apart from the path, everything is set inside the app from the command palette
-(`Ctrl+P`). Settings are saved to `~/.config/vidi/config.json` or
+(`Ctrl+P`). Settings are saved to `~/.config/vidi/config.json`
+(`%APPDATA%\vidi\config.json` on Windows) by default or
 `$XDG_CONFIG_HOME/vidi/config.json` when set.
 
 The command palette additionally exposes these settings:

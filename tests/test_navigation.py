@@ -6,10 +6,12 @@ import datetime as dt
 import io
 import os
 import shutil
+import subprocess
 import tempfile
 import sys
 import unittest
 from dataclasses import replace
+from pathlib import Path
 
 from rich.console import Console
 from rich.text import Text
@@ -62,7 +64,16 @@ from vidi.repository import (
 from vidi.theme import make_change_stat_style, resolve_theme_palette
 from vidi.utils import detect_language, rel_time
 
-from sample_repo import build_sample_repo, git, load_repo, new_repo, sample_repo, temp_config
+from sample_repo import (
+    build_sample_repo,
+    commit_files,
+    git,
+    load_repo,
+    new_repo,
+    sample_repo,
+    temp_config,
+    write_file,
+)
 
 
 def make_app() -> VidiApp:
@@ -1619,6 +1630,54 @@ class ResolveRepoDirTests(unittest.TestCase):
             self.assertIn(current, branches)
 
 
+def _run_with_latin1_locale(code: str, *args: str, env: dict[str, str] | None = None) -> str:
+    """Run Python code under a Latin-1 locale."""
+    environ = {
+        **os.environ,
+        **(env or {}),
+        "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+        "PYTHONUTF8": "0",
+        "LC_ALL": "en_US.ISO8859-1",
+        "LANG": "en_US.ISO8859-1",
+    }
+    return subprocess.run(
+        [sys.executable, "-c", code, *args], env=environ, capture_output=True, check=True
+    ).stdout.decode("ascii")
+
+
+class PlatformTests(unittest.TestCase):
+    def test_repo_path_is_decoded_with_the_file_system_encoding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = os.path.join(os.path.realpath(tmp), "caf\u00e9")
+            os.makedirs(repo)
+            git(repo, "init", "-q")
+            code = (
+                "import sys; from vidi.cli import resolve_repo_dir; "
+                "print(ascii(resolve_repo_dir(sys.argv[1])))"
+            )
+            self.assertEqual(_run_with_latin1_locale(code, repo).strip(), ascii(repo))
+
+    def test_settings_file_is_read_as_utf8_under_any_locale(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            write_file(tmp, "vidi/config.json", '{"ignore_dirs": ["caf\u00e9"]}\n')
+            code = (
+                "from vidi import config; "
+                "print(ascii(config.load_language_settings()['ignore_dirs']))"
+            )
+            output = _run_with_latin1_locale(code, env={"XDG_CONFIG_HOME": tmp})
+            self.assertEqual(output.strip(), ascii(["caf\u00e9"]))
+
+    def test_settings_folder_follows_xdg_then_appdata_on_windows(self) -> None:
+        from vidi.config import _config_dir
+
+        home = Path.home() / ".config" / "vidi"
+        both = {"XDG_CONFIG_HOME": "/x", "APPDATA": "/a"}
+        self.assertEqual(_config_dir(both, True), Path("/x", "vidi"))
+        self.assertEqual(_config_dir({"APPDATA": "/a"}, True), Path("/a", "vidi"))
+        self.assertEqual(_config_dir({"APPDATA": "/a"}, False), home)
+        self.assertEqual(_config_dir({}, True), home)
+
+
 class VersionTests(unittest.TestCase):
     def test_version_flag_prints_the_package_version(self) -> None:
         out = io.StringIO()
@@ -1634,8 +1693,9 @@ class HostileRepoTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo = new_repo(tmp)
             git(repo, "commit", "-q", "--allow-empty", "-m", "first")
-            target = os.path.join(tmp, "written")
-            git(repo, "update-ref", f"refs/heads/--output={target}", "HEAD")
+            # A ref name cannot hold a drive letter or a backslash.
+            target = os.path.join(repo, "written")
+            git(repo, "update-ref", "refs/heads/--output=written", "HEAD")
             service = RepoService(repo)
             branches, _, _ = get_branch_heads(repo)
             self.assertEqual(len(branches), 2)
@@ -1647,27 +1707,30 @@ class HostileRepoTests(unittest.IsolatedAsyncioTestCase):
     def test_repo_config_commands_do_not_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = new_repo(tmp)
-            marker = os.path.join(tmp, "ran")
-            with open(os.path.join(repo, "a.py"), "w") as handle:
-                handle.write("x = 1\n")
-            with open(os.path.join(repo, ".gitattributes"), "w") as handle:
-                handle.write("*.py diff=hostile\n")
+            textconv_marker = Path(tmp, "textconv ran").as_posix()
+            fsmonitor_marker = Path(tmp, "fsmonitor ran").as_posix()
+            write_file(repo, "a.py", "x = 1\n")
+            write_file(repo, ".gitattributes", "*.py diff=hostile\n")
             git(repo, "add", "-A")
             git(repo, "commit", "-q", "-m", "first")
-            git(repo, "config", "diff.hostile.textconv", f"touch {marker}; cat")
-            git(repo, "config", "core.fsmonitor", f"touch {marker}; true")
+            git(repo, "config", "diff.hostile.textconv", f"touch '{textconv_marker}'; cat")
+            git(repo, "config", "core.fsmonitor", f"touch '{fsmonitor_marker}'; true")
             context, service = load_repo(repo)
             head = service.get_branch_data("main").commits[0].commit_hash
             service.get_commit_detail(head)
             service.get_file_at_commit(head, "a.py")
             service.scan_repo_state()
-            self.assertFalse(os.path.exists(marker))
+            self.assertFalse(os.path.exists(textconv_marker))
+            self.assertFalse(os.path.exists(fsmonitor_marker))
+            git(repo, "show", "HEAD")
+            git(repo, "status")
+            self.assertTrue(os.path.exists(textconv_marker))
+            self.assertTrue(os.path.exists(fsmonitor_marker))
 
     def test_escape_sequences_in_repo_text_are_replaced(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = new_repo(tmp)
-            with open(os.path.join(repo, "a.txt"), "w") as handle:
-                handle.write("before\x1b]0;title\x07after\n")
+            write_file(repo, "a.txt", "before\x1b]0;title\x07after\n")
             git(repo, "add", "-A")
             git(repo, "-c", "user.name=t\x1b[31m", "commit", "-q", "-m", "msg \x1b[2J end")
             service = RepoService(repo)
@@ -1690,10 +1753,9 @@ class HostileRepoTests(unittest.IsolatedAsyncioTestCase):
             )
             commit = git(repo, "hash-object", "-t", "commit", "-w", "--stdin", input=commit_text).strip()
             git(repo, "update-ref", "refs/heads/main", commit)
-            marker = os.path.join(tmp, "ran")
+            marker = Path(tmp, "ran").as_posix()
             program = os.path.join(tmp, "fake-gpg")
-            with open(program, "w") as handle:
-                handle.write(f"#!/bin/sh\ntouch '{marker}'\n")
+            write_file(tmp, "fake-gpg", f"#!/bin/sh\ntouch '{marker}'\n")
             os.chmod(program, 0o755)
             git(repo, "config", "log.showSignature", "true")
             git(repo, "config", "gpg.program", program)
@@ -1701,17 +1763,16 @@ class HostileRepoTests(unittest.IsolatedAsyncioTestCase):
             service.get_branch_data("main")
             service.get_commit_detail(commit)
             self.assertFalse(os.path.exists(marker))
+            git(repo, "log", "--format=%H", check=False)
+            self.assertTrue(os.path.exists(marker))
 
     def test_escape_sequences_in_quoted_paths_are_replaced(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = new_repo(tmp)
             name = "evil\x1b]0;T\x07.py"
-            with open(os.path.join(repo, name), "w") as handle:
-                handle.write("x = 1\n")
-            git(repo, "add", "-A")
-            git(repo, "commit", "-q", "-m", "first")
-            git(repo, "mv", name, "evil\x1b[2Jmoved.py")
-            git(repo, "commit", "-q", "-m", "rename")
+            commit_files(repo, {name: "x = 1\n"}, "first")
+            git(repo, "rm", "-q", "--cached", "--", name)
+            commit_files(repo, {"evil\x1b[2Jmoved.py": "x = 1\n"}, "rename")
             service = RepoService(repo)
             for commit in service.get_branch_data("main").commits:
                 detail = service.get_commit_detail(commit.commit_hash)
@@ -1731,11 +1792,12 @@ class HostileRepoTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo = new_repo(tmp)
             outside = os.path.join(tmp, "outside")
-            with open(outside, "w") as handle:
-                handle.write("*.py\n")
-            with open(os.path.join(repo, "a.py"), "w") as handle:
-                handle.write("x = 1\n")
-            os.symlink(outside, os.path.join(repo, ".gitignore"))
+            write_file(tmp, "outside", "*.py\n")
+            write_file(repo, "a.py", "x = 1\n")
+            try:
+                os.symlink(outside, os.path.join(repo, ".gitignore"))
+            except OSError:
+                self.skipTest("this system cannot create symlinks")
             git_listed = [path for path in list_worktree_paths(repo) if path.endswith(".py")]
             _, files_by_language = scan_languages(repo, "files", set(), {".git"})
             self.assertEqual(files_by_language.get("Python", []), git_listed)
@@ -1745,9 +1807,7 @@ class HostileRepoTests(unittest.IsolatedAsyncioTestCase):
             repo = new_repo(tmp)
             git(repo, "commit", "-q", "--allow-empty", "-m", "fix [/] handling")
             git(repo, "commit", "-q", "--allow-empty", "-m", "[ci skip] bump version")
-            os.makedirs(os.path.join(repo, "[x]"))
-            with open(os.path.join(repo, "[x]", "a.py"), "w") as handle:
-                handle.write("x = 1\n")
+            write_file(repo, "[x]/a.py", "x = 1\n")
             git(repo, "add", "-A")
             git(repo, "commit", "-q", "-m", "add [slug] route")
             context, service = load_repo(repo)
@@ -1764,20 +1824,12 @@ class HostileRepoTests(unittest.IsolatedAsyncioTestCase):
 
 
 class GitDataTests(unittest.TestCase):
-    def _write(self, repo: str, path: str, content: str = "x\n") -> None:
-        full = os.path.join(repo, path)
-        os.makedirs(os.path.dirname(full), exist_ok=True)
-        with open(full, "w", encoding="utf-8") as handle:
-            handle.write(content)
-
     def test_paths_with_non_ascii_and_special_characters_display_and_open(self) -> None:
         names = ["caf\u00e9.py", "\u65e5\u672c/\u8aad\u3080.md", "emoji \U0001f642.txt", 'q"t.py', "tab\there.py", "new\nline.py", "back\\slash.py"]
         with tempfile.TemporaryDirectory() as tmp:
             repo = new_repo(tmp)
-            for name in names:
-                self._write(repo, name, f"content of {name}\n")
-            git(repo, "add", "-A")
-            git(repo, "commit", "-q", "-m", "add files")
+            # Straight into git as several of these file names are not valid on Windows.
+            commit_files(repo, {name: f"content of {name}\n" for name in names}, "add files")
             service = RepoService(repo, ignore_dirs={".git"})
             commit = service.get_branch_data("main").commits[0]
             detail = service.get_commit_detail(commit.commit_hash)
@@ -1795,16 +1847,16 @@ class GitDataTests(unittest.TestCase):
 
     def _merge_repo(self, tmp: str) -> str:
         repo = new_repo(tmp)
-        self._write(repo, "base.txt")
+        write_file(repo, "base.txt")
         git(repo, "add", "-A")
         git(repo, "commit", "-q", "-m", "base")
         git(repo, "checkout", "-q", "-b", "side")
-        self._write(repo, "side_a.txt")
-        self._write(repo, "side_b.txt")
+        write_file(repo, "side_a.txt")
+        write_file(repo, "side_b.txt")
         git(repo, "add", "-A")
         git(repo, "commit", "-q", "-m", "side")
         git(repo, "checkout", "-q", "main")
-        self._write(repo, "main.txt")
+        write_file(repo, "main.txt")
         git(repo, "add", "-A")
         git(repo, "commit", "-q", "-m", "main")
         git(repo, "merge", "-q", "--no-ff", "-m", "merge side", "side")
@@ -1886,10 +1938,10 @@ class GitDataTests(unittest.TestCase):
     def test_language_scan_follows_git_ignore_rules_and_matches_file_count(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = new_repo(tmp)
-            self._write(repo, ".gitignore", "*.log\n!keep.log\n/generated/\n")
+            write_file(repo, ".gitignore", "*.log\n!keep.log\n/generated/\n")
             for path in ("a.py", "x.log", "keep.log", "generated/g.py", "node_modules/m.js", "vendor/v.js"):
-                self._write(repo, path)
-            self._write(repo, "forced/tracked.log")
+                write_file(repo, path)
+            write_file(repo, "forced/tracked.log")
             git(repo, "add", "-A")
             git(repo, "add", "-f", "forced/tracked.log")
             git(repo, "commit", "-q", "-m", "first")
@@ -1902,23 +1954,32 @@ class GitDataTests(unittest.TestCase):
     def test_conflicted_file_is_scanned_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = new_repo(tmp)
-            self._write(repo, "a.py", "base\n")
+            write_file(repo, "a.py", "base\n")
             git(repo, "add", "-A")
             git(repo, "commit", "-q", "-m", "base")
             git(repo, "checkout", "-q", "-b", "side")
-            self._write(repo, "a.py", "side\n")
+            write_file(repo, "a.py", "side\n")
             git(repo, "commit", "-q", "-am", "side")
             git(repo, "checkout", "-q", "main")
-            self._write(repo, "a.py", "main\n")
+            write_file(repo, "a.py", "main\n")
             git(repo, "commit", "-q", "-am", "main")
             git(repo, "merge", "-q", "side", check=False)
             self.assertEqual(list_worktree_paths(repo), ["a.py"])
 
 
 class ManPageTests(unittest.TestCase):
+    def test_command_line_help_lists_every_key(self) -> None:
+        text = build_parser("vidi").format_help()
+        flat = " ".join(text.split())
+        for section, keys in SHORTCUTS:
+            self.assertIn(f"  {section}:\n", text)
+            for key, description in keys:
+                self.assertIn(" ".join(f"{key} {description}".split()), flat)
+        self.assertLessEqual(max(len(line) for line in text.splitlines()), 79)
+
     def test_shipped_pages_match_the_sources(self) -> None:
         for prog in PAGES:
-            shipped = (MAN_DIR / f"{prog}.1").read_text()
+            shipped = (MAN_DIR / f"{prog}.1").read_text(encoding="utf-8")
             self.assertEqual(
                 shipped,
                 build_manpage(prog),
@@ -1926,7 +1987,7 @@ class ManPageTests(unittest.TestCase):
             )
 
     def test_readme_key_tables_match_the_sources(self) -> None:
-        text = README.read_text()
+        text = README.read_text(encoding="utf-8")
         self.assertEqual(
             text, update_readme(text), "README key tables are stale. Run python -m vidi.docs"
         )
