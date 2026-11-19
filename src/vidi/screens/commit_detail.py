@@ -1187,7 +1187,7 @@ class CommitDetailScreen(ModalScreen[None]):
                 change = self.detail.file_changes[index]
                 section = self._section_for_change(index, change)
                 table.add_row(
-                    compact_label_for_change(change, section, file_width),
+                    Text(compact_label_for_change(change, section, file_width)),
                     self._build_stat_cell(change.additions, positive=True),
                     self._build_stat_cell(change.deletions, positive=False),
                     key=str(index),

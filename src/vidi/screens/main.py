@@ -611,8 +611,8 @@ class MainScreen(Screen[None]):
         for commit in visible:
             table.add_row(
                 commit.commit_hash[:7],
-                truncate_middle(commit.message, COMMIT_MESSAGE_WIDTH),
-                truncate_middle(commit.author_name, COMMIT_AUTHOR_WIDTH),
+                Text(truncate_middle(commit.message, COMMIT_MESSAGE_WIDTH)),
+                Text(truncate_middle(commit.author_name, COMMIT_AUTHOR_WIDTH)),
                 rel_time(commit.authored_at, now),
                 str(len(commit.changed_files)),
                 key=commit.commit_hash,
