@@ -166,10 +166,13 @@ def get_branch_heads(repo_dir: str) -> tuple[list[str], str, dict[str, str]]:
     return branches, head if head else branches[0], branch_heads
 
 
+GITIGNORE_MAX_BYTES = 1_000_000
+
+
 def parse_gitignore(repo_dir: str) -> set[str]:
     path = Path(repo_dir) / ".gitignore"
     names: set[str] = set()
-    if not path.exists():
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > GITIGNORE_MAX_BYTES:
         return names
     for raw in path.read_text(encoding="utf-8", errors="ignore").splitlines():
         line = raw.strip()

@@ -41,7 +41,13 @@ from vidi.render import (
     render_contribution_graph,
     resolve_heatmap_colors,
 )
-from vidi.repository import RepoService, build_initial_repo_context, build_repo_context, get_branch_heads
+from vidi.repository import (
+    RepoService,
+    build_initial_repo_context,
+    build_repo_context,
+    get_branch_heads,
+    parse_gitignore,
+)
 from vidi.theme import make_change_stat_style, resolve_theme_palette
 
 from sample_repo import sample_repo
@@ -1573,6 +1579,23 @@ class HostileRepoTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn("\x1b", text)
                 self.assertIn("\ufffd", text)
 
+
+    def test_gitignore_is_only_read_when_a_small_regular_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo(tmp)
+            gitignore = os.path.join(repo, ".gitignore")
+            outside = os.path.join(tmp, "outside")
+            with open(outside, "w") as handle:
+                handle.write("from-outside\n")
+            os.symlink(outside, gitignore)
+            self.assertEqual(parse_gitignore(repo), set())
+            os.remove(gitignore)
+            with open(gitignore, "w") as handle:
+                handle.write("too-big\n" + "#" * 1_000_000 + "\n")
+            self.assertEqual(parse_gitignore(repo), set())
+            with open(gitignore, "w") as handle:
+                handle.write("node_modules\n")
+            self.assertEqual(parse_gitignore(repo), {"node_modules"})
 
     async def test_markup_in_messages_and_paths_is_shown_as_text(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
