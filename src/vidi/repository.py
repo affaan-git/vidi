@@ -128,7 +128,7 @@ LANGUAGE_COLORS = {
 def run_git(repo_dir: str, args: list[str]) -> str:
     try:
         return subprocess.check_output(
-            ["git", *args],
+            ["git", "-c", "core.fsmonitor=false", *args],
             cwd=repo_dir,
             text=True,
             stderr=subprocess.PIPE,
@@ -587,6 +587,7 @@ class RepoService:
                 "--format=",
                 "--numstat",
                 "--find-renames",
+                "--no-textconv",
                 commit_hash,
             ],
         )
@@ -597,6 +598,7 @@ class RepoService:
                 "--format=",
                 "--patch",
                 "--find-renames",
+                "--no-textconv",
                 commit_hash,
             ],
         )

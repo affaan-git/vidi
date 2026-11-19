@@ -1532,6 +1532,28 @@ class HostileRepoTests(unittest.IsolatedAsyncioTestCase):
                 service.get_branch_divergence(branch, "main")
             self.assertFalse(os.path.exists(target))
 
+    def test_repo_config_commands_do_not_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo(tmp)
+            marker = os.path.join(tmp, "ran")
+            with open(os.path.join(repo, "a.py"), "w") as handle:
+                handle.write("x = 1\n")
+            with open(os.path.join(repo, ".gitattributes"), "w") as handle:
+                handle.write("*.py diff=hostile\n")
+            self._git(repo, "add", "-A")
+            self._git(repo, "commit", "-q", "-m", "first")
+            self._git(repo, "config", "diff.hostile.textconv", f"touch {marker}; cat")
+            self._git(repo, "config", "core.fsmonitor", f"touch {marker}; true")
+            context, service = build_repo_context(
+                repo_dir=repo, language_mode="bytes", exclude_languages=set(), extra_ignored_dirs=set()
+            )
+            head = service.get_branch_data("main").commits[0].commit_hash
+            service.get_commit_detail(head)
+            service.get_file_at_commit(head, "a.py")
+            service.scan_repo_state()
+            self.assertFalse(os.path.exists(marker))
+
+
     async def test_markup_in_messages_and_paths_is_shown_as_text(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = self._repo(tmp)
