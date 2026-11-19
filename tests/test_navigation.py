@@ -3,6 +3,9 @@ from __future__ import annotations
 import collections
 import datetime as dt
 import io
+import os
+import subprocess
+import tempfile
 import unittest
 from dataclasses import replace
 
@@ -38,7 +41,7 @@ from vidi.render import (
     render_contribution_graph,
     resolve_heatmap_colors,
 )
-from vidi.repository import build_initial_repo_context, build_repo_context
+from vidi.repository import RepoService, build_initial_repo_context, build_repo_context, get_branch_heads
 from vidi.theme import make_change_stat_style, resolve_theme_palette
 
 from sample_repo import sample_repo
@@ -1499,3 +1502,32 @@ class FilterTests(unittest.TestCase):
 
         filtered = filter_commits([recent, old], "7", None, now=now)
         self.assertEqual([item.commit_hash for item in filtered], [recent.commit_hash])
+
+
+class HostileRepoTests(unittest.TestCase):
+    def _repo(self, tmp: str) -> str:
+        repo = os.path.join(tmp, "repo")
+        os.makedirs(repo)
+        self._git(repo, "init", "-q", "-b", "main")
+        return repo
+
+    def _git(self, repo: str, *args: str) -> None:
+        subprocess.run(
+            ["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", *args],
+            check=True,
+            capture_output=True,
+        )
+
+    def test_branch_named_like_an_option_is_read_as_a_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo(tmp)
+            self._git(repo, "commit", "-q", "--allow-empty", "-m", "first")
+            target = os.path.join(tmp, "written")
+            self._git(repo, "update-ref", f"refs/heads/--output={target}", "HEAD")
+            service = RepoService(repo)
+            branches, _, _ = get_branch_heads(repo)
+            self.assertEqual(len(branches), 2)
+            for branch in branches:
+                self.assertEqual(len(service.get_branch_data(branch).commits), 1)
+                service.get_branch_divergence(branch, "main")
+            self.assertFalse(os.path.exists(target))

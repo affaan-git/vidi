@@ -339,8 +339,8 @@ class RepoService:
         if not base or branch == base:
             return (0, 0)
         try:
-            ahead = int(run_git(self.repo_dir, ["rev-list", "--count", f"{base}..{branch}"]).strip() or "0")
-            behind = int(run_git(self.repo_dir, ["rev-list", "--count", f"{branch}..{base}"]).strip() or "0")
+            ahead = int(run_git(self.repo_dir, ["rev-list", "--count", "--end-of-options", f"{base}..{branch}"]).strip() or "0")
+            behind = int(run_git(self.repo_dir, ["rev-list", "--count", "--end-of-options", f"{branch}..{base}"]).strip() or "0")
         except (RuntimeError, ValueError):
             return (0, 0)
         return (ahead, behind)
@@ -517,18 +517,20 @@ class RepoService:
             self.repo_dir,
             [
                 "log",
-                branch,
                 "--date=iso-strict",
                 "--pretty=format:%H%x1f%ad%x1f%an%x1f%ae%x1f%s",
+                "--end-of-options",
+                branch,
             ],
         )
         files_out = run_git(
             self.repo_dir,
             [
                 "log",
-                branch,
                 "--pretty=format:__COMMIT__%H",
                 "--name-only",
+                "--end-of-options",
+                branch,
             ],
         )
 
