@@ -177,7 +177,8 @@ python -m pytest -q
 > the `vidi -h` parser and the in-app help.  
 > **Regenerate with `python -m vidi.docs` after changing either.**  
 > A test will fail when they are out of date. Editable installs don't include
-> the man pages, which `git view --help` needs.
+> the man pages, which `git view --help` opens on macOS and Linux. On Windows
+> the keys are in `vidi -h` and `?`.
 
 ## License
 

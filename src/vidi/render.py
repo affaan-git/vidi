@@ -182,7 +182,7 @@ def build_graph_title(
     commit_count: int,
     palette: ThemePalette,
 ) -> Table:
-    range_label = dict(RANGE_PRESETS).get(range_value, range_value)
+    range_label = {value: label for label, value in RANGE_PRESETS}.get(range_value, range_value)
     status = Text()
     status.append(branch, style=make_style(palette.foreground))
     status.append(" · ", style=make_style(palette.muted))

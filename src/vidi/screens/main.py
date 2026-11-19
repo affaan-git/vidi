@@ -439,8 +439,10 @@ class MainScreen(DebouncedResize, Screen[None]):
     def _get_branch_data(self, branch: str) -> BranchData | None:
         return self._branch_data_cache.get(branch)
 
-    def _ensure_branch_loaded(self, branch: str) -> None:
-        if branch in self._branch_data_cache or branch in self._branch_load_tasks or not self.is_mounted:
+    def _ensure_branch_loaded(self, branch: str, *, reload: bool = False) -> None:
+        if branch in self._branch_load_tasks or not self.is_mounted:
+            return
+        if branch in self._branch_data_cache and not reload:
             return
         self._branch_load_tasks[branch] = asyncio.create_task(self._load_branch_data(branch))
 
@@ -904,13 +906,19 @@ class MainScreen(DebouncedResize, Screen[None]):
                 if new_context.current_branch in new_context.branches
                 else new_context.branches[0]
             )
-        stale_branches = set(self._branch_data_cache) - set(new_context.branches)
-        for branch in stale_branches:
+        old_heads = dict(previous_context.branch_heads)
+        new_heads = dict(new_context.branch_heads)
+        moved = {
+            branch
+            for branch in self._branch_data_cache
+            if new_heads.get(branch) != old_heads.get(branch)
+        }
+        for branch in moved - {self.selected_branch}:
             self._branch_data_cache.pop(branch, None)
         self.sub_title = self._build_repo_stats_sub_title()
         self._refresh_year_options()
         self.refresh_view()
-        self._ensure_branch_loaded(self.selected_branch)
+        self._ensure_branch_loaded(self.selected_branch, reload=self.selected_branch in moved)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         if self._suspend_table_events or event.data_table.id != "commits-table":
