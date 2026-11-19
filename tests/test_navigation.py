@@ -1006,7 +1006,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             await pilot.pause()
             self.assertTrue(screen.show_full_patch)
-            lines = screen._patch_base["full"].plain.split("\n")
+            lines = screen._full_patch_scroll().lines
             token = next(
                 (c for c in "etaoinsr" if sum(c in ln.lower() for ln in lines) >= 2), None
             )

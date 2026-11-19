@@ -117,6 +117,7 @@ Press `?` in the app for the same reference.
 | `/` | Filter the files list, or search the patch |
 | `enter` / `shift+enter` | Next / previous patch match while searching |
 | `n` / `N` | Next / previous patch match |
+| `left` / `right` | Scroll the patch sideways when lines are not wrapped |
 | `page up` / `page down` | Scroll by a page |
 | `home` / `end` | Jump to the top or bottom |
 | `esc` / `q` | Back (esc first closes the search) |
@@ -148,6 +149,7 @@ Press `?` in the app for the same reference.
 | `/` | Search in the file |
 | `enter` / `shift+enter` | Next / previous match while searching |
 | `n` / `N` | Next / previous match |
+| `left` / `right` | Scroll sideways when lines are not wrapped |
 | `[` / `]` | Previous / next file |
 | `page up` / `page down` | Scroll by a page |
 | `home` / `end` | Jump to the top or bottom |

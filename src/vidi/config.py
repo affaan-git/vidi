@@ -62,6 +62,24 @@ def save_transparent_background(value: bool) -> None:
     _set("transparent_background", bool(value))
 
 
+def load_wrap_file_view() -> bool:
+    """Whether the file view wraps long lines."""
+    return bool(_load().get("wrap_file_view", False))
+
+
+def save_wrap_file_view(value: bool) -> None:
+    _set("wrap_file_view", bool(value))
+
+
+def load_wrap_diffs() -> bool:
+    """Whether diffs and patches wrap long lines."""
+    return bool(_load().get("wrap_diffs", True))
+
+
+def save_wrap_diffs(value: bool) -> None:
+    _set("wrap_diffs", bool(value))
+
+
 def _str_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []

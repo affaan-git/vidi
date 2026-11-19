@@ -45,6 +45,9 @@ class VidiApp(App[None]):
         self.graph_browse = config.load_graph_browse()
         # When True the app themes use the terminal's default background.
         self.transparent_background = config.load_transparent_background()
+        # Whether long lines wrap in the file view and in diffs.
+        self.wrap_file_view = config.load_wrap_file_view()
+        self.wrap_diffs = config.load_wrap_diffs()
 
     def on_mount(self) -> None:
         # Register the app themes and restore the saved one, or the default.
@@ -93,6 +96,24 @@ class VidiApp(App[None]):
             "terminal (and its transparency) show through",
             self._command_toggle_transparent,
         )
+        file_wrap_label = (
+            "Stop wrapping lines in file view"
+            if self.wrap_file_view
+            else "Wrap lines in file view"
+        )
+        yield SystemCommand(
+            file_wrap_label,
+            "Toggle whether long lines in the file view wrap or scroll sideways",
+            self._command_toggle_wrap_file_view,
+        )
+        diff_wrap_label = (
+            "Stop wrapping lines in diffs" if self.wrap_diffs else "Wrap lines in diffs"
+        )
+        yield SystemCommand(
+            diff_wrap_label,
+            "Toggle whether long lines in diffs and patches wrap or scroll sideways",
+            self._command_toggle_wrap_diffs,
+        )
         yield SystemCommand(
             "Language settings",
             "Choose how languages are measured and what the scan skips",
@@ -132,6 +153,22 @@ class VidiApp(App[None]):
     def _command_toggle_graph_browse(self) -> None:
         self.graph_browse = not self.graph_browse
         config.save_graph_browse(self.graph_browse)
+
+    def _command_toggle_wrap_file_view(self) -> None:
+        self.wrap_file_view = not self.wrap_file_view
+        config.save_wrap_file_view(self.wrap_file_view)
+        self._apply_wrap_settings()
+
+    def _command_toggle_wrap_diffs(self) -> None:
+        self.wrap_diffs = not self.wrap_diffs
+        config.save_wrap_diffs(self.wrap_diffs)
+        self._apply_wrap_settings()
+
+    def _apply_wrap_settings(self) -> None:
+        for screen in list(self.screen_stack):
+            handler = getattr(screen, "apply_wrap_settings", None)
+            if callable(handler):
+                handler()
 
     def _command_toggle_transparent(self) -> None:
         self.transparent_background = not self.transparent_background

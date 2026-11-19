@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from functools import partial
 
-from rich.console import Console
+from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, ScrollableContainer, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import DataTable, Footer, Header, Input, Static
 
@@ -18,6 +18,7 @@ from ..data import compact_label_for_change, section_for_change
 from ..formatting import build_repo_stats_sub_title
 from ..models import CommitFileChange, CommitPatchSection, RepoContext, RepoScanSnapshot
 from ..repository import RepoService
+from ..text_view import Line, TextView
 from ..theme import make_change_stat_style, make_style, resolve_theme_palette
 from ..utils import rel_time, utc_now
 from .commit_files import CommitFilesScreen
@@ -136,14 +137,6 @@ class CommitDetailScreen(ModalScreen[None]):
     #commit-detail-selected-scroll,
     #commit-detail-full-scroll {
         height: 1fr;
-        overflow-y: auto;
-        scrollbar-gutter: stable;
-    }
-
-    #commit-detail-selected-content,
-    #commit-detail-full-content {
-        height: auto;
-        min-height: 1;
     }
 
     DataTable {
@@ -228,11 +221,8 @@ class CommitDetailScreen(ModalScreen[None]):
         self._theme_palette = resolve_theme_palette(self.app.current_theme)
         # in-patch search state
         self._search_query = ""
-        self._match_lines: list[int] = []
-        self._current_match = -1
-        self._patch_base: dict[str, Text] = {"selected": Text(), "full": Text()}
-        self._patch_offsets: list[int] | None = None
-        self._patch_offsets_key: tuple[str, int, int] = ("", 0, 0)
+        # The objects each patch view was last built from.
+        self._patch_built_from: dict[str, tuple[object, ...]] = {}
         # changed-files filter state, diff mode only
         self._files_query = ""
 
@@ -302,10 +292,8 @@ class CommitDetailScreen(ModalScreen[None]):
                 ):
                     yield Static(id="commit-detail-patch-title", classes="commit-detail-panel-title")
                     yield Input(placeholder="Search patch", id="commit-detail-search")
-                    with VerticalScroll(id="commit-detail-selected-scroll"):
-                        yield Static(id="commit-detail-selected-content")
-                    with VerticalScroll(id="commit-detail-full-scroll"):
-                        yield Static(id="commit-detail-full-content")
+                    yield TextView(wrap=self.app.wrap_diffs, id="commit-detail-selected-scroll")
+                    yield TextView(wrap=self.app.wrap_diffs, id="commit-detail-full-scroll")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -344,20 +332,20 @@ class CommitDetailScreen(ModalScreen[None]):
         if self.is_mounted:
             self._render_detail_view(refresh_patch_content=False)
 
-    def _focus_targets(self) -> tuple[VerticalScroll | DataTable, ...]:
+    def _focus_targets(self) -> tuple[ScrollableContainer | DataTable, ...]:
         return tuple(self._pane_target(pane) for pane in self._available_panes())
 
-    def _selected_patch_scroll(self) -> VerticalScroll:
-        return self.query_one("#commit-detail-selected-scroll", VerticalScroll)
+    def _selected_patch_scroll(self) -> TextView:
+        return self.query_one("#commit-detail-selected-scroll", TextView)
 
-    def _full_patch_scroll(self) -> VerticalScroll:
-        return self.query_one("#commit-detail-full-scroll", VerticalScroll)
+    def _full_patch_scroll(self) -> TextView:
+        return self.query_one("#commit-detail-full-scroll", TextView)
 
-    def _active_patch_scroll(self) -> VerticalScroll:
+    def _active_patch_scroll(self) -> TextView:
         return self._full_patch_scroll() if self.show_full_patch else self._selected_patch_scroll()
 
-    def _pane_target(self, pane: str) -> VerticalScroll | DataTable:
-        targets: dict[str, VerticalScroll | DataTable] = {
+    def _pane_target(self, pane: str) -> ScrollableContainer | DataTable:
+        targets: dict[str, ScrollableContainer | DataTable] = {
             "overview": self.query_one("#commit-detail-overview-scroll", VerticalScroll),
             "files": self._current_files_table(),
             "patch": self._active_patch_scroll(),
@@ -472,7 +460,7 @@ class CommitDetailScreen(ModalScreen[None]):
         self._update_files_table()
         self._files_table_signatures[table_id] = signature
 
-    def _focus_widget_for_name(self, name: str | None) -> VerticalScroll | DataTable | None:
+    def _focus_widget_for_name(self, name: str | None) -> ScrollableContainer | DataTable | None:
         if name == "overview":
             return self.query_one("#commit-detail-overview-scroll", VerticalScroll)
         if name == "patch":
@@ -734,11 +722,6 @@ class CommitDetailScreen(ModalScreen[None]):
         section = self._section_for_change(self.selected_file_index, change)
         return (section,) if section is not None else ()
 
-    def _patch_line_count(self, text: Text) -> int:
-        if not text.plain:
-            return 0
-        return text.plain.count("\n") + 1
-
     def _build_patch_title(self) -> Table:
         palette = self._theme_palette
         title = Table.grid(expand=True)
@@ -791,102 +774,135 @@ class CommitDetailScreen(ModalScreen[None]):
         title.add_row(current, modes)
         return title
 
-    def _render_patch_text(self, patch_text: str) -> Text:
+    def _patch_line_styles(self) -> dict[str, Style]:
         palette = self._theme_palette
-        text = Text()
+        return {
+            "header": make_style(palette.muted, bold=True),
+            "rename": make_style(palette.primary, bold=True),
+            "file": make_style(palette.muted),
+            "hunk": make_style(palette.primary, bold=True),
+            "added": make_style(palette.success),
+            "removed": make_style(palette.error),
+            "plain": make_style(palette.foreground),
+        }
+
+    @staticmethod
+    def _patch_line_kind(line: str) -> str:
+        if (
+            line.startswith("diff --git")
+            or line.startswith("index ")
+            or line.startswith("similarity index")
+        ):
+            return "header"
+        if line.startswith("rename from ") or line.startswith("rename to "):
+            return "rename"
+        if line.startswith("--- ") or line.startswith("+++ "):
+            return "file"
+        if line.startswith("@@"):
+            return "hunk"
+        if line.startswith("+") and not line.startswith("+++"):
+            return "added"
+        if line.startswith("-") and not line.startswith("---"):
+            return "removed"
+        return "plain"
+
+    def _append_patch_lines(
+        self,
+        lines: list[Line],
+        styles: list[Style],
+        patch_text: str,
+        line_styles: dict[str, Style],
+    ) -> None:
+        kind = self._patch_line_kind
         patch_lines = patch_text.splitlines()
-        for index, raw in enumerate(patch_lines):
-            line = raw.rstrip("\n")
-            style = make_style(palette.foreground)
-            if (
-                line.startswith("diff --git")
-                or line.startswith("index ")
-                or line.startswith("similarity index")
-            ):
-                style = make_style(palette.muted, bold=True)
-            elif line.startswith("rename from ") or line.startswith("rename to "):
-                style = make_style(palette.primary, bold=True)
-            elif line.startswith("--- ") or line.startswith("+++ "):
-                style = make_style(palette.muted)
-            elif line.startswith("@@"):
-                style = make_style(palette.primary, bold=True)
-            elif line.startswith("+") and not line.startswith("+++"):
-                style = make_style(palette.success)
-            elif line.startswith("-") and not line.startswith("---"):
-                style = make_style(palette.error)
-            text.append(line, style=style)
-            if index < len(patch_lines) - 1:
-                text.append("\n")
-        return text
+        lines.extend(patch_lines)
+        styles.extend([line_styles[kind(line)] for line in patch_lines])
+
+    def _patch_sources_changed(self, key: str, sources: tuple[object, ...]) -> bool:
+        """Record the objects a patch view is built from and report whether they changed."""
+        built = self._patch_built_from.get(key)
+        same = built is not None and len(built) == len(sources) and all(
+            old is new for old, new in zip(built, sources)
+        )
+        self._patch_built_from[key] = sources
+        return not same
+
+    def _fill_selected_patch(self, line_styles: dict[str, Style]) -> None:
+        palette = self._theme_palette
+        sections = self._visible_patch_sections()
+        if not self._patch_sources_changed("selected", (palette, *sections)):
+            return
+        lines: list[Line] = []
+        styles: list[Style] = []
+        for section_index, section in enumerate(sections):
+            if section_index > 0:
+                lines.append("")
+                styles.append(line_styles["plain"])
+            self._append_patch_lines(lines, styles, section.patch, line_styles)
+        if not sections:
+            lines.append("No diff available for this selection.")
+            styles.append(make_style(palette.muted, bold=True))
+        self._selected_patch_scroll().set_lines(lines, styles)
+
+    def _fill_full_patch(self, line_styles: dict[str, Style]) -> None:
+        palette = self._theme_palette
+        if not self._patch_sources_changed("full", (palette, self.detail)):
+            return
+        self._patch_section_offsets = {}
+        self._outline_offsets = []
+        lines: list[Line] = []
+        styles: list[Style] = []
+        for section_index, section in enumerate(self.detail.patch_sections):
+            if section_index > 0:
+                lines.append("")
+                styles.append(line_styles["plain"])
+            self._patch_section_offsets[section] = len(lines)
+            file_index = self._file_index_for_section(section)
+            if file_index is not None:
+                self._outline_offsets.append((len(lines), file_index))
+            title = section.path
+            if section.is_rename:
+                title = f"{section.old_path} -> {section.new_path}"
+            heading = Text(title, style=make_style(palette.foreground, bold=True))
+            if section.is_binary:
+                heading.append("  [binary]", style=make_style(palette.muted, bold=True))
+            lines.append(heading)
+            styles.append(line_styles["plain"])
+            self._append_patch_lines(lines, styles, section.patch, line_styles)
+        if not self.detail.patch_sections:
+            lines.append("No patch available for this commit.")
+            styles.append(make_style(palette.muted, bold=True))
+        self._full_patch_scroll().set_lines(lines, styles)
 
     def _render_patch_panel(
         self,
         *,
         refresh_content: bool,
     ) -> None:
-        palette = self._theme_palette
+        if refresh_content:
+            palette = self._theme_palette
+            line_styles = self._patch_line_styles()
+            for view in (self._selected_patch_scroll(), self._full_patch_scroll()):
+                view.set_match_styles(
+                    make_style(palette.selected_fg, background=palette.selected_bg),
+                    make_style(palette.selected_fg, background=palette.primary, bold=True),
+                )
+            self._fill_selected_patch(line_styles)
+            self._fill_full_patch(line_styles)
+            self._active_patch_scroll().search(self._search_query)
         self.query_one("#commit-detail-patch-title", Static).update(self._build_patch_title())
 
-        if refresh_content:
-            selected_content = Text()
-            full_content = Text()
-            self._patch_section_offsets = {}
-            self._outline_offsets = []
-            selected_sections = self._visible_patch_sections()
-            if selected_sections:
-                for section_index, section in enumerate(selected_sections):
-                    rendered_patch = self._render_patch_text(section.patch)
-                    selected_content.append(rendered_patch)
-                    if section_index < len(selected_sections) - 1:
-                        selected_content.append("\n\n")
-            else:
-                selected_content.append(
-                    "No diff available for this selection.",
-                    style=make_style(palette.muted, bold=True),
-                )
+    def apply_wrap_settings(self) -> None:
+        for view in (self._selected_patch_scroll(), self._full_patch_scroll()):
+            view.wrap = self.app.wrap_diffs
 
-            current_line = 0
-            if self.detail.patch_sections:
-                for section_index, section in enumerate(self.detail.patch_sections):
-                    self._patch_section_offsets[section] = current_line
-                    file_index = self._file_index_for_section(section)
-                    if file_index is not None:
-                        self._outline_offsets.append((current_line, file_index))
-                    line = Text()
-                    if section.is_rename:
-                        line.append(
-                            f"{section.old_path} -> {section.new_path}",
-                            style=make_style(palette.foreground, bold=True),
-                        )
-                    else:
-                        line.append(
-                            section.path,
-                            style=make_style(palette.foreground, bold=True),
-                        )
-                    if section.is_binary:
-                        line.append("  [binary]", style=make_style(palette.muted, bold=True))
-                    full_content.append(line)
-                    full_content.append("\n")
-                    current_line += 1
+    @property
+    def _match_lines(self) -> list[int]:
+        return self._active_patch_scroll().matches
 
-                    rendered_patch = self._render_patch_text(section.patch)
-                    full_content.append(rendered_patch)
-                    current_line += self._patch_line_count(rendered_patch)
-                    if section_index < len(self.detail.patch_sections) - 1:
-                        full_content.append("\n\n")
-                        current_line += 2
-            else:
-                full_content.append(
-                    "No patch available for this commit.",
-                    style=make_style(palette.muted, bold=True),
-                )
-
-            self.query_one("#commit-detail-selected-content", Static).update(selected_content)
-            self.query_one("#commit-detail-full-content", Static).update(full_content)
-            # Un-highlighted copies for the search overlay.
-            self._patch_base = {"selected": selected_content, "full": full_content}
-            if self._search_query:
-                self._apply_patch_search(recompute=True)
+    @property
+    def _current_match(self) -> int:
+        return self._active_patch_scroll().current_match
 
     # In-patch search
 
@@ -935,9 +951,10 @@ class CommitDetailScreen(ModalScreen[None]):
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "commit-detail-search":
             self._search_query = event.value
-            self._apply_patch_search(recompute=True)
-            if self._match_lines:
-                self._scroll_to_patch_match()
+            view = self._active_patch_scroll()
+            view.search(self._search_query)
+            self._render_patch_panel(refresh_content=False)
+            view.scroll_to_current_match()
         elif event.input.id == "commit-detail-files-filter":
             self._files_query = event.value
             self._refresh_files_table(force=True)
@@ -972,89 +989,6 @@ class CommitDetailScreen(ModalScreen[None]):
         self._render_files_meta()
         self._current_files_table().focus()
 
-    def _active_patch_key(self) -> str:
-        return "full" if self.show_full_patch else "selected"
-
-    def _recompute_patch_matches(self, base: Text, query: str) -> None:
-        if query:
-            lines = base.plain.split("\n")
-            self._match_lines = [i for i, line in enumerate(lines) if query in line.lower()]
-        else:
-            self._match_lines = []
-        self._current_match = 0 if self._match_lines else -1
-        self._patch_offsets = None
-
-    def _apply_patch_search(self, *, recompute: bool) -> None:
-        key = self._active_patch_key()
-        base = self._patch_base[key]
-        query = self._search_query.lower()
-        palette = self._theme_palette
-        if recompute:
-            self._recompute_patch_matches(base, query)
-
-        display = base.copy()
-        if query and self._match_lines:
-            lines = base.plain.split("\n")
-            all_style = make_style(palette.selected_fg, background=palette.selected_bg)
-            current_style = make_style(palette.selected_fg, background=palette.primary, bold=True)
-            current_line = (
-                self._match_lines[self._current_match]
-                if 0 <= self._current_match < len(self._match_lines)
-                else -1
-            )
-            offset = 0
-            for index, line in enumerate(lines):
-                if query in line.lower():
-                    style = current_style if index == current_line else all_style
-                    lowered = line.lower()
-                    pos = 0
-                    while True:
-                        found = lowered.find(query, pos)
-                        if found < 0:
-                            break
-                        display.stylize(style, offset + found, offset + found + len(query))
-                        pos = found + len(query)
-                offset += len(line) + 1
-
-        static_id = (
-            "#commit-detail-full-content"
-            if self.show_full_patch
-            else "#commit-detail-selected-content"
-        )
-        self.query_one(static_id, Static).update(display)
-        self.query_one("#commit-detail-patch-title", Static).update(self._build_patch_title())
-
-    def _ensure_patch_offsets(self) -> None:
-        key = self._active_patch_key()
-        base = self._patch_base[key]
-        static_id = (
-            "#commit-detail-full-content"
-            if self.show_full_patch
-            else "#commit-detail-selected-content"
-        )
-        static = self.query_one(static_id, Static)
-        width = max(1, static.content_region.width or static.size.width or 80)
-        cache_key = (key, width, len(base.plain))
-        if self._patch_offsets is not None and self._patch_offsets_key == cache_key:
-            return
-        console = Console(width=width)
-        offsets: list[int] = []
-        row = 0
-        for line in base.plain.split("\n"):
-            offsets.append(row)
-            row += max(1, len(Text(line).wrap(console, width)))
-        self._patch_offsets = offsets
-        self._patch_offsets_key = cache_key
-
-    def _scroll_to_patch_match(self) -> None:
-        if not 0 <= self._current_match < len(self._match_lines):
-            return
-        self._ensure_patch_offsets()
-        line = self._match_lines[self._current_match]
-        assert self._patch_offsets is not None
-        target = self._patch_offsets[line] if line < len(self._patch_offsets) else 0
-        self._active_patch_scroll().scroll_to(y=max(0, target - 2), animate=False)
-
     def action_next_match(self) -> None:
         self._step_match(1)
 
@@ -1069,11 +1003,12 @@ class CommitDetailScreen(ModalScreen[None]):
         self.action_prev_match()
 
     def _step_match(self, delta: int) -> None:
-        if not self._match_lines:
+        view = self._active_patch_scroll()
+        if not view.matches:
             return
-        self._current_match = (self._current_match + delta) % len(self._match_lines)
-        self._apply_patch_search(recompute=False)
-        self._scroll_to_patch_match()
+        view.step_match(delta)
+        self._render_patch_panel(refresh_content=False)
+        view.scroll_to_current_match()
 
     def _scroll_patch_to_selected(self) -> None:
         if not self.show_full_patch or not self.detail.file_changes:
@@ -1086,7 +1021,7 @@ class CommitDetailScreen(ModalScreen[None]):
         if offset is None:
             return
         patch_scroll = self._full_patch_scroll()
-        target_y = max(offset - 1, 0)
+        target_y = patch_scroll.row_for_line(offset)
         if int(patch_scroll.scroll_y) == target_y:
             self._ignore_next_patch_scroll_sync = False
             return
@@ -1122,7 +1057,7 @@ class CommitDetailScreen(ModalScreen[None]):
             or patch_scroll.size.height
             or 1
         )
-        anchor_line = max(int(scroll_y) + max(viewport_height // 2, 0), 0)
+        anchor_line = patch_scroll.line_at_row(int(scroll_y) + max(viewport_height // 2, 0))
         active_index = self._outline_offsets[0][1]
         for offset, file_index in self._outline_offsets:
             if offset > anchor_line:
@@ -1214,7 +1149,7 @@ class CommitDetailScreen(ModalScreen[None]):
             self._render_patch_panel(refresh_content=True)
             self._schedule_reconcile(focus_target="patch")
 
-    def _scroll_target(self) -> VerticalScroll | DataTable:
+    def _scroll_target(self) -> ScrollableContainer | DataTable:
         return self._pane_target(self.active_pane)
 
     def action_focus_next_pane(self) -> None:

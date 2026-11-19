@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-from rich.console import Console
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical, VerticalScroll
+from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Footer, Input, Static
 
-from ..models import ThemePalette
 from ..repository import RepoService
+from ..text_view import TextView
 from ..theme import make_style, resolve_theme_palette
 
 
@@ -55,14 +54,8 @@ class FileViewScreen(ModalScreen[None]):
         border: solid $primary;
     }
 
-    #file-view-scroll {
-        height: 1fr;
-        scrollbar-gutter: stable;
-    }
-
     #file-view-content {
-        height: auto;
-        min-height: 1;
+        height: 1fr;
     }
     """
 
@@ -71,6 +64,8 @@ class FileViewScreen(ModalScreen[None]):
         Binding("up", "scroll_up", "Up", priority=True, group=MOVE_GROUP),
         Binding("j", "nav_down", "Down", priority=True, show=False),
         Binding("k", "nav_up", "Up", priority=True, show=False),
+        Binding("left", "scroll_left", "Left", priority=True, show=False),
+        Binding("right", "scroll_right", "Right", priority=True, show=False),
         Binding("slash", "open_search", "Search"),
         Binding("enter", "next_match", "Next Match", priority=True),
         Binding("shift+enter", "prev_match", "Prev Match", priority=True),
@@ -95,12 +90,7 @@ class FileViewScreen(ModalScreen[None]):
         self._files = files
         self._index = index
         self._binary = False
-        self._lines: list[str] = []
         self._query = ""
-        self._match_lines: list[int] = []
-        self._current_match = -1
-        self._row_offsets: list[int] | None = None
-        self._offsets_width = 0
 
     @property
     def _path(self) -> str:
@@ -110,26 +100,52 @@ class FileViewScreen(ModalScreen[None]):
         with Vertical(id="file-view-box"):
             yield Static(id="file-view-title")
             yield Input(placeholder="Search in file", id="file-view-search")
-            with VerticalScroll(id="file-view-scroll"):
-                yield Static(id="file-view-content")
+            yield TextView(
+                wrap=self.app.wrap_file_view, line_numbers=True, id="file-view-content"
+            )
         yield Footer()
 
     def on_mount(self) -> None:
         self.styles.background = resolve_theme_palette(self.app.current_theme).overlay
         self._load_content()
         self._render_view()
-        scroll = self._scroll()
-        scroll.can_focus = True
-        scroll.focus()
+        self._scroll().focus()
 
     # Content
 
     def _load_content(self) -> None:
+        palette = resolve_theme_palette(self.app.current_theme)
         content = self._service.get_file_at_commit(self._commit_hash, self._path)
         self._binary = content is None
-        self._lines = [] if content is None else (content.splitlines() or [""])
-        self._row_offsets = None
-        self._recompute_matches()
+        view = self._scroll()
+        view.set_match_styles(
+            make_style(palette.foreground, background=palette.selected_bg),
+            make_style(palette.selected_fg, background=palette.primary, bold=True),
+        )
+        if content is None:
+            view.set_lines(
+                ["Unable to show this file (it may be binary)."],
+                make_style(palette.muted, bold=True),
+            )
+            view.search("")
+        else:
+            view.set_lines(
+                content.splitlines() or [""],
+                make_style(palette.foreground),
+                gutter_style=make_style(palette.muted),
+            )
+            view.search(self._query)
+
+    @property
+    def _match_lines(self) -> list[int]:
+        return self._scroll().matches
+
+    @property
+    def _current_match(self) -> int:
+        return self._scroll().current_match
+
+    def apply_wrap_settings(self) -> None:
+        self._scroll().wrap = self.app.wrap_file_view
 
     def _render_view(self) -> None:
         palette = resolve_theme_palette(self.app.current_theme)
@@ -148,52 +164,6 @@ class FileViewScreen(ModalScreen[None]):
             else:
                 title.append("  no matches", style=make_style(palette.muted))
         self.query_one("#file-view-title", Static).update(title)
-        self.query_one("#file-view-content", Static).update(self._build_content(palette))
-
-    def _build_content(self, palette: ThemePalette) -> Text:
-        text = Text()
-        if self._binary:
-            text.append(
-                "Unable to show this file (it may be binary).",
-                style=make_style(palette.muted, bold=True),
-            )
-            return text
-        query = self._query.lower()
-        current_line = (
-            self._match_lines[self._current_match]
-            if 0 <= self._current_match < len(self._match_lines)
-            else -1
-        )
-        gutter = len(str(len(self._lines)))
-        for index, line in enumerate(self._lines):
-            if index > 0:
-                text.append("\n")
-            text.append(f"{index + 1:>{gutter}}  ", style=make_style(palette.muted))
-            if query and query in line.lower():
-                self._append_highlighted(text, line, query, palette, index == current_line)
-            else:
-                text.append(line, style=make_style(palette.foreground))
-        return text
-
-    def _append_highlighted(
-        self, text: Text, line: str, query: str, palette: ThemePalette, current: bool
-    ) -> None:
-        plain = make_style(palette.foreground)
-        match_style = (
-            make_style(palette.selected_fg, background=palette.primary, bold=True)
-            if current
-            else make_style(palette.foreground, background=palette.selected_bg)
-        )
-        lowered = line.lower()
-        start = 0
-        while True:
-            found = lowered.find(query, start)
-            if found < 0:
-                text.append(line[start:], style=plain)
-                return
-            text.append(line[start:found], style=plain)
-            text.append(line[found : found + len(query)], style=match_style)
-            start = found + len(query)
 
     # Search
 
@@ -207,8 +177,13 @@ class FileViewScreen(ModalScreen[None]):
             return False
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        # While typing a search, j/k go to the input and the arrows keep scrolling.
-        if self._search_focused() and action in ("nav_down", "nav_up"):
+        # While typing a search, j/k and left/right go to the input and up/down keep scrolling.
+        if self._search_focused() and action in (
+            "nav_down",
+            "nav_up",
+            "scroll_left",
+            "scroll_right",
+        ):
             return False
         # Match keys work only while searching or when there are matches.
         if action in ("next_match", "prev_match"):
@@ -224,21 +199,11 @@ class FileViewScreen(ModalScreen[None]):
         if event.input.id != "file-view-search":
             return
         self._query = event.value
-        self._recompute_matches()
+        if not self._binary:
+            self._scroll().search(self._query)
         self._render_view()
         # Jump to the first match as you type.
-        if self._match_lines:
-            self._scroll_to_current()
-
-    def _recompute_matches(self) -> None:
-        query = self._query.lower()
-        if query and not self._binary:
-            self._match_lines = [
-                index for index, line in enumerate(self._lines) if query in line.lower()
-            ]
-        else:
-            self._match_lines = []
-        self._current_match = 0 if self._match_lines else -1
+        self._scroll().scroll_to_current_match()
 
     def action_next_match(self) -> None:
         self._step_match(1)
@@ -247,37 +212,12 @@ class FileViewScreen(ModalScreen[None]):
         self._step_match(-1)
 
     def _step_match(self, delta: int) -> None:
-        if not self._match_lines:
+        view = self._scroll()
+        if not view.matches:
             return
-        self._current_match = (self._current_match + delta) % len(self._match_lines)
+        view.step_match(delta)
         self._render_view()
-        self._scroll_to_current()
-
-    def _ensure_offsets(self) -> None:
-        scroll = self._scroll()
-        width = max(1, scroll.content_region.width or scroll.size.width or 80)
-        if self._row_offsets is not None and self._offsets_width == width:
-            return
-        console = Console(width=width)
-        gutter = len(str(len(self._lines)))
-        offsets: list[int] = []
-        row = 0
-        for index, line in enumerate(self._lines):
-            offsets.append(row)
-            wrapped = Text(f"{index + 1:>{gutter}}  {line}").wrap(console, width)
-            row += max(1, len(wrapped))
-        self._row_offsets = offsets
-        self._offsets_width = width
-
-    def _scroll_to_current(self) -> None:
-        if not 0 <= self._current_match < len(self._match_lines):
-            return
-        self._ensure_offsets()
-        line = self._match_lines[self._current_match]
-        assert self._row_offsets is not None
-        target = self._row_offsets[line] if line < len(self._row_offsets) else 0
-        # keep a little context above the match
-        self._scroll().scroll_to(y=max(0, target - 2), animate=False)
+        view.scroll_to_current_match()
 
     def _close_search(self) -> None:
         # Hide the box but keep the matches and highlights for n / N.
@@ -301,8 +241,8 @@ class FileViewScreen(ModalScreen[None]):
 
     # Scrolling
 
-    def _scroll(self) -> VerticalScroll:
-        return self.query_one("#file-view-scroll", VerticalScroll)
+    def _scroll(self) -> TextView:
+        return self.query_one("#file-view-content", TextView)
 
     def action_scroll_down(self) -> None:
         self._scroll().scroll_down(animate=False)
@@ -316,6 +256,12 @@ class FileViewScreen(ModalScreen[None]):
 
     def action_nav_up(self) -> None:
         self.action_scroll_up()
+
+    def action_scroll_left(self) -> None:
+        self._scroll().scroll_left(animate=False)
+
+    def action_scroll_right(self) -> None:
+        self._scroll().scroll_right(animate=False)
 
     def action_page_down(self) -> None:
         self._scroll().scroll_page_down(animate=False)
