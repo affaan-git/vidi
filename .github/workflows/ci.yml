@@ -25,11 +25,15 @@ jobs:
 
   test:
     needs: versions
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         python-version: ["${{ needs.versions.outputs.floor }}", "3.x"]
+        include:
+          - os: macos-latest
+            python-version: "3.x"
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python ${{ matrix.python-version }}

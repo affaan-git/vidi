@@ -36,7 +36,7 @@ that commit and `Enter` on a file to read it.
 Press `f` from any panel or from the commit detail to browse the whole tree.
 Use `[` and `]` in the file list to step between commits. Files changed in
 the commit are marked with a dot. The branch picker shows how many commits each
-branch is ahead of or behind `main` or `master`.
+branch is ahead of or behind the default branch (from `origin/HEAD` or `main`/`master`).
 
 ## Install
 
@@ -45,7 +45,7 @@ pipx install vidi    # or uv tool install vidi or pip install vidi
 ```
 
 > [!IMPORTANT]
-> Requires Python 3.9+ and `git` on `PATH`.
+> Requires Python 3.9+ and `git` 2.24+ on `PATH`.
 
 ## Run
 
@@ -78,6 +78,8 @@ The command palette additionally exposes these settings:
 - "Language settings" chooses whether languages are measured by bytes or file
   count, which languages to exclude, and which extra directories the scan skips.
 - "Change theme" picks a theme. "Reset theme to default" switches back to the default.
+- "Wrap lines in diffs" and "Wrap lines in file view" choose whether long lines
+  wrap or scroll sideways. Diffs wrap by default.
 
 ## Keys
 
