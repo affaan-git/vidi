@@ -188,6 +188,8 @@ def scan_languages(
     for root, dirs, files in os.walk(repo_dir):
         dirs[:] = [directory for directory in dirs if directory not in ignore_dirs]
         for filename in files:
+            if filename == ".git":
+                continue
             full_path = os.path.join(root, filename)
             if not os.path.isfile(full_path):
                 continue
