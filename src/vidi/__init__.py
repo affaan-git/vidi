@@ -1,4 +1,4 @@
-"""vidi -- a Textual viewer for a local Git repository."""
+"""A read-only terminal viewer for a local Git repository."""
 
 from .app import VidiApp
 

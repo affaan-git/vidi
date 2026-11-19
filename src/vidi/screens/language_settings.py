@@ -1,6 +1,8 @@
-"""Modal for the language-scan settings, replacing the old CLI flags."""
+"""Modal for the language-scan settings."""
 
 from __future__ import annotations
+
+from typing import Optional
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -11,7 +13,7 @@ from textual.widgets import Button, Input, Label, Select, Static
 from ..theme import resolve_theme_palette
 
 
-class LanguageSettingsScreen(ModalScreen[dict | None]):
+class LanguageSettingsScreen(ModalScreen[Optional[dict]]):
     """Edit how languages are measured and what the scan skips.
 
     Dismisses with the new settings dict, or None if cancelled.

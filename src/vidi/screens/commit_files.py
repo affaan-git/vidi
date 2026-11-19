@@ -1,4 +1,4 @@
-"""Modal listing the files in a commit's tree; open one, filter, or step commits."""
+"""Modal listing the files in a commit's tree."""
 
 from __future__ import annotations
 
@@ -16,12 +16,11 @@ from .file_view import FileViewScreen
 
 
 class CommitFilesScreen(ModalScreen[None]):
-    """Browse a commit's files: Enter opens one, / filters, [ / ] step commits.
+    """Browse, filter and open a commit's files, and step between commits.
 
-    With ``language`` set, lists just that language's files at the commit;
-    without, the whole tree. Files changed in the commit are marked with a dot.
-    The commit list is newest-first (as everywhere else); commits are numbered
-    oldest-first, so ``]`` (newer) counts up and ``[`` (older) counts down.
+    With ``language`` set it lists that language's files at the commit, and
+    without it the whole tree. Files changed in the commit are marked with a dot.
+    The commit list is newest-first and the commits are numbered oldest-first.
     """
 
     MOVE_GROUP = Binding.Group("Move", compact=True)
@@ -123,7 +122,7 @@ class CommitFilesScreen(ModalScreen[None]):
         return list(self._service.get_commit_files(self._commit_hash))
 
     def _reload(self) -> None:
-        """Re-read the current commit's files + change set, then render."""
+        """Re-read the current commit's files and change set, then render."""
         self._all_files = self._files_for_current()
         self._changed = {
             change.path
@@ -132,7 +131,7 @@ class CommitFilesScreen(ModalScreen[None]):
         self._render_options()
 
     def _render_options(self) -> None:
-        """Apply the active filter and rebuild the list + title (no git calls)."""
+        """Apply the active filter and rebuild the list and title without git calls."""
         palette = resolve_theme_palette(self.app.current_theme)
         query = self._query.strip().lower()
         self._files = (
@@ -172,7 +171,7 @@ class CommitFilesScreen(ModalScreen[None]):
         title.append(f"{label}  ", style=make_style(palette.foreground, bold=True))
         detail = f"{count} in commit {self._commit_hash[:7]}"
         if len(self._commit_hashes) > 1:
-            # commits numbered oldest-first (oldest = 1); list is newest-first
+            # Number the commits oldest-first in the newest-first list.
             total_commits = len(self._commit_hashes)
             detail += f"  ({total_commits - self._index}/{total_commits})"
         title.append(detail, style=make_style(palette.muted))
@@ -180,7 +179,7 @@ class CommitFilesScreen(ModalScreen[None]):
             title.append("    ● changed here", style=make_style(palette.primary))
         self.query_one("#commit-files-title", Static).update(title)
 
-    # -- filtering ---------------------------------------------------------
+    # Filtering
 
     def action_open_filter(self) -> None:
         inp = self._filter_input()
@@ -205,7 +204,7 @@ class CommitFilesScreen(ModalScreen[None]):
         self._render_options()
         self._options().focus()
 
-    # -- navigation --------------------------------------------------------
+    # Navigation
 
     def action_cursor_down(self) -> None:
         self._options().action_cursor_down()
@@ -214,7 +213,7 @@ class CommitFilesScreen(ModalScreen[None]):
         self._options().action_cursor_up()
 
     def action_next_commit(self) -> None:
-        # newest-first list: "next" (newer) steps toward index 0
+        # Newer commits sit toward index 0 in the newest-first list.
         self._go_to_commit(self._index - 1)
 
     def action_prev_commit(self) -> None:

@@ -1,8 +1,7 @@
 """Deterministic sample repository for the test suite.
 
-Rebuilds a small multi-language git repo in a temp dir so the tests are
-self-contained: no checked-in .git, no external fixture. Identity and dates
-are pinned, so language stats and the contribution heatmap stay stable.
+Rebuilds a small multi-language git repo in a temp dir with a pinned identity
+and pinned dates.
 """
 from __future__ import annotations
 
@@ -70,7 +69,7 @@ _DEV_BRANCHES = ['dev2', 'dev3', 'dev4', 'dev5', 'dev6', 'dev7', 'dev8']
 
 
 def build_sample_repo(path: str) -> None:
-    """Create the sample repo at ``path`` (must be empty)."""
+    """Create the sample repo at ``path``, which must be empty."""
     env = {
         **os.environ,
         'GIT_CONFIG_GLOBAL': os.devnull,
@@ -112,8 +111,8 @@ def build_sample_repo(path: str) -> None:
 
 @functools.lru_cache(maxsize=1)
 def sample_repo() -> str:
-    """Build the sample repo once and return its path (cleaned up at exit)."""
-    path = tempfile.mkdtemp(prefix='gvt-sample-repo-')
+    """Build the sample repo once and return its path, removed at exit."""
+    path = tempfile.mkdtemp(prefix='vidi-sample-repo-')
     atexit.register(shutil.rmtree, path, ignore_errors=True)
     build_sample_repo(path)
     return path

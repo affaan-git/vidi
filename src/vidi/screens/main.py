@@ -45,13 +45,11 @@ from .branch_picker import BranchPickerScreen
 from .commit_detail import CommitDetailScreen
 from .commit_files import CommitFilesScreen
 
-# Cap the commit table generously: the table (a virtualized DataTable) should
-# cover the same commits the graph spans, so day jumps (h/l) always land on a
-# visible row instead of selecting a commit off the window.
+# Commit table row cap, set to cover the commits the graph spans.
 MAX_VISIBLE_COMMITS = 500
-# Coalesce the resize event burst so the view re-renders once per settle.
+# Delay before re-rendering after a burst of resize events.
 RESIZE_DEBOUNCE_SECONDS = 0.05
-# Column widths shared with the truncation budget so the two never drift apart.
+# Column widths, shared with the truncation budget.
 COMMIT_MESSAGE_WIDTH = 28
 COMMIT_AUTHOR_WIDTH = 12
 
@@ -59,10 +57,8 @@ COMMIT_AUTHOR_WIDTH = 12
 class GraphView(Static):
     """Focusable contribution graph.
 
-    Owns week-stepping (left/right) and Open like the other panels; the screen's
-    up/down handle day-stepping. Navigation moves the selected day across the
-    heatmap grid (rows = weekdays, columns = weeks), the same idea as the
-    languages legend's grid navigation.
+    Owns left/right week-stepping and Open, while the screen's up/down step
+    days. Rows are weekdays and columns are weeks.
     """
 
     can_focus = True
@@ -88,12 +84,7 @@ class GraphView(Static):
 
 
 class CommitTable(DataTable):
-    """Commit table that owns the Open binding.
-
-    Each panel's focus widget declares its own Open so `enter` is sourced from
-    the same place on every panel; otherwise the footer's Open would sit at a
-    different spot per panel and shove the neighbouring keys around.
-    """
+    """Commit table that owns the Open binding."""
 
     BINDINGS = [Binding("enter", "open_selection", "Open")]
 
@@ -102,7 +93,7 @@ class CommitTable(DataTable):
 
 
 class DetailsScroll(VerticalScroll):
-    """Commit-details panel that owns the Open binding (see CommitTable)."""
+    """Commit-details panel that owns the Open binding."""
 
     BINDINGS = [Binding("enter", "open_selection", "Open")]
 
@@ -111,12 +102,7 @@ class DetailsScroll(VerticalScroll):
 
 
 class LanguageList(VerticalScroll):
-    """Focusable languages panel.
-
-    It owns the left/right legend navigation so the footer advertises those keys
-    only while this panel is focused, matching how the rest of the footer adds
-    and drops entries as focus moves. It also owns Open, like the other panels.
-    """
+    """Focusable languages panel that owns left/right legend navigation and Open."""
 
     LANGUAGE_GROUP = Binding.Group("Language", compact=True)
     BINDINGS = [
@@ -312,8 +298,7 @@ class MainScreen(Screen[None]):
         self.selected_day = None
         self.selected_commit_hash = None
         self._language_index = 0
-        # Per-commit snapshot: the language breakdown of the highlighted commit's
-        # tree, refreshed as the selection moves.
+        # Language breakdown of the highlighted commit's tree.
         self._language_stats: list[LanguageStat] = []
         self._language_files: dict[str, list[str]] = {}
         self._resize_timer = None
@@ -377,8 +362,7 @@ class MainScreen(Screen[None]):
 
     @property
     def active_panel(self) -> str:
-        # Derive the active panel from focus so it never drifts out of sync; the
-        # focused panel's border is driven by CSS :focus-within.
+        # The active panel is derived from focus.
         focused = self.focused
         if isinstance(focused, GraphView):
             return "graph"
@@ -405,8 +389,7 @@ class MainScreen(Screen[None]):
     def on_resize(self, event: events.Resize) -> None:
         if not self._mounted:
             return
-        # Resize fires a burst of events during a drag; coalesce them so the
-        # graph and details only re-render once the size settles.
+        # Coalesce the resize burst into one re-render.
         if self._resize_timer is not None:
             self._resize_timer.stop()
         self._resize_timer = self.set_timer(RESIZE_DEBOUNCE_SECONDS, self._render_after_resize)
@@ -424,17 +407,14 @@ class MainScreen(Screen[None]):
         self._branch_load_tasks.clear()
 
     def _apply_theme(self) -> None:
-        # Panel backgrounds and borders (including the :focus-within highlight)
-        # come from the registered theme via CSS; only the muted title color is
-        # not a standard theme variable, so it is set here.
+        # Everything but the muted title color comes from the theme via CSS.
         palette = resolve_theme_palette(self.app.current_theme)
         self._theme_palette = palette
         for title in self.query(".panel-title"):
             title.styles.color = palette.muted
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
-        # Re-render the legend so the language caret appears only while the
-        # languages panel holds focus.
+        # Re-render the legend, whose caret shows only while the languages panel has focus.
         self._render_language_summary()
 
     def _refresh_year_options(self) -> None:
@@ -587,8 +567,8 @@ class MainScreen(Screen[None]):
         self._refresh_language_panel()
 
     def _visible_commits(self, commits: list[CommitRecord]) -> list[CommitRecord]:
-        """The commits shown in the table, narrowed by the / filter (if any),
-        matching on message, author, hash, or authored date (ISO, e.g. 2026-08)."""
+        """The commits shown in the table, narrowed by the / filter on message,
+        author, hash, or ISO authored date."""
         query = self._commit_query.strip().lower()
         if not query:
             return commits
@@ -701,9 +681,7 @@ class MainScreen(Screen[None]):
         )
         details.append("\nFiles changed\n", style=make_style(palette.muted, bold=True))
         commit_detail = self.service.get_commit_detail(selected_commit.commit_hash)
-        # Wrap against the width of the Static that actually renders the text --
-        # the scroll's content_region still includes the stable scrollbar gutter,
-        # so measuring it left the lines ~2 columns too wide and wrapped the stat.
+        # Wrap against the width of the Static that renders the text, not the scroll.
         details_static = self.query_one("#day-details", Static)
         details_scroll = self.query_one("#day-details-scroll", VerticalScroll)
         content_width = details_static.content_region.width
@@ -712,9 +690,7 @@ class MainScreen(Screen[None]):
         for index, change in enumerate(commit_detail.file_changes):
             suffix = "\n" if index < len(commit_detail.file_changes) - 1 else ""
             section = section_for_change(commit_detail.patch_sections, index, change)
-            # Truncate the path to leave room for "  - " + gap + the exact
-            # "+adds -dels" stat, so wide stats (e.g. +161 -0) never wrap the last
-            # number onto its own line.
+            # Leave room in the path for the exact "+adds -dels" stat.
             additions_text = "+-" if change.additions is None else f"+{change.additions}"
             deletions_text = "--" if change.deletions is None else f"-{change.deletions}"
             stat_width = len(additions_text) + 1 + len(deletions_text)
@@ -735,13 +711,13 @@ class MainScreen(Screen[None]):
             )
 
     def reload_language_panel(self) -> None:
-        """Re-read languages after the scan settings changed (cache was cleared)."""
+        """Re-read languages after the scan settings changed."""
         self.scanned_file_count = self.service.scanned_file_count(self.context)
         self.sub_title = self._build_repo_stats_sub_title()
         self._refresh_language_panel()
 
     def _refresh_language_panel(self) -> None:
-        # Snapshot the highlighted commit's tree languages (cached per commit).
+        # Snapshot the highlighted commit's tree languages, cached per commit.
         if self.selected_commit_hash:
             self._language_stats, self._language_files = self.service.get_commit_language_stats(
                 self.selected_commit_hash
@@ -762,10 +738,7 @@ class MainScreen(Screen[None]):
         self._render_language_summary()
 
     def _render_language_summary(self) -> None:
-        # Only mark the active entry while the languages panel is focused, so the
-        # panel reads as a plain summary until it is the thing you are steering.
-        # The bar and legend share the highlight so the selected language lights
-        # up in both places at once.
+        # Mark the active entry in the bar and legend only while the panel is focused.
         stats = self._language_stats
         highlighted = (
             self._language_index if stats and self.active_panel == "languages" else None
@@ -803,17 +776,15 @@ class MainScreen(Screen[None]):
         self._render_language_summary()
 
     def _move_language_linear(self, delta: int) -> None:
-        # left/right step through the legend in reading order, so every entry is
-        # reachable no matter how the rows wrap.
+        # left/right step through the legend in reading order.
         stats = self._language_stats
         if not stats:
             return
         self._set_language_index(max(0, min(self._language_index + delta, len(stats) - 1)))
 
     def _move_language_row(self, delta: int) -> None:
-        # up/down move between wrapped rows at the same column, so the highlight
-        # travels vertically the way the legend looks. With no row to land on we
-        # fall back to a linear step so the arrows always respond.
+        # up/down move between wrapped rows at the same column, falling back to a
+        # linear step when there is no row to land on.
         stats = self._language_stats
         if not stats:
             return
@@ -834,8 +805,7 @@ class MainScreen(Screen[None]):
             self._move_language_linear(delta)
 
     def _click_language(self, column: int, row: int) -> None:
-        # Clicking a legend entry selects that language (and focuses the panel),
-        # like moving to it with the arrows; Enter or a click on a file opens it.
+        # Clicking a legend entry selects that language and focuses the panel.
         if not self._language_stats:
             return
         width = self.query_one("#language-scroll", VerticalScroll).content_region.width or 32
@@ -847,8 +817,7 @@ class MainScreen(Screen[None]):
         self._render_language_summary()
 
     def _commit_hashes_and_index(self) -> tuple[list[str], int]:
-        """The commits in view (newest-first) and the selected one's index, so a
-        files browser can step between commits with [ / ]."""
+        """The commits in view, newest-first, and the selected one's index."""
         _, commits = self._filtered_branch_data()
         hashes = [commit.commit_hash for commit in commits]
         try:
@@ -868,13 +837,13 @@ class MainScreen(Screen[None]):
         )
 
     def action_browse_files(self) -> None:
-        """Browse every file in the highlighted commit's tree (any panel)."""
+        """Browse every file in the highlighted commit's tree from any panel."""
         if not self.selected_commit_hash:
             return
         hashes, index = self._commit_hashes_and_index()
         self.app.push_screen(CommitFilesScreen(self.service, hashes, index))
 
-    # -- commit table filter ----------------------------------------------
+    # Commit table filter
 
     def _commit_filter(self) -> Input:
         return self.query_one("#commits-filter", Input)
@@ -886,8 +855,8 @@ class MainScreen(Screen[None]):
             return False
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        # While typing in the commit filter, only j/k yield to the input (as
-        # text); the arrows still move (and preview) rows in the filtered table.
+        # While typing in the commit filter, j/k go to the input and the arrows
+        # still move rows.
         if action in ("nav_down", "nav_up") and self._commit_filter_focused():
             return False
         return True
@@ -920,7 +889,7 @@ class MainScreen(Screen[None]):
             self._suspend_table_events = False
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        # Enter keeps the filter and moves into the (narrowed) table.
+        # Enter keeps the filter and moves into the narrowed table.
         if event.input.id == "commits-filter":
             self.query_one("#commits-table", CommitTable).focus()
 
@@ -986,9 +955,7 @@ class MainScreen(Screen[None]):
             self._open_language_files()
             return
         if self.active_panel == "graph":
-            # Enter hands the graph's day off to the commit table: pick that
-            # commit in the table and move focus there, so the next Enter opens
-            # it and up/down navigate the table normally.
+            # Enter hands the graph's day off to the commit table and focuses it.
             _, commits = self._filtered_branch_data()
             day_commits = [c for c in commits if c.authored_date == self.selected_day]
             if not day_commits:
@@ -1029,7 +996,7 @@ class MainScreen(Screen[None]):
         elif isinstance(focused, VerticalScroll):
             focused.scroll_up(animate=False)
 
-    # j / k -- separate actions so they yield to the commit filter while typing
+    # j / k get their own actions, held back while the commit filter has focus.
     def action_nav_down(self) -> None:
         self.action_cursor_down()
 
@@ -1051,9 +1018,8 @@ class MainScreen(Screen[None]):
             focused.scroll_down(animate=False)
 
     def _move_selected_day(self, delta_days: int) -> None:
-        # Move the selected day across the heatmap grid: up/down = +/-1 day,
-        # left/right = +/-1 week. Stays within the current graph window and may
-        # land on a day with no commits (the details panel handles that).
+        # up/down move the selected day by one day and left/right by a week,
+        # within the current graph window.
         graph_start, graph_end = resolve_graph_window(self.selected_range, self.selected_year)
         _, commits = self._filtered_branch_data()
         base = self.selected_day
@@ -1066,8 +1032,7 @@ class MainScreen(Screen[None]):
     def _select_day(self, day: dt.date, commits: list[CommitRecord]) -> None:
         self.selected_day = day
         if self.app.graph_browse:
-            # On-enter mode: only move the square highlight; the commit picker and
-            # details stay put until Enter hands the day off to the table.
+            # In on-enter mode, only the square highlight moves until Enter.
             self._render_graph(commits)
             return
         day_commits = [commit for commit in commits if commit.authored_date == day]
@@ -1078,8 +1043,7 @@ class MainScreen(Screen[None]):
         )
 
     def _click_graph(self, column: int, row: int) -> None:
-        # Clicking a square selects that day the same way the arrows do (mode
-        # aware), then focuses the graph.
+        # Clicking a square selects that day like the arrows do, then focuses the graph.
         graph_start, graph_end = resolve_graph_window(self.selected_range, self.selected_year)
         day = graph_day_at(graph_start, graph_end, column, row)
         if day is None:

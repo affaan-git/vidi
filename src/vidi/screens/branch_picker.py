@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Optional
+
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -13,8 +15,8 @@ from ..theme import make_style, resolve_theme_palette
 from ..utils import fuzzy_score, truncate_middle
 
 
-class BranchPickerScreen(ModalScreen[str | None]):
-    """Modal branch picker using Textual's option list widget."""
+class BranchPickerScreen(ModalScreen[Optional[str]]):
+    """Modal branch picker."""
 
     BACK_GROUP = Binding.Group("Back", compact=True)
     MOVE_GROUP = Binding.Group("Move", compact=True)
@@ -119,8 +121,8 @@ class BranchPickerScreen(ModalScreen[str | None]):
         self._refresh_options()
 
     def _apply_theme(self) -> None:
-        # Frame colors now come from the registered theme via CSS $vars; only the
-        # screen dim needs the palette's alpha-blended overlay.
+        # Frame colors come from the registered theme via CSS $vars with only the
+        # screen dim needing the palette's alpha-blended overlay.
         self._theme_palette = resolve_theme_palette(self.app.current_theme)
         self.styles.background = self._theme_palette.overlay
 

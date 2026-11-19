@@ -20,7 +20,7 @@ def _load() -> dict:
 
 
 def _set_many(values: dict[str, object]) -> None:
-    """Persist preferences; failures are ignored (a viewer, not a vault)."""
+    """Persist preferences, ignoring write failures."""
     try:
         prefs = _load()
         prefs.update(values)
@@ -45,8 +45,7 @@ def save_theme(name: str) -> None:
 
 
 def load_graph_browse() -> bool:
-    """Whether the graph browses on move (select on Enter) instead of selecting
-    as you move."""
+    """Whether the graph waits for Enter to select a day."""
     return bool(_load().get("graph_browse", False))
 
 
@@ -55,7 +54,7 @@ def save_graph_browse(value: bool) -> None:
 
 
 def load_transparent_background() -> bool:
-    """Whether the app uses the terminal's background (so translucency shows)."""
+    """Whether the app uses the terminal's background."""
     return bool(_load().get("transparent_background", False))
 
 
@@ -93,7 +92,7 @@ def save_language_settings(
 
 
 def reset() -> None:
-    """Forget saved preferences so the app falls back to its defaults."""
+    """Forget saved preferences."""
     try:
         CONFIG_PATH.unlink()
     except OSError:

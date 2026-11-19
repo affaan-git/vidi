@@ -1,4 +1,4 @@
-"""Core data models for the Textual git viewer."""
+"""Core data models."""
 
 from __future__ import annotations
 

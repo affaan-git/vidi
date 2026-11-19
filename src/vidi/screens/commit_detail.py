@@ -22,7 +22,7 @@ from ..theme import make_change_stat_style, make_style, resolve_theme_palette
 from ..utils import rel_time, utc_now
 from .commit_files import CommitFilesScreen
 
-# Coalesce the resize event burst so the view re-renders once per settle.
+# Delay before re-rendering after a burst of resize events.
 RESIZE_DEBOUNCE_SECONDS = 0.05
 
 
@@ -174,9 +174,8 @@ class CommitDetailScreen(ModalScreen[None]):
         Binding("p", "toggle_patch_scope", "Patch"),
         Binding("f", "browse_files", "Files"),
         Binding("slash", "open_search", "Search"),
-        # enter/shift+enter step patch matches only while the search box is
-        # focused (own actions so they never hijack the files-table / files-filter
-        # enter); n/N step matches once there are matches.
+        # enter/shift+enter step patch matches while the search box is focused,
+        # and n/N once there are matches.
         Binding("enter", "search_next", "Next Match", priority=True),
         Binding("shift+enter", "search_prev", "Prev Match", priority=True),
         Binding("n", "next_match", "Next Match", group=SEARCH_GROUP),
@@ -199,7 +198,7 @@ class CommitDetailScreen(ModalScreen[None]):
         self.service = service
         self.commit_hash = commit_hash
         self.source_branch = source_branch
-        # ordered sibling commits (newest first) so [ / ] can step between them
+        # Sibling commits, newest first, for stepping with [ / ].
         self._commit_hashes = list(commit_hashes) if commit_hashes else [commit_hash]
         if commit_hash in self._commit_hashes:
             self._commit_index = self._commit_hashes.index(commit_hash)
@@ -234,12 +233,11 @@ class CommitDetailScreen(ModalScreen[None]):
         self._patch_base: dict[str, Text] = {"selected": Text(), "full": Text()}
         self._patch_offsets: list[int] | None = None
         self._patch_offsets_key: tuple[str, int, int] = ("", 0, 0)
-        # changed-files filter state (diff mode only)
+        # changed-files filter state, diff mode only
         self._files_query = ""
 
     def action_next_commit(self) -> None:
-        # the list is newest-first, so "next" (newer) steps toward index 0,
-        # matching the main screen where ] moves to the newer year
+        # Newer commits sit toward index 0 in the newest-first list.
         self._go_to_commit(self._commit_index - 1)
 
     def action_prev_commit(self) -> None:
@@ -252,9 +250,6 @@ class CommitDetailScreen(ModalScreen[None]):
         )
 
     def _go_to_commit(self, index: int) -> None:
-        # Step in place rather than swapping in a fresh screen: the commit detail
-        # is already cached, so reusing this screen avoids a full compose/mount
-        # rebuild on every keypress and keeps fast [ / ] stepping responsive.
         if not 0 <= index < len(self._commit_hashes) or index == self._commit_index:
             return
         self._commit_index = index
@@ -340,8 +335,6 @@ class CommitDetailScreen(ModalScreen[None]):
     def on_resize(self, event: events.Resize) -> None:
         if not self.is_mounted:
             return
-        # Coalesce the resize burst, and don't rebuild the (width-independent)
-        # patch text on resize; only the layout and table columns need to react.
         if self._resize_timer is not None:
             self._resize_timer.stop()
         self._resize_timer = self.set_timer(RESIZE_DEBOUNCE_SECONDS, self._render_after_resize)
@@ -372,8 +365,7 @@ class CommitDetailScreen(ModalScreen[None]):
         return targets[pane]
 
     def _available_panes(self) -> tuple[str, ...]:
-        # Fixed focus stops per mode; Tab cycles them whether or not a scroll
-        # currently overflows. The overview is hidden in full-patch mode.
+        # Fixed focus stops per mode, without the overview in full-patch mode.
         if self.show_full_patch:
             return ("files", "patch")
         return ("overview", "files", "patch")
@@ -408,8 +400,7 @@ class CommitDetailScreen(ModalScreen[None]):
         selected_patch_scroll = self._selected_patch_scroll()
         full_patch_scroll = self._full_patch_scroll()
 
-        # Only the panes for the current mode are focus stops; the inactive
-        # patch scroll stays unfocusable so Tab never lands on the hidden one.
+        # Only the panes for the current mode are focus stops.
         overview_scroll.can_focus = not self.show_full_patch
         selected_patch_scroll.can_focus = not self.show_full_patch
         full_patch_scroll.can_focus = self.show_full_patch
@@ -424,9 +415,7 @@ class CommitDetailScreen(ModalScreen[None]):
             self.active_pane = preferred if preferred in available else available[0]
 
     def _apply_theme(self) -> None:
-        # Backgrounds and borders (including the :focus-within pane highlight)
-        # come from the registered theme via CSS; only the muted title color is
-        # not a standard theme variable.
+        # Everything but the muted title color comes from the theme via CSS.
         self._theme_palette = resolve_theme_palette(self.app.current_theme)
         for title in self.query(".commit-detail-panel-title"):
             title.styles.color = self._theme_palette.muted
@@ -686,9 +675,7 @@ class CommitDetailScreen(ModalScreen[None]):
             or table.size.width
             or 28
         )
-        # Reserve the table's own chrome: one cell of padding on each side of
-        # the three columns (6) plus the stable scrollbar gutter (2). Undercount
-        # here and the file column overflows, leaving a phantom horizontal scroll.
+        # Table chrome is 6 cells of column padding plus the 2-cell scrollbar gutter.
         chrome = 8
         stats_width = 4
         file_width = max(8, width - (stats_width * 2) - chrome)
@@ -896,12 +883,12 @@ class CommitDetailScreen(ModalScreen[None]):
 
             self.query_one("#commit-detail-selected-content", Static).update(selected_content)
             self.query_one("#commit-detail-full-content", Static).update(full_content)
-            # keep the un-highlighted texts so search can overlay onto a fresh copy
+            # Un-highlighted copies for the search overlay.
             self._patch_base = {"selected": selected_content, "full": full_content}
             if self._search_query:
                 self._apply_patch_search(recompute=True)
 
-    # -- in-patch search ---------------------------------------------------
+    # In-patch search
 
     def _search_input(self) -> Input:
         return self.query_one("#commit-detail-search", Input)
@@ -916,9 +903,7 @@ class CommitDetailScreen(ModalScreen[None]):
             return False
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        # While typing a search, only j/k and the pane keys yield to the input;
-        # the arrows (and page/jump keys) still drive the focused pane so you can
-        # move through the patch or files list while filtering.
+        # While typing a search, j/k and the pane keys go to the input.
         if self._search_focused() and action in (
             "nav_down",
             "nav_up",
@@ -926,9 +911,8 @@ class CommitDetailScreen(ModalScreen[None]):
             "focus_prev_pane",
         ):
             return False
-        # enter/shift+enter only act (and show in the footer) while the patch
-        # search box is focused -- otherwise enter belongs to the files table /
-        # files filter. n/N step matches once there are any.
+        # enter/shift+enter act only while the patch search box is focused, and
+        # n/N only when there are matches.
         if action in ("search_next", "search_prev"):
             return self._search_input().has_focus
         if action in ("next_match", "prev_match"):
@@ -936,8 +920,8 @@ class CommitDetailScreen(ModalScreen[None]):
         return True
 
     def action_open_search(self) -> None:
-        # Context-aware: filter the changed-files list from the files pane (diff
-        # mode), search the patch from anywhere else.
+        # / filters the files list from the files pane in diff mode and searches
+        # the patch from anywhere else.
         if self.active_pane == "files" and not self.show_full_patch:
             inp = self._files_filter_input()
             inp.display = True
@@ -960,12 +944,10 @@ class CommitDetailScreen(ModalScreen[None]):
             self._render_files_meta()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        # Patch-search enter is handled by the priority search_next binding; only
-        # the files filter needs Submitted here.
+        # Patch-search enter goes to the search_next binding, not here.
         if event.input.id != "commit-detail-files-filter":
             return
-        # Files filter: Enter picks the highlighted file (shows its diff) and
-        # moves into the narrowed files list so arrows keep browsing it.
+        # Enter in the files filter shows the highlighted file and moves into the list.
         visible = self._visible_file_indices()
         table = self._current_files_table()
         row = table.cursor_row
@@ -977,8 +959,7 @@ class CommitDetailScreen(ModalScreen[None]):
             table.focus()
 
     def _close_search(self) -> None:
-        # Hide the box but keep the matches + highlights, so n / N still step
-        # through them in the patch (Esc again then closes the screen).
+        # Hide the box but keep the matches and highlights for n / N.
         self._search_input().display = False
         self._active_patch_scroll().focus()
 
@@ -1080,7 +1061,7 @@ class CommitDetailScreen(ModalScreen[None]):
     def action_prev_match(self) -> None:
         self._step_match(-1)
 
-    # enter / shift+enter (own actions so they can be gated to the search box)
+    # enter / shift+enter, gated to the search box in check_action.
     def action_search_next(self) -> None:
         self.action_next_match()
 
@@ -1160,9 +1141,8 @@ class CommitDetailScreen(ModalScreen[None]):
         self._sync_selection_from_patch_scroll(new_value)
 
     def _visible_file_indices(self) -> list[int]:
-        """Original indices of the files shown in the table. Narrowed by the /
-        files filter, which only applies in diff mode (the full-patch outline
-        stays complete so its scroll-sync is unaffected)."""
+        """Original indices of the files shown in the table, narrowed by the files
+        filter in diff mode."""
         query = self._files_query.strip().lower()
         if not query or self.show_full_patch:
             return list(range(len(self.detail.file_changes)))
@@ -1202,8 +1182,7 @@ class CommitDetailScreen(ModalScreen[None]):
         if event.data_table.id not in {"commit-detail-files-diff", "commit-detail-files-outline"} or self._suspend_file_events:
             return
         # While typing in the files filter, the table is repopulated and its
-        # cursor moves -- ignore that highlight so it doesn't change the selection
-        # or reconcile focus away from the input.
+        # cursor moves, with the highlight ignored to keep focus on the input.
         if self._files_filter_input().has_focus:
             return
         row_key = event.row_key.value if event.row_key else None
@@ -1270,7 +1249,7 @@ class CommitDetailScreen(ModalScreen[None]):
         else:
             target.scroll_down(animate=False)
 
-    # j / k -- separate actions so they yield to a search box while typing
+    # j / k get their own actions, held back while a search box has focus.
     def action_nav_down(self) -> None:
         self.action_cursor_down()
 
@@ -1324,7 +1303,7 @@ class CommitDetailScreen(ModalScreen[None]):
             focus_target=self.active_pane,
             scroll_to_selection=scroll_to_selection,
         )
-        # the files filter only applies in diff mode; drop it when going full
+        # Drop the files filter when switching to the full patch.
         if self.show_full_patch and self._files_filter_input().display:
             files_filter = self._files_filter_input()
             files_filter.value = ""

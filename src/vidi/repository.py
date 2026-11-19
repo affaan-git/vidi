@@ -324,12 +324,10 @@ class RepoService:
         self.language_mode = language_mode
         self.exclude_languages = set(exclude_languages or set())
         self.ignore_dirs = set(ignore_dirs or set())
-        # The user-supplied extras only, kept so settings can re-resolve them
-        # against the defaults and gitignore without losing either side.
+        # The user-supplied extras alone, without the defaults or gitignore.
         self.extra_ignored_dirs = set(extra_ignored_dirs or set())
         self._cached_scanned_file_count = initial_scanned_file_count
-        # Per-instance caches: a class-level lru_cache would key on self,
-        # keeping every service alive and making cache_clear global.
+        # Per-instance caches. A class-level lru_cache would keep every service alive.
         self.get_branch_data = lru_cache(maxsize=64)(self._branch_data)
         self.get_commit_detail = lru_cache(maxsize=256)(self._commit_detail)
         self.get_commit_language_stats = lru_cache(maxsize=128)(self._commit_language_stats)
@@ -344,7 +342,8 @@ class RepoService:
         self.get_branch_divergence.cache_clear()
 
     def _branch_divergence(self, branch: str, base: str) -> tuple[int, int]:
-        """Commits `branch` is ahead of / behind `base` (0, 0 if same or unknown)."""
+        """Commits `branch` is ahead of and behind `base`, both 0 when they match or
+        are unknown."""
         if not base or branch == base:
             return (0, 0)
         try:
@@ -356,7 +355,7 @@ class RepoService:
 
     @staticmethod
     def default_base_branch(branches: list[str]) -> str | None:
-        """The trunk to measure branches against: main, else master, else none."""
+        """The trunk to measure branches against, main or master, or None if neither exists."""
         for candidate in ("main", "master"):
             if candidate in branches:
                 return candidate
@@ -375,7 +374,7 @@ class RepoService:
         self.ignore_dirs = _resolve_ignore_dirs(self.repo_dir, self.extra_ignored_dirs)
         self.get_commit_language_stats.cache_clear()
         self.get_commit_files.cache_clear()
-        # The header file count honours the same excludes, so recount it too.
+        # Recount the header file count with the new excludes.
         self._cached_scanned_file_count = self._count_scanned_paths(
             self._list_scanned_paths()
         )
@@ -383,8 +382,8 @@ class RepoService:
     def _commit_language_stats(
         self, commit_hash: str
     ) -> tuple[list[LanguageStat], dict[str, list[str]]]:
-        """Language breakdown of the whole tree AT a commit (a snapshot), from
-        `git ls-tree`, honouring the same excludes as the working-tree scan."""
+        """Language breakdown of the whole tree at a commit from `git ls-tree`,
+        with the same excludes as the working-tree scan."""
         output = run_git(self.repo_dir, ["ls-tree", "-r", "-l", commit_hash])
         totals: dict[str, int] = {}
         files_by_language: dict[str, list[str]] = {}
@@ -430,8 +429,7 @@ class RepoService:
         return stats, files_by_language
 
     def _commit_files(self, commit_hash: str) -> list[str]:
-        """Every file in the tree AT a commit (the whole tree, not language
-        filtered), skipping ignored directories; sorted for stable browsing."""
+        """Every file in the tree at a commit, sorted and without ignored directories."""
         output = run_git(self.repo_dir, ["ls-tree", "-r", "--name-only", commit_hash])
         files = [
             path
@@ -451,8 +449,8 @@ class RepoService:
         )
 
     def get_file_at_commit(self, commit_hash: str, path: str) -> str | None:
-        """The text of a file as it was at a commit, or None if it can't be read
-        as text (binary, missing, or a git error)."""
+        """The text of a file at a commit, or None if it is binary, missing, or
+        unreadable."""
         try:
             content = run_git(self.repo_dir, ["show", f"{commit_hash}:{path}"])
         except (RuntimeError, UnicodeDecodeError):

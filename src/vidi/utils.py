@@ -22,7 +22,7 @@ _MINUTE = 60
 _HOUR = 60 * _MINUTE
 _DAY = 24 * _HOUR
 _WEEK = 7 * _DAY
-_MONTH = 4 * _WEEK  # approximate: 28-day months, 336-day years
+_MONTH = 4 * _WEEK  # approximate 28-day months and 336-day years
 _YEAR = 12 * _MONTH
 
 

@@ -122,7 +122,7 @@ class FileViewScreen(ModalScreen[None]):
         scroll.can_focus = True
         scroll.focus()
 
-    # -- content -----------------------------------------------------------
+    # Content
 
     def _load_content(self) -> None:
         content = self._service.get_file_at_commit(self._commit_hash, self._path)
@@ -195,7 +195,7 @@ class FileViewScreen(ModalScreen[None]):
             text.append(line[found : found + len(query)], style=match_style)
             start = found + len(query)
 
-    # -- search ------------------------------------------------------------
+    # Search
 
     def _search_input(self) -> Input:
         return self.query_one("#file-view-search", Input)
@@ -207,12 +207,10 @@ class FileViewScreen(ModalScreen[None]):
             return False
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        # While typing a search, only j/k need to reach the input (as text); the
-        # arrows and page/jump keys keep scrolling so you can read around matches.
+        # While typing a search, j/k go to the input and the arrows keep scrolling.
         if self._search_focused() and action in ("nav_down", "nav_up"):
             return False
-        # Show/enable the match-nav (enter/shift+enter, n/N) only when there is a
-        # search to step through, so the footer advertises it while typing.
+        # Match keys work only while searching or when there are matches.
         if action in ("next_match", "prev_match"):
             return bool(self._search_focused() or self._match_lines)
         return True
@@ -228,7 +226,7 @@ class FileViewScreen(ModalScreen[None]):
         self._query = event.value
         self._recompute_matches()
         self._render_view()
-        # incremental: jump to the first match as you type
+        # Jump to the first match as you type.
         if self._match_lines:
             self._scroll_to_current()
 
@@ -282,12 +280,11 @@ class FileViewScreen(ModalScreen[None]):
         self._scroll().scroll_to(y=max(0, target - 2), animate=False)
 
     def _close_search(self) -> None:
-        # Hide the box but keep the matches + highlights, so n / N still step
-        # through them on the content (Esc again then closes the screen).
+        # Hide the box but keep the matches and highlights for n / N.
         self._search_input().display = False
         self._scroll().focus()
 
-    # -- file stepping -----------------------------------------------------
+    # File stepping
 
     def action_prev_file(self) -> None:
         self._go_to_file(self._index - 1)
@@ -302,7 +299,7 @@ class FileViewScreen(ModalScreen[None]):
             self._render_view()
             self._scroll().scroll_home(animate=False)
 
-    # -- scrolling ---------------------------------------------------------
+    # Scrolling
 
     def _scroll(self) -> VerticalScroll:
         return self.query_one("#file-view-scroll", VerticalScroll)
@@ -313,7 +310,7 @@ class FileViewScreen(ModalScreen[None]):
     def action_scroll_up(self) -> None:
         self._scroll().scroll_up(animate=False)
 
-    # j / k -- separate action so it can yield to the search box while typing
+    # j / k get their own action, held back while the search box has focus.
     def action_nav_down(self) -> None:
         self.action_scroll_down()
 

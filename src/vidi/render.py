@@ -31,7 +31,7 @@ def resolve_heatmap_colors(palette: ThemePalette) -> tuple[str, list[str]]:
         Color.parse(inactive_style).blend(palette.success, step).hex6
         for step in blend_steps
     ]
-    # heatmap_styles[0] is the inactive (zero-commit) color; [1:] ramp toward success.
+    # heatmap_styles[0] is the zero-commit color and [1:] ramp toward success.
     return padding_style, [inactive_style, *active_styles]
 
 
@@ -55,9 +55,7 @@ def render_contribution_graph(
         and end_date.day == 31
         and start_date.year == end_date.year
     )
-    # Month labels sit on a fixed 365-day axis so columns line up the same way
-    # every year. A leap day would push every later month one slot to the right,
-    # so fold Feb 29 into Feb 28's offset instead of giving it its own.
+    # Fold Feb 29 into Feb 28 to keep the month labels on the same columns every year.
     month_lengths = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
     month_offsets = [0]
     for month_length in month_lengths:
@@ -149,9 +147,7 @@ def render_contribution_graph(
         legend.append(cell_char, style=style)
     legend.append(" More", style=make_style(palette.muted, bold=True))
 
-    # Always-on readout of the highlighted cell's exact date and count -- the
-    # stand-in for a hover tooltip -- right-aligned to the graph's own width so
-    # it sits under the cells on the otherwise-empty legend row.
+    # Readout of the highlighted day's date and count, right-aligned to the graph.
     if selected_day is not None:
         count = int(commit_counts.get(selected_day, 0))
         tail = "no commits" if count == 0 else ("1 commit" if count == 1 else f"{count} commits")
@@ -171,9 +167,9 @@ def graph_day_at(
 ) -> dt.date | None:
     """The day at a click position in the contribution graph, or None.
 
-    Row 0 is the month header; rows 1..7 are Sun..Sat; columns 0..3 are the
-    weekday label, columns 4+ are the week cells -- matching the layout in
-    render_contribution_graph.
+    Row 0 is the month header and rows 1..7 are Sun..Sat. Columns 0..3 hold the
+    weekday label and columns 4+ the week cells, as render_contribution_graph
+    lays them out.
     """
     weekday = row - 1
     week = column - 4
@@ -238,8 +234,7 @@ def _language_label_width(width: int) -> int:
 
 
 def _format_share(percentage: float) -> str:
-    # A present-but-tiny language reads as "<1%" instead of a misleading "0%";
-    # only a genuine zero share (no bytes at all) still reads "0%".
+    # A nonzero share that rounds to 0 reads "<1%".
     if percentage <= 0:
         return "0%"
     if round(percentage) == 0:
@@ -262,11 +257,7 @@ def _language_entry_text(item: LanguageStat, label_width: int) -> str:
 
 
 def language_legend_rows(language_stats: list[LanguageStat], width: int) -> list[list[int]]:
-    """Group language indices into the rows the wrapping legend will render.
-
-    The screen uses this to navigate the legend as a grid (up/down between rows,
-    left/right within the list) so the two views agree on where each entry sits.
-    """
+    """Group language indices into the rows the wrapping legend will render."""
     label_width = _language_label_width(width)
     rows: list[list[int]] = []
     current: list[int] = []
@@ -315,11 +306,8 @@ def build_language_summary(
 ) -> Group:
     """Render the language breakdown as a compact, wrapping legend.
 
-    Entries flow left to right and wrap to a new line only when the next one
-    would exceed the panel width, so the list stays a few lines tall instead of
-    one row per language and rarely needs to scroll. The highlighted entry (only
-    while the panel is focused) is drawn bold in the accent color to show which
-    language Enter will open.
+    Entries flow left to right and wrap only when the next one would exceed the
+    panel width. The highlighted entry is drawn bold in the accent color.
     """
     if not language_stats:
         return Group(Text("No language data", style=make_style(palette.muted)))
@@ -383,9 +371,7 @@ def build_language_bar(
             for index in order[:remainder]:
                 segment_widths[index] += 1
 
-    # Every listed language keeps at least one cell, so tiny shares stay visible
-    # on the bar and highlight on hover instead of collapsing to zero width. The
-    # cells are borrowed from the widest segments, which can spare them.
+    # Give every listed language at least one cell, borrowed from the widest segments.
     if len(language_stats) <= bar_width:
         for index in range(len(language_stats)):
             if segment_widths[index] > 0:
@@ -402,8 +388,7 @@ def build_language_bar(
             continue
         color = str(item["color"])
         if index == highlighted_index:
-            # Brighten the selected segment toward the foreground, the same cue
-            # the contribution graph uses for the selected day.
+            # Brighten the selected segment toward the foreground.
             brightened = Color.parse(color).blend(palette.foreground, 0.35).hex6
             bar.append("█" * segment_width, style=f"bold {brightened}")
         else:

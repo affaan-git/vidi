@@ -46,19 +46,13 @@ def build_app_theme(
 ) -> Theme:
     """Build a Textual theme whose variables equal the app palette.
 
-    The app derives a ThemePalette by blending from a base theme and then paints
-    Rich renderables with it. Registering that same palette as a Textual theme
-    makes CSS $vars, default widget styles (table cursor, option-list highlight,
-    scrollbars, input borders), and the programmatic palette all resolve to one
-    set of colors instead of diverging from Textual's stock theme.
-
-    When transparent, the background surfaces use the terminal's default color
-    (ansi_default) so a translucent terminal shows through, while borders,
-    selection, and text keep the palette's explicit colors.
+    CSS $vars, default widget styles and the Rich renderables then share one set
+    of colors. When transparent, the background surfaces use ansi_default while
+    borders, selection and text keep the palette colors.
     """
     palette = resolve_theme_palette(source_theme)
     variables = {
-        # Neutral borders match the panels; focused borders come from CSS.
+        # Neutral borders match the panels and focused borders come from CSS.
         "border": palette.border.hex,
         "border-blurred": palette.border.hex,
         # One selection color for the table cursor and the option-list.
@@ -68,7 +62,7 @@ def build_app_theme(
         "block-cursor-blurred-background": palette.selected_bg.hex,
         "block-cursor-blurred-foreground": palette.selected_fg.hex,
         "block-cursor-blurred-text-style": "none",
-        # Scrollbars tinted from the palette instead of the stock theme.
+        # Scrollbars tinted from the palette.
         "scrollbar": palette.surface.blend(palette.foreground, 0.22).hex,
         "scrollbar-hover": palette.surface.blend(palette.foreground, 0.32).hex,
         "scrollbar-active": palette.primary.hex,
@@ -77,10 +71,8 @@ def build_app_theme(
         "scrollbar-background-active": palette.panel.hex,
     }
     if transparent:
-        # Only the content surfaces pass the terminal through. The scrollbar
-        # track stays an opaque palette colour: an ansi_default track renders
-        # transparent below the thumb, showing whatever sits behind the modal --
-        # a stray dark segment that reads as a rendering glitch.
+        # Only the content surfaces pass the terminal through.
+        # The scrollbar track stays opaque, hiding a modal's background below the thumb.
         variables.update(
             {
                 "background": "ansi_default",
@@ -105,8 +97,8 @@ def build_app_theme(
     )
 
 
-# Extra selectable themes, ported from the user's dotfiles Ghostty schemes
-# (github.com/affaan-git/dotfiles). One Dark ANSI colors over two backgrounds.
+# Extra selectable themes, from the Ghostty schemes in
+# github.com/affaan-git/dotfiles.
 DOTFILES_THEMES: dict[str, dict[str, str]] = {
     "pro-black": {
         "background": "#141619",
@@ -147,9 +139,8 @@ def _base_theme(name: str, colors: dict[str, str]) -> Theme:
 
 
 def app_themes(default_source: Theme, *, transparent: bool = False) -> list[Theme]:
-    """Every theme the app registers: the default (built from Textual's current
-    theme) plus the dotfiles themes, each fully configured with the same
-    palette-derived variables so they all render consistently."""
+    """Every theme the app registers, the default plus the dotfiles themes, built
+    with the same palette-derived variables."""
     themes = [build_app_theme(default_source, name=APP_THEME_NAME, transparent=transparent)]
     themes.extend(
         build_app_theme(_base_theme(name, colors), name=name, transparent=transparent)
@@ -196,9 +187,7 @@ def resolve_theme_palette(theme: Theme) -> ThemePalette:
     muted = foreground.blend(panel, 0.50 if theme.dark else 0.35)
     border = panel.blend(foreground, 0.18 if theme.dark else 0.35)
     selected_bg = primary.blend(surface, 0.42 if theme.dark else 0.60)
-    # Keep the selection legible: on low-gamut themes (e.g. ansi) the blend can
-    # collapse toward the panel, so nudge it toward the foreground if it lands
-    # too close in brightness.
+    # Nudge the selection toward the foreground when it lands too close to the panel.
     if abs(selected_bg.brightness - panel.brightness) < 0.12:
         selected_bg = selected_bg.blend(foreground, 0.30)
     selected_fg = selected_bg.get_contrast_text()

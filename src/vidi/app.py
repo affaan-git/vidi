@@ -17,7 +17,7 @@ from .theme import APP_THEME_NAME, app_themes
 
 
 class VidiApp(App[None]):
-    """Thin Textual app shell."""
+    """Thin app shell."""
 
     REPO_SCAN_MIN_SECONDS = 10.0
     REPO_SCAN_DEFAULT_SECONDS = 20.0
@@ -41,17 +41,13 @@ class VidiApp(App[None]):
         self._repo_scan_in_flight = False
         self._repo_scan_task: asyncio.Task[None] | None = None
         self._initial_context_task: asyncio.Task[None] | None = None
-        # When True the graph previews a day as you move and commits on Enter;
-        # when False it selects as you move (like the commit table).
+        # When True the graph previews a day as you move and selects it on Enter.
         self.graph_browse = config.load_graph_browse()
-        # When True the app themes use the terminal's default background so a
-        # translucent terminal shows through.
+        # When True the app themes use the terminal's default background.
         self.transparent_background = config.load_transparent_background()
 
     def on_mount(self) -> None:
-        # Register the app themes (palette-as-Textual-theme so CSS $vars and
-        # default widget styles match the programmatic palette) and restore the
-        # saved choice, falling back to the default.
+        # Register the app themes and restore the saved one, or the default.
         self._theme_source = self.current_theme  # Textual default, derives vidi
         for theme in app_themes(self._theme_source, transparent=self.transparent_background):
             self.register_theme(theme)
@@ -140,20 +136,16 @@ class VidiApp(App[None]):
     def _command_toggle_transparent(self) -> None:
         self.transparent_background = not self.transparent_background
         config.save_transparent_background(self.transparent_background)
-        # Rebuild the app themes with/without transparent backgrounds and re-apply
-        # the current one (only the app's own themes are affected).
+        # Rebuild the app themes for the new background and re-apply the current one.
         for theme in app_themes(self._theme_source, transparent=self.transparent_background):
             self.register_theme(theme)
         self.theme = self.current_theme.name
         self._apply_transparency()
-        # Re-registering a theme in place doesn't re-resolve already-computed
-        # widget backgrounds, so force a CSS refresh to pick up the new surfaces.
+        # Re-registered themes don't reach computed backgrounds without a CSS refresh.
         self.refresh_css()
 
     def _apply_transparency(self) -> None:
-        # Transparent backgrounds use the terminal's default color (ansi_default);
-        # that only stays transparent in native-ANSI mode, otherwise Textual
-        # converts it to an opaque color. So enable native ANSI when transparent.
+        # ansi_default only stays transparent in native-ANSI mode.
         self.ansi_color = True if self.transparent_background else None
 
     def on_unmount(self) -> None:

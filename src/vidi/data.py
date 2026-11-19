@@ -153,8 +153,7 @@ def section_for_change(
 ) -> CommitPatchSection | None:
     """Find the patch section for a file change.
 
-    Prefer the index-aligned section (file changes and patch sections come out
-    of git in the same order), then fall back to a path match.
+    Prefers the section at the same index and falls back to a path match.
     """
     if 0 <= index < len(sections):
         candidate = sections[index]
@@ -210,8 +209,8 @@ def compact_label_for_change(
 
 
 def _ellipsize_filename(name: str, max_len: int) -> str:
-    """Shorten a filename to fit, keeping its (distinctive) start and, when there
-    is room, its extension, with a single ellipsis: commit_files.py -> commit_f….py."""
+    """Shorten a filename to fit, keeping its start and, when there is room, its
+    extension, with a single ellipsis between them."""
     if len(name) <= max_len:
         return name
     if max_len <= 1:
@@ -231,8 +230,6 @@ def compact_path_label(path: str, max_len: int) -> str:
         return _ellipsize_filename(path, max_len)
 
     filename = parts[-1]
-    # No room to prefix a parent dir ("…/parent/file"), so show the filename
-    # alone, truncated -- never a bare "…/" (misleading, esp. for root files).
     if len(filename) + 2 > max_len:
         return _ellipsize_filename(filename, max_len)
 
