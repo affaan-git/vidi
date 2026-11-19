@@ -5,13 +5,31 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
+  versions:
+    runs-on: ubuntu-latest
+    outputs:
+      floor: ${{ steps.floor.outputs.floor }}
+      textual_floor: ${{ steps.floor.outputs.textual_floor }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: floor
+        run: |
+          floor=$(python3 -c 'import re, tomllib; print(re.search(r"\d+\.\d+", tomllib.load(open("pyproject.toml", "rb"))["project"]["requires-python"])[0])')
+          textual_floor=$(python3 -c 'import re, tomllib; deps = tomllib.load(open("pyproject.toml", "rb"))["project"]["dependencies"]; print(next(re.search(r">=\s*([\d.]+)", d)[1] for d in deps if d.startswith("textual")))')
+          echo "floor=$floor" >> "$GITHUB_OUTPUT"
+          echo "textual_floor=$textual_floor" >> "$GITHUB_OUTPUT"
+
   test:
+    needs: versions
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.13", "3.14"]
+        python-version: ["${{ needs.versions.outputs.floor }}", "3.x"]
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python ${{ matrix.python-version }}
@@ -20,8 +38,31 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install
         run: pip install -e ".[test]"
+      - name: Install the minimum Textual
+        if: matrix.python-version == needs.versions.outputs.floor
+        run: pip install "textual==${{ needs.versions.outputs.textual_floor }}"
       - name: Run tests
         env:
-          # Keep the real user config out of the run, per the project's rule.
           XDG_CONFIG_HOME: ${{ runner.temp }}/vidi-config
         run: pytest -q
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Build
+        run: |
+          pip install build twine
+          python -m build
+          twine check --strict dist/*
+      - name: Install the wheel and check both commands
+        run: |
+          python -m venv "$RUNNER_TEMP/v"
+          "$RUNNER_TEMP/v/bin/pip" install dist/*.whl
+          "$RUNNER_TEMP/v/bin/vidi" -h
+          "$RUNNER_TEMP/v/bin/git-view" -h
+          test -f "$RUNNER_TEMP/v/share/man/man1/vidi.1"
+          test -f "$RUNNER_TEMP/v/share/man/man1/git-view.1"
