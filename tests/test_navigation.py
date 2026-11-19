@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import collections
+import contextlib
 import datetime as dt
 import io
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -17,6 +19,9 @@ from textual.widgets import DataTable, Footer, Header, OptionList
 from textual.widgets import Input
 
 from vidi.app import VidiApp
+from vidi.cli import build_parser, package_version, resolve_repo_dir
+from vidi.docs import MAN_DIR, PAGES, README, build_manpage, update_readme
+from vidi.screens.help import SHORTCUTS
 from vidi.data import (
     compact_label_for_change,
     compact_path_label,
@@ -50,7 +55,7 @@ from vidi.repository import (
 )
 from vidi.theme import make_change_stat_style, resolve_theme_palette
 
-from sample_repo import sample_repo
+from sample_repo import build_sample_repo, sample_repo
 
 
 def make_app() -> VidiApp:
@@ -118,9 +123,8 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(service.get_cached_scanned_file_count())
 
     async def test_lightweight_app_warms_language_data_on_mount(self) -> None:
-        # The deferred context starts with no language data; on_mount must kick
-        # off the warm-up scan that fills it in (a regression guard: the warm-up
-        # once got detached from on_mount and languages stayed empty forever).
+        # The deferred context starts with no language data, requiring on_mount to
+        # start the warm-up scan that fills it in.
         app = make_lightweight_app()
         async with app.run_test() as pilot:
             task = app._initial_context_task
@@ -777,7 +781,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
 
         app = VidiApp(context, service)
         async with app.run_test(size=(120, 40)) as pilot:
-            # start on an older commit so both [ and ] have somewhere to go
+            # start on an older commit, with commits on both sides
             app.push_screen(CommitFilesScreen(service, hashes, 1))
             await pilot.pause()
             self.assertEqual(app.screen._commit_hash, hashes[1])
@@ -871,7 +875,7 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             )
             screen._commit_query = ""
 
-            # / opens the filter; typing narrows, and j/k type instead of navigating
+            # / opens the filter, typing narrows, and j/k type instead of navigating
             await pilot.press("slash")
             await pilot.pause()
             filter_input = screen.query_one("#commits-filter", Input)
@@ -1217,7 +1221,7 @@ class FilterTests(unittest.TestCase):
         self.assertLessEqual(len(compact), 32)
 
     def test_compact_path_label_narrow_widths(self) -> None:
-        # a root file never gets a misleading "…/" parent prefix
+        # a root file never gets a misleading ellipsis + "/" parent prefix
         for width in range(5, 12):
             root = compact_path_label("README.md", width)
             self.assertFalse(root.startswith("…/"), (width, root))
@@ -1267,7 +1271,7 @@ class FilterTests(unittest.TestCase):
             {"language": "Other", "count": 1, "percentage": 0.05, "color": "#8b5cf6"},
         ]
         bar = build_language_bar(stats, palette, width=40)
-        # Every listed language gets at least one visible cell -- none collapse.
+        # Every listed language gets at least one visible cell.
         self.assertEqual(len(bar.spans), len(stats))
         self.assertEqual(len(bar.plain), 40)
         # Selecting a tiny language highlights its segment (bold + brightened).
@@ -1357,7 +1361,7 @@ class FilterTests(unittest.TestCase):
         console = Console(file=io.StringIO(), record=True, width=160)
         console.print(graph)
         self.assertIn("no commits", console.export_text())
-        # With no selection the readout is absent -- the legend has no date/count.
+        # With no selection the legend has no date or count.
         graph_none = render_contribution_graph(
             collections.Counter(),
             dt.date(2026, 3, 1),
@@ -1510,6 +1514,69 @@ class FilterTests(unittest.TestCase):
         self.assertEqual([item.commit_hash for item in filtered], [recent.commit_hash])
 
 
+class ResolveRepoDirTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.tmp = os.path.realpath(tempfile.mkdtemp(prefix="vidi-cli-"))
+        cls.repo = os.path.join(cls.tmp, "repo")
+        os.makedirs(cls.repo)
+        build_sample_repo(cls.repo)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_defaults_to_the_current_folder(self) -> None:
+        cwd = os.getcwd()
+        os.chdir(self.repo)
+        try:
+            self.assertEqual(resolve_repo_dir("."), self.repo)
+        finally:
+            os.chdir(cwd)
+
+    def test_subfolder_resolves_to_the_repo_top(self) -> None:
+        self.assertEqual(resolve_repo_dir(os.path.join(self.repo, "src")), self.repo)
+
+    def test_worktree_resolves_and_loads(self) -> None:
+        worktree = os.path.join(self.tmp, "wt")
+        subprocess.run(
+            ["git", "-C", self.repo, "worktree", "add", "--detach", worktree],
+            check=True,
+            capture_output=True,
+        )
+        self.assertTrue(os.path.isfile(os.path.join(worktree, ".git")))
+        top = resolve_repo_dir(os.path.join(worktree, "web"))
+        self.assertEqual(top, worktree)
+        context, _ = build_repo_context(
+            repo_dir=top,
+            language_mode="bytes",
+            exclude_languages=set(),
+            extra_ignored_dirs=set(),
+        )
+        self.assertGreater(context.repo_commit_count, 0)
+        self.assertTrue(context.language_stats)
+        scanned = [path for paths in context.files_by_language.values() for path in paths]
+        self.assertNotIn(".git", scanned)
+
+    def test_outside_a_repo_is_an_error(self) -> None:
+        outside = os.path.join(self.tmp, "plain")
+        os.makedirs(outside, exist_ok=True)
+        with self.assertRaisesRegex(ValueError, "not inside a git work tree"):
+            resolve_repo_dir(outside)
+        with self.assertRaisesRegex(ValueError, "does not exist"):
+            resolve_repo_dir(os.path.join(self.tmp, "missing"))
+
+
+class VersionTests(unittest.TestCase):
+    def test_version_flag_prints_the_package_version(self) -> None:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as exit_:
+            build_parser("git-view").parse_args(["--version"])
+        self.assertEqual(exit_.exception.code, 0)
+        self.assertEqual(out.getvalue().strip(), f"vidi {package_version()}")
+        self.assertNotEqual(package_version(), "unknown")
+
+
 class HostileRepoTests(unittest.IsolatedAsyncioTestCase):
     def _repo(self, tmp: str) -> str:
         repo = os.path.join(tmp, "repo")
@@ -1559,7 +1626,6 @@ class HostileRepoTests(unittest.IsolatedAsyncioTestCase):
             service.scan_repo_state()
             self.assertFalse(os.path.exists(marker))
 
-
     def test_escape_sequences_in_repo_text_are_replaced(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = self._repo(tmp)
@@ -1578,7 +1644,6 @@ class HostileRepoTests(unittest.IsolatedAsyncioTestCase):
             for text in (commit.message, commit.author_name, content):
                 self.assertNotIn("\x1b", text)
                 self.assertIn("\ufffd", text)
-
 
     def test_gitignore_is_only_read_when_a_small_regular_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1620,3 +1685,32 @@ class HostileRepoTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 files = app.screen.query_one("#commit-detail-files-diff", DataTable)
                 self.assertEqual(files.get_row_at(0)[0].plain, "[x]/a.py")
+
+
+class ManPageTests(unittest.TestCase):
+    def test_shipped_pages_match_the_sources(self) -> None:
+        for prog in PAGES:
+            shipped = (MAN_DIR / f"{prog}.1").read_text()
+            self.assertEqual(
+                shipped,
+                build_manpage(prog),
+                f"man/{prog}.1 is stale. Run python -m vidi.docs",
+            )
+
+    def test_readme_key_tables_match_the_sources(self) -> None:
+        text = README.read_text()
+        self.assertEqual(
+            text, update_readme(text), "README key tables are stale. Run python -m vidi.docs"
+        )
+        for section, keys in SHORTCUTS:
+            self.assertIn(f"### {section}", text)
+            for _key, description in keys:
+                self.assertIn(f"| {description} |", text)
+
+    def test_page_covers_options_and_every_key(self) -> None:
+        page = build_manpage("git-view")
+        self.assertIn(".B git\\-view [\\-h] [\\-\\-version] [repo_dir]", page)
+        for section, keys in SHORTCUTS:
+            self.assertIn(f".SS {section}", page)
+            for _key, description in keys:
+                self.assertIn(description.replace("-", "\\-"), page)

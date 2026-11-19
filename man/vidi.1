@@ -1,0 +1,150 @@
+.TH VIDI 1 "" "vidi" "vidi manual"
+.SH NAME
+vidi \- browse a local git repository in the terminal
+.SH SYNOPSIS
+.B vidi [\-h] [\-\-version] [repo_dir]
+.SH DESCRIPTION
+Opens the repository you are in when given no path. Settings such as the theme and the language scan are changed inside the app from the command palette (Ctrl+P).
+.SH OPTIONS
+.TP
+.B \-h, \-\-help
+show this help message and exit
+.TP
+.B \-\-version
+show program's version number and exit
+.TP
+.B repo_dir
+Path inside a local git repository (defaults to the current folder)
+.SH KEYS
+Press ? in the app to show these keys.
+.SS Main screen
+.TP
+.B j / k  or  up / down
+Move within the focused panel
+.TP
+.B tab / shift+tab
+Switch between panels
+.TP
+.B enter
+Open the commit, or the highlighted language's files
+.TP
+.B f
+Browse the highlighted commit's files
+.TP
+.B /
+Filter the commit table (esc clears)
+.TP
+.B left / right
+Previous / next language, or back / forward a week on the graph
+.TP
+.B h / l
+Select the older / newer active day
+.TP
+.B [ / ]
+Step through years
+.TP
+.B r
+Cycle the date range
+.TP
+.B b
+Pick a branch
+.TP
+.B ?
+Show the key reference
+.TP
+.B q
+Quit
+.SS Commit detail
+.TP
+.B j / k  or  up / down
+Move within the focused pane
+.TP
+.B tab / shift+tab
+Switch between panes
+.TP
+.B [ / ]
+Previous / next commit
+.TP
+.B p
+Toggle file diff and full patch
+.TP
+.B f
+Browse this commit's files
+.TP
+.B /
+Filter the files list, or search the patch
+.TP
+.B enter / shift+enter
+Next / previous patch match while searching
+.TP
+.B n / N
+Next / previous patch match
+.TP
+.B page up / page down
+Scroll by a page
+.TP
+.B home / end
+Jump to the top or bottom
+.TP
+.B esc / q
+Back (esc first closes the search)
+.SS Branch picker
+.TP
+.B type
+Filter the branch list
+.TP
+.B up / down
+Move the highlight
+.TP
+.B enter
+Switch to the highlighted branch
+.TP
+.B esc / q
+Cancel
+.SS Commit files
+.TP
+.B j / k  or  up / down
+Move between files
+.TP
+.B /
+Filter the list (esc clears)
+.TP
+.B [ / ]
+Previous / next commit
+.TP
+.B enter
+Open the highlighted file
+.TP
+.B esc / q
+Back
+.SS File view
+.TP
+.B j / k  or  up / down
+Scroll (arrows scroll even while searching)
+.TP
+.B /
+Search in the file
+.TP
+.B enter / shift+enter
+Next / previous match while searching
+.TP
+.B n / N
+Next / previous match
+.TP
+.B [ / ]
+Previous / next file
+.TP
+.B page up / page down
+Scroll by a page
+.TP
+.B home / end
+Jump to the top or bottom
+.TP
+.B esc / q
+Back (esc first closes the search)
+.SH FILES
+.TP
+.I ~/.config/vidi/config.json
+Saved preferences (honors XDG_CONFIG_HOME).
+.SH SEE ALSO
+.BR git (1)

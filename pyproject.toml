@@ -5,11 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "vidi"
 version = "0.1.0"
-description = "Terminal-first local git repository viewer built with Textual."
+description = "A read-only terminal viewer for a local Git repository."
 readme = "README.md"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
-requires-python = ">=3.12"
+requires-python = ">=3.9"
 authors = [
     { name = "affaan-git", email = "216245812+affaan-git@users.noreply.github.com" },
 ]
@@ -20,12 +20,12 @@ classifiers = [
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3 :: Only",
     "Topic :: Software Development :: Version Control :: Git",
     "Topic :: Utilities",
 ]
 dependencies = [
-    "textual>=8.1.1",
+    "textual>=6.2,<9",
 ]
 
 [project.optional-dependencies]
@@ -38,9 +38,13 @@ Issues = "https://github.com/affaan-git/vidi/issues"
 
 [project.scripts]
 vidi = "vidi.cli:main"
+git-view = "vidi.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
+
+[tool.setuptools.data-files]
+"share/man/man1" = ["man/vidi.1", "man/git-view.1"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -21,12 +21,12 @@ SHORTCUTS: list[tuple[str, list[tuple[str, str]]]] = [
             ("enter", "Open the commit, or the highlighted language's files"),
             ("f", "Browse the highlighted commit's files"),
             ("/", "Filter the commit table (esc clears)"),
-            ("left / right", "Languages: prev / next; Graph: back / forward a week"),
+            ("left / right", "Previous / next language, or back / forward a week on the graph"),
             ("h / l", "Select the older / newer active day"),
             ("[ / ]", "Step through years"),
             ("r", "Cycle the date range"),
             ("b", "Pick a branch"),
-            ("?", "Show this help"),
+            ("?", "Show the key reference"),
             ("q", "Quit"),
         ],
     ),
@@ -123,8 +123,8 @@ class HelpScreen(ModalScreen[None]):
 
     def on_mount(self) -> None:
         palette = resolve_theme_palette(self.app.current_theme)
-        # Frame color comes from the registered theme via CSS ($panel); only the
-        # alpha-blended screen dim needs the palette here.
+        # Frame color comes from the registered theme via CSS with only the screen
+        # dim needing the palette's alpha-blended overlay.
         self.styles.background = palette.overlay
         self.query_one("#help-title", Static).styles.color = palette.foreground
         self.query_one("#help-hint", Static).styles.color = palette.muted

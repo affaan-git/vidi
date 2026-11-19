@@ -1,21 +1,15 @@
 # vidi
 
-A read-only, terminal-based viewer for a local Git repository. It opens on a
-GitHub-style dashboard for a repo you already have on disk: a contribution
-graph, the commit history for the selected branch and year, a details panel for
-the highlighted commit, and the language breakdown of that commit's tree. Drill
-into any commit to read its diff and full patch, or open any file as it was at
-that commit. Nothing is ever written to the repository.
+<p align="center">
+  <img src="https://raw.githubusercontent.com/affaan-git/vidi/main/.github/demo.gif"
+    alt="vidi browsing a repository">
+</p>
 
-Built with [Textual](https://textual.textualize.io/). Where a general-purpose
-git TUI like lazygit or tig is built around running git commands, this one is
-built around reading a repository at a glance.
-
-> Add a screenshot or short GIF here (for example `docs/demo.gif`).
+<p align="center">A read-only terminal viewer for a local Git repository.</p>
 
 ## Layout
 
-```
+```text
 +-----------------------------------+---------------------------+
 | Contribution Activity             | Commit Details            |
 |  (year heatmap, one cell per day) |  (author, message, files  |
@@ -29,143 +23,156 @@ built around reading a repository at a glance.
 +-----------------------------------+---------------------------+
 ```
 
-Move between the commit table, details, and languages panels with `Tab`.
-Selecting a day on the graph, or highlighting a row in the commit table, updates
-the details panel. The legend line beneath the graph shows the selected day's
-exact date and its commit count. Press `Enter` on a commit to open its diff, then `[` / `]` to
-step to the previous / next commit without leaving the detail view. The Languages
-panel is a snapshot of the highlighted commit's tree; press `Enter` on a language
-to list its files at that commit, and `Enter` on a file to view its contents.
-Even a language with a very small share keeps a visible slice on the bar and
-reads as `<1%` rather than `0%`.
-Press `f` (from any panel, or in the commit detail) to browse the whole tree; in
-the file list `[` / `]` step between commits.
+`Tab` moves between the commit table, details panel, languages panel, and
+graph. Selecting a day on the graph or a row in the commit table updates the
+details panel. The commit table filter matches on message, author, hash, and
+date.
+
+Press `Enter` on a commit to open its diff, then `[` and `]` to step to the
+previous or next commit. The languages panel shows the languages in the
+highlighted commit's tree. Press `Enter` on a language to list its files at
+that commit and `Enter` on a file to read it.
+
+Press `f` from any panel or from the commit detail to browse the whole tree.
+Use `[` and `]` in the file list to step between commits. Files changed in
+the commit are marked with a dot. The branch picker shows how many commits each
+branch is ahead of or behind `main` or `master`.
 
 ## Install
 
 ```bash
-pip install -e .
+pipx install vidi    # or uv tool install vidi or pip install vidi
 ```
 
-Requires Python 3.12 or newer. The only runtime dependency is `textual`.
+> [!IMPORTANT]
+> Requires Python 3.9+ and `git` on `PATH`.
 
 ## Run
 
 ```bash
-vidi /path/to/repo
+git view /path/to/repo    # or vidi /path/to/repo
 ```
 
-It's short enough to type as-is; or alias it. Both `vd` (its initials) and `gv`
-("git view", to sit next to `ga`, `gd`, ...) work, since the alias and the
-command name are independent:
+Or from anywhere inside a repo:
 
 ```bash
-alias vd='vidi'   # or: alias gv='vidi'
+git view    # or vidi
 ```
 
-Everything else is set from inside the app (command palette, `Ctrl+P`) and
-remembered between runs -- there are no other flags.
+> [!TIP]
+> For shorter commands use `alias gv='git view'`.
 
-## Themes
+## Settings
 
-Ships with three themes: `vidi` (default), `one-night`, and `pro-black`.
-Switch from the command palette (`Ctrl+P` -> "Change theme"); the choice is
-remembered between runs. Reset to the default from the palette
-("Reset theme to default").
+Apart from the path, everything is set inside the app from the command palette
+(`Ctrl+P`). Settings are saved to `~/.config/vidi/config.json` or
+`$XDG_CONFIG_HOME/vidi/config.json` when set.
 
-The command palette also has:
+The command palette additionally exposes these settings:
 
-- "Transparent background" - use the terminal's background (so a translucent
-  terminal shows through) while keeping the theme's borders, selection, and text.
-- "Graph: browse / select on move" - toggle whether moving over the contribution
-  graph moves the commit-table selection immediately (default) or only on Enter.
-- "Language settings" - choose whether languages are measured by bytes or file
-  count, exclude languages, and add directories to ignore in the scan.
-
-All of these persist between runs.
+- "Transparent background" uses the terminal's background and keeps the
+  theme's borders, selection, and text.
+- "Graph: commit table follows on Enter" makes moving over the graph wait for
+  `Enter` before it selects a commit. "Graph: commit table follows as you move"
+  switches back to the default.
+- "Language settings" chooses whether languages are measured by bytes or file
+  count, which languages to exclude, and which extra directories the scan skips.
+- "Change theme" picks a theme. "Reset theme to default" switches back to the default.
 
 ## Keys
 
-Press `?` at any time for the in-app reference.
+Press `?` in the app for the same reference.
+
+<details>
+<summary>Click to expand</summary>
+
+<!-- keys:start -->
 
 ### Main screen
 
 | Key | Action |
 | --- | --- |
-| `j` / `k` (or arrows) | Move within the focused panel |
-| `Tab` / `Shift+Tab` | Switch between panels |
-| `Enter` | Open the commit, or the highlighted language's files |
+| `j` / `k` or `up` / `down` | Move within the focused panel |
+| `tab` / `shift+tab` | Switch between panels |
+| `enter` | Open the commit, or the highlighted language's files |
 | `f` | Browse the highlighted commit's files |
-| `/` | Filter the commit table by message, author, hash or date (`Esc` clears) |
-| `Left` / `Right` | Languages: prev / next language; Graph: back / forward a week |
+| `/` | Filter the commit table (esc clears) |
+| `left` / `right` | Previous / next language, or back / forward a week on the graph |
 | `h` / `l` | Select the older / newer active day |
 | `[` / `]` | Step through years |
 | `r` | Cycle the date range |
 | `b` | Pick a branch |
-| `?` | Show help |
+| `?` | Show the key reference |
 | `q` | Quit |
 
 ### Commit detail
 
 | Key | Action |
 | --- | --- |
-| `j` / `k` (or arrows) | Move within the focused pane |
-| `Tab` / `Shift+Tab` | Switch between panes |
+| `j` / `k` or `up` / `down` | Move within the focused pane |
+| `tab` / `shift+tab` | Switch between panes |
 | `[` / `]` | Previous / next commit |
 | `p` | Toggle file diff and full patch |
 | `f` | Browse this commit's files |
-| `/` | Filter the files list (on the files pane) or search the patch |
-| `Enter` / `Shift+Enter` | Next / previous patch match while searching |
+| `/` | Filter the files list, or search the patch |
+| `enter` / `shift+enter` | Next / previous patch match while searching |
 | `n` / `N` | Next / previous patch match |
-| `PageUp` / `PageDown` | Scroll by a page |
-| `Home` / `End` | Jump to the top or bottom |
-| `Esc` / `q` | Back (`Esc` first closes the search) |
+| `page up` / `page down` | Scroll by a page |
+| `home` / `end` | Jump to the top or bottom |
+| `esc` / `q` | Back (esc first closes the search) |
 
 ### Branch picker
-
-Each branch shows how far it is `↑` ahead / `↓` behind `main` (or `master`).
 
 | Key | Action |
 | --- | --- |
 | type | Filter the branch list |
-| `Up` / `Down` | Move the highlight |
-| `Enter` | Switch to the highlighted branch |
-| `Esc` / `q` | Back to the main screen |
+| `up` / `down` | Move the highlight |
+| `enter` | Switch to the highlighted branch |
+| `esc` / `q` | Cancel |
 
 ### Commit files
 
-Reached with `f` (the whole tree) or `Enter` on a language (just that language).
-Files changed in the commit are marked with a dot.
-
 | Key | Action |
 | --- | --- |
-| `j` / `k` (or arrows) | Move between files |
-| `/` | Filter the list (type to narrow, `Esc` clears) |
+| `j` / `k` or `up` / `down` | Move between files |
+| `/` | Filter the list (esc clears) |
 | `[` / `]` | Previous / next commit |
-| `Enter` | Open the highlighted file |
-| `Esc` / `q` | Back |
+| `enter` | Open the highlighted file |
+| `esc` / `q` | Back |
 
 ### File view
 
 | Key | Action |
 | --- | --- |
-| `j` / `k` (or arrows) | Scroll (arrows scroll even while searching) |
+| `j` / `k` or `up` / `down` | Scroll (arrows scroll even while searching) |
 | `/` | Search in the file |
-| `Enter` / `Shift+Enter` | Next / previous match while searching |
+| `enter` / `shift+enter` | Next / previous match while searching |
 | `n` / `N` | Next / previous match |
 | `[` / `]` | Previous / next file |
-| `PageUp` / `PageDown` | Scroll by a page |
-| `Home` / `End` | Jump to the top or bottom |
-| `Esc` / `q` | Back (`Esc` first closes the search) |
+| `page up` / `page down` | Scroll by a page |
+| `home` / `end` | Jump to the top or bottom |
+| `esc` / `q` | Back (esc first closes the search) |
+
+<!-- keys:end -->
+
+</details>
 
 ## Development
 
 ```bash
-pip install -e .
-python3 -m pytest -q tests/test_navigation.py
+pip install -e ".[test]"
+python -m pytest -q
 ```
+
+> [!IMPORTANT]
+> The man pages in `man/` and the key tables in this README are generated from
+> the `vidi -h` parser and the in-app help.  
+> **Regenerate with `python -m vidi.docs` after changing either.**  
+> A test will fail when they are out of date. Editable installs don't include
+> the man pages, which `git view --help` needs.
 
 ## License
 
-vidi is free software licensed under the GNU General Public License v3.0 or
-later (GPL-3.0-or-later). See [LICENSE](LICENSE) for the full text.
+vidi is free software under the GNU General Public License v3.0 or later. See
+[LICENSE](https://github.com/affaan-git/vidi/blob/main/LICENSE) for the full
+text.
