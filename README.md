@@ -7,6 +7,32 @@
 
 <p align="center">A read-only terminal viewer for a local Git repository.</p>
 
+## Install
+
+```bash
+pipx install git-vidi    # or uv tool install git-vidi or pip install git-vidi
+```
+
+> [!IMPORTANT]
+> Requires Python 3.9+ and `git` 2.24+ on `PATH`.
+
+## Run
+
+```bash
+git view /path/to/repo    # or vidi /path/to/repo
+```
+
+Or from anywhere inside a repo:
+
+```bash
+git view    # or vidi
+```
+
+The same program also runs as `git vidi`.
+
+> [!TIP]
+> For shorter commands use `alias gv='git view'`.
+
 ## Layout
 
 ```text
@@ -38,50 +64,6 @@ Use `[` and `]` in the file list to step between commits. Files changed in
 the commit are marked with a dot. The branch picker shows how many commits each
 branch is ahead of or behind the default branch (derived from `origin/HEAD` or
 `main`/`master`).
-
-## Install
-
-```bash
-pipx install vidi    # or uv tool install vidi or pip install vidi
-```
-
-> [!IMPORTANT]
-> Requires Python 3.9+ and `git` 2.24+ on `PATH`.
-
-## Run
-
-```bash
-git view /path/to/repo    # or vidi /path/to/repo
-```
-
-Or from anywhere inside a repo:
-
-```bash
-git view    # or vidi
-```
-
-> [!TIP]
-> For shorter commands use `alias gv='git view'`.
-
-## Settings
-
-Apart from the path, everything is set inside the app from the command palette
-(`Ctrl+P`). Settings are saved to `~/.config/vidi/config.json`
-(`%APPDATA%\vidi\config.json` on Windows) by default or
-`$XDG_CONFIG_HOME/vidi/config.json` when set.
-
-The command palette additionally exposes these settings:
-
-- "Transparent background" uses the terminal's background and keeps the
-  theme's borders, selection, and text.
-- "Graph: commit table follows on Enter" makes moving over the graph wait for
-  `Enter` before it selects a commit. "Graph: commit table follows as you move"
-  switches back to the default.
-- "Language settings" chooses whether languages are measured by bytes or file
-  count, which languages to exclude, and which extra directories the scan skips.
-- "Change theme" picks a theme. "Reset theme to default" switches back to the default.
-- "Wrap lines in diffs" and "Wrap lines in file view" choose whether long lines
-  wrap or scroll sideways. Diffs wrap by default.
 
 ## Keys
 
@@ -164,6 +146,26 @@ Press `?` in the app for the same reference.
 <!-- keys:end -->
 
 </details>
+
+## Settings
+
+Apart from the path, everything is set inside the app from the command palette
+(`Ctrl+P`). Settings are saved to `~/.config/vidi/config.json`
+(`%APPDATA%\vidi\config.json` on Windows) by default or
+`$XDG_CONFIG_HOME/vidi/config.json` when set.
+
+The command palette additionally exposes these settings:
+
+- "Transparent background" uses the terminal's background and keeps the
+  theme's borders, selection, and text.
+- "Graph: commit table follows on Enter" makes moving over the graph wait for
+  `Enter` before it selects a commit. "Graph: commit table follows as you move"
+  switches back to the default.
+- "Language settings" chooses whether languages are measured by bytes or file
+  count, which languages to exclude, and which extra directories the scan skips.
+- "Change theme" picks a theme. "Reset theme to default" switches back to the default.
+- "Wrap lines in diffs" and "Wrap lines in file view" choose whether long lines
+  wrap or scroll sideways. Diffs wrap by default.
 
 ## Development
 
