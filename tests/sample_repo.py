@@ -143,13 +143,16 @@ def write_file(folder, path, content='x\n'):
 
 
 def commit_files(repo, files, message):
-    """Commit files straight into git without writing them to the work tree."""
+    """Commit a tree of exactly these files straight into git, without the work tree."""
     records = []
     for path, content in files.items():
         blob = git(repo, 'hash-object', '-w', '--stdin', input=content).strip()
         records.append(f'100644 blob {blob}\t{path}\0')
-    git(repo, 'update-index', '-z', '--index-info', input=''.join(records))
-    git(repo, 'commit', '-q', '-m', message)
+    # Git for Windows NTFS compat.
+    ntfs = ('-c', 'core.protectNTFS=false')
+    git(repo, 'read-tree', '--empty')
+    git(repo, *ntfs, 'update-index', '-z', '--index-info', input=''.join(records))
+    git(repo, *ntfs, 'commit', '-q', '-m', message)
 
 
 def new_repo(parent):

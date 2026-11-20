@@ -1652,10 +1652,10 @@ class PlatformTests(unittest.TestCase):
             os.makedirs(repo)
             git(repo, "init", "-q")
             code = (
-                "import sys; from vidi.cli import resolve_repo_dir; "
-                "print(ascii(resolve_repo_dir(sys.argv[1])))"
+                "import os, sys; from vidi.cli import resolve_repo_dir; "
+                "print(resolve_repo_dir(sys.argv[1]) == os.path.realpath(sys.argv[1]))"
             )
-            self.assertEqual(_run_with_latin1_locale(code, repo).strip(), ascii(repo))
+            self.assertEqual(_run_with_latin1_locale(code, repo).strip(), "True")
 
     def test_settings_file_is_read_as_utf8_under_any_locale(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1771,7 +1771,6 @@ class HostileRepoTests(unittest.IsolatedAsyncioTestCase):
             repo = new_repo(tmp)
             name = "evil\x1b]0;T\x07.py"
             commit_files(repo, {name: "x = 1\n"}, "first")
-            git(repo, "rm", "-q", "--cached", "--", name)
             commit_files(repo, {"evil\x1b[2Jmoved.py": "x = 1\n"}, "rename")
             service = RepoService(repo)
             for commit in service.get_branch_data("main").commits:
