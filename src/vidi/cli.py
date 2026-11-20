@@ -18,9 +18,12 @@ from .screens.help import SHORTCUTS
 def package_version() -> str:
     """The installed version in the package metadata from pyproject.toml."""
     try:
-        return version("vidi")
+        return version("git-vidi")
     except PackageNotFoundError:
         return "unknown"
+
+
+NAMES = "The same program runs as vidi, git view and git vidi."
 
 
 def keys_reference(width: int = 79) -> str:
@@ -39,6 +42,7 @@ def keys_reference(width: int = 79) -> str:
             )
     lines.append("")
     lines.append("Press ? in the app for the same keys.")
+    lines.append(NAMES)
     return "\n".join(lines)
 
 

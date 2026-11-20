@@ -11,13 +11,13 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from .cli import build_parser
+from .cli import NAMES, build_parser
 from .screens.help import SHORTCUTS
 
 ROOT = Path(__file__).resolve().parents[2]
 MAN_DIR = ROOT / "man"
 README = ROOT / "README.md"
-PAGES = ("vidi", "git-view")
+PAGES = ("vidi", "git-view", "git-vidi")
 KEYS_START = "<!-- keys:start -->"
 KEYS_END = "<!-- keys:end -->"
 
@@ -35,14 +35,14 @@ def build_manpage(prog: str) -> str:
     lines = [
         f'.TH {prog.upper()} 1 "" "vidi" "vidi manual"',
         ".SH NAME",
-        f"{_escape(prog)} \\- {_escape(parser.description or '')}",
+        f"{_escape(', '.join(PAGES))} \\- {_escape(parser.description or '')}",
         ".SH SYNOPSIS",
         f".B {_escape(usage)}",
         ".SH DESCRIPTION",
         _escape(
             "Opens the repository you are in when given no path. "
             "Settings such as the theme and the language "
-            "scan are changed inside the app from the command palette (Ctrl+P)."
+            "scan are changed inside the app from the command palette (Ctrl+P). " + NAMES
         ),
         ".SH OPTIONS",
     ]

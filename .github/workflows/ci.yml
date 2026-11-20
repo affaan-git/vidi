@@ -72,11 +72,11 @@ jobs:
           pip install build twine
           python -m build
           twine check --strict dist/*
-      - name: Install the wheel and check both commands
+      - name: Install the wheel and check the commands
         run: |
           python -m venv "$RUNNER_TEMP/v"
           "$RUNNER_TEMP/v/bin/pip" install dist/*.whl
-          "$RUNNER_TEMP/v/bin/vidi" -h
-          "$RUNNER_TEMP/v/bin/git-view" -h
-          test -f "$RUNNER_TEMP/v/share/man/man1/vidi.1"
-          test -f "$RUNNER_TEMP/v/share/man/man1/git-view.1"
+          for command in vidi git-view git-vidi; do
+            "$RUNNER_TEMP/v/bin/$command" -h
+            test -f "$RUNNER_TEMP/v/share/man/man1/$command.1"
+          done
