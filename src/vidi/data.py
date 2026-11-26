@@ -17,6 +17,7 @@ RANGE_PRESETS = [
     ("7 days", "7"),
 ]
 
+
 def filter_commits(
     commits: list[CommitRecord],
     range_value: str,

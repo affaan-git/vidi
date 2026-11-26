@@ -390,9 +390,10 @@ class RepoService:
         are unknown."""
         if not base or branch == base:
             return (0, 0)
+        count = ["rev-list", "--count", "--end-of-options"]
         try:
-            ahead = int(run_git(self.repo_dir, ["rev-list", "--count", "--end-of-options", f"{base}..{branch}"]).strip() or "0")
-            behind = int(run_git(self.repo_dir, ["rev-list", "--count", "--end-of-options", f"{branch}..{base}"]).strip() or "0")
+            ahead = int(run_git(self.repo_dir, [*count, f"{base}..{branch}"]).strip() or "0")
+            behind = int(run_git(self.repo_dir, [*count, f"{branch}..{base}"]).strip() or "0")
         except (RuntimeError, ValueError):
             return (0, 0)
         return (ahead, behind)
@@ -538,7 +539,8 @@ class RepoService:
             ],
         )
         # A merge lists its files against the first parent, like the commit detail.
-        # Older git ignores the config and repeats a merge once per parent. Only the first list is kept.
+        # Older git ignores the config and repeats a merge once per parent.
+        # Only the first list is kept.
         files_out = run_git(
             self.repo_dir,
             [

@@ -10,8 +10,10 @@
 ## Install
 
 ```bash
-pipx install git-vidi    # or uv tool install git-vidi or pip install git-vidi
+pipx install git-vidi
 ```
+
+Also works with `uv tool install git-vidi` or `pip install git-vidi`.
 
 > [!IMPORTANT]
 > Requires Python 3.9+ and `git` 2.24+ on `PATH`.
@@ -19,16 +21,16 @@ pipx install git-vidi    # or uv tool install git-vidi or pip install git-vidi
 ## Run
 
 ```bash
-git view /path/to/repo    # or vidi /path/to/repo
+git view /path/to/repo
 ```
 
 Or from anywhere inside a repo:
 
 ```bash
-git view    # or vidi
+git view
 ```
 
-The same program also runs as `git vidi`.
+Also works as `git vidi` or `vidi`.
 
 > [!TIP]
 > For shorter commands use `alias gv='git view'`.
@@ -67,7 +69,8 @@ branch is ahead of or behind the default branch (derived from `origin/HEAD` or
 
 ## Keys
 
-Press `?` in the app for the same reference.
+Press `?` in the app or run `vidi -h` for the same reference. On Windows
+`git view --help` cannot open a manual.
 
 <details>
 <summary>Click to expand</summary>
@@ -179,8 +182,7 @@ python -m pytest -q
 > the `vidi -h` parser and the in-app help.  
 > **Regenerate with `python -m vidi.docs` after changing either.**  
 > A test will fail when they are out of date. Editable installs don't include
-> the man pages, which `git view --help` opens on macOS and Linux. On Windows
-> the keys are in `vidi -h` and `?`.
+> the man pages, which `git view --help` opens on macOS and Linux.
 
 ## License
 

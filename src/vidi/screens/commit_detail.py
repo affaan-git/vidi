@@ -282,7 +282,9 @@ class CommitDetailScreen(DebouncedResize, ModalScreen[None]):
                     id="commit-detail-files-panel",
                     classes="commit-detail-panel",
                 ):
-                    yield Static(id="commit-detail-files-title", classes="commit-detail-panel-title")
+                    yield Static(
+                        id="commit-detail-files-title", classes="commit-detail-panel-title"
+                    )
                     yield Static(id="commit-detail-files-meta")
                     yield Input(placeholder="Filter files", id="commit-detail-files-filter")
                     yield DataTable(id="commit-detail-files-diff", show_row_labels=False)
@@ -292,7 +294,9 @@ class CommitDetailScreen(DebouncedResize, ModalScreen[None]):
                     id="commit-detail-patch-panel",
                     classes="commit-detail-panel",
                 ):
-                    yield Static(id="commit-detail-patch-title", classes="commit-detail-panel-title")
+                    yield Static(
+                        id="commit-detail-patch-title", classes="commit-detail-panel-title"
+                    )
                     yield Input(placeholder="Search patch", id="commit-detail-search")
                     yield TextView(wrap=self.app.wrap_diffs, id="commit-detail-selected-scroll")
                     yield TextView(wrap=self.app.wrap_diffs, id="commit-detail-full-scroll")
@@ -1094,7 +1098,8 @@ class CommitDetailScreen(DebouncedResize, ModalScreen[None]):
                     key=str(index),
                 )
             if visible:
-                row = visible.index(self.selected_file_index) if self.selected_file_index in visible else 0
+                selected = self.selected_file_index
+                row = visible.index(selected) if selected in visible else 0
                 table.move_cursor(row=row, animate=False, scroll=True)
         finally:
             self._suspend_file_events = False

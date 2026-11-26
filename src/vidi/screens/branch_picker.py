@@ -144,10 +144,8 @@ class BranchPickerScreen(ModalScreen[Optional[str]]):
     def _refresh_options(self) -> None:
         options = self.query_one("#branch-picker-options", OptionList)
         if not self.filtered_branches:
-            palette = self._theme_palette
-            options.set_options(
-                [Option(Text("No matching branches", style=make_style(palette.muted)), disabled=True)]
-            )
+            message = Text("No matching branches", style=make_style(self._theme_palette.muted))
+            options.set_options([Option(message, disabled=True)])
             options.highlighted = None
             self.highlighted_branch = ""
             return

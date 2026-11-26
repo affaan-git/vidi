@@ -13,7 +13,19 @@ requires-python = ">=3.9"
 authors = [
     { name = "affaan-git", email = "216245812+affaan-git@users.noreply.github.com" },
 ]
-keywords = ["git", "textual", "tui", "terminal", "repository", "viewer"]
+keywords = [
+    "git",
+    "git-view",
+    "vidi",
+    "textual",
+    "tui",
+    "terminal",
+    "cli",
+    "repository",
+    "viewer",
+    "history",
+    "commits",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
