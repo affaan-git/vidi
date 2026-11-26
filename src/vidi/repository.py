@@ -65,14 +65,16 @@ def run_git(
 
     Bytes that are not UTF-8 become U+FFFD unless `errors` is "strict".
     """
+    # Python 3.9 turns input=None into b"" and then fails to encode it in text mode.
+    extra = {} if input is None else {"input": input}
     try:
         output = subprocess.check_output(
             _git_command(args),
             cwd=repo_dir,
-            input=input,
             encoding="utf-8",
             errors=errors,
             stderr=subprocess.PIPE,
+            **extra,
         )
     except subprocess.CalledProcessError as exc:
         stderr = exc.stderr.strip() if exc.stderr else "unknown git error"

@@ -132,6 +132,26 @@ class DetectionTests(unittest.TestCase):
             self.assertTrue(handle.read().isascii())
 
 
+class RunGitTests(unittest.TestCase):
+    def test_run_git_passes_input_only_when_there_is_some(self) -> None:
+        real = subprocess.check_output
+
+        def like_python_3_9(*args, **kwargs):
+            # Python 3.9 turns input=None into b"" and then fails to encode it in text mode.
+            if "input" in kwargs and kwargs["input"] is None and "encoding" in kwargs:
+                raise AttributeError("'bytes' object has no attribute 'encode'")
+            return real(*args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = new_repo(tmp)
+            git(repo, "commit", "-q", "--allow-empty", "-m", "first")
+            with mock.patch.object(repository.subprocess, "check_output", like_python_3_9):
+                self.assertTrue(repository.run_git(repo, ["rev-parse", "HEAD"]).strip())
+                args = ["check-attr", "-z", "--stdin", "diff"]
+                output = repository.run_git(repo, args, input="a")
+                self.assertTrue(output.startswith("a\0diff\0"))
+
+
 class ScanTests(unittest.TestCase):
     def build_repo(self, tmp: str) -> str:
         repo = new_repo(tmp)
