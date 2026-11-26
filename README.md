@@ -179,8 +179,8 @@ python -m pytest -q
 
 > [!IMPORTANT]
 > The man pages in `man/` and the key tables in this README are generated from
-> the `vidi -h` parser and the in-app help.  
-> **Regenerate with `python -m vidi.docs` after changing either.**  
+> the `vidi -h` parser and the in-app help.\
+> **Regenerate with `python -m vidi.docs` after changing either.**\
 > A test will fail when they are out of date. Editable installs don't include
 > the man pages, which `git view --help` opens on macOS and Linux.
 
@@ -191,7 +191,6 @@ Linguist v9.7.0. Regenerate it for a newer Linguist release with
 ## License
 
 vidi is free software under the GNU General Public License v3.0 or later. See
-[LICENSE](https://github.com/affaan-git/vidi/blob/main/LICENSE) for the full
-text. The language data comes from
-[GitHub Linguist](https://github.com/github-linguist/linguist) under the MIT
-license.
+[LICENSE](https://github.com/affaan-git/vidi/blob/main/LICENSE) for the full text.\
+Language data is from [GitHub Linguist](https://github.com/github-linguist/linguist)
+under the MIT license.
