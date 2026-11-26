@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
-import os
 import re
 
 
@@ -124,32 +122,3 @@ def fuzzy_score(query: str, value: str) -> int | None:
             gap_penalty += next_pos - pos - 1
         pos = next_pos
     return 100 + gap_penalty
-
-
-def random_color(label: str) -> str:
-    return f"#{hashlib.md5(label.encode('utf-8')).hexdigest()[:6]}"
-
-
-# Languages of well-known extensionless or fixed filenames, keyed by lowercase name.
-FILENAME_TO_LANGUAGE = {
-    "dockerfile": "Dockerfile",
-    "containerfile": "Dockerfile",
-    "makefile": "Makefile",
-    "gnumakefile": "Makefile",
-    "cmakelists.txt": "CMake",
-    "gemfile": "Ruby",
-    "rakefile": "Ruby",
-    "vagrantfile": "Ruby",
-    "podfile": "Ruby",
-    "jenkinsfile": "Groovy",
-}
-
-
-def detect_language(filename: str, extension_to_language: dict[str, str]) -> str:
-    basename = os.path.basename(filename).lower()
-    if basename in FILENAME_TO_LANGUAGE:
-        return FILENAME_TO_LANGUAGE[basename]
-    ext = os.path.splitext(filename)[1].lower()
-    if ext in extension_to_language:
-        return extension_to_language[ext]
-    return ext[1:].upper() if ext else "Other"

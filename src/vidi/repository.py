@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import os
+import stat
 import subprocess
 import time
 from functools import lru_cache
-from typing import Iterator
+from typing import Callable
 
+from . import languages
 from .data import parse_patch_sections
 from .models import (
     BranchData,
@@ -19,9 +21,7 @@ from .models import (
     RepoScanSnapshot,
 )
 from .utils import (
-    detect_language,
     parse_iso_datetime,
-    random_color,
     replace_terminal_control,
     unquote_git_path,
 )
@@ -45,158 +45,31 @@ DEFAULT_IGNORED_DIRS = {
     ".vscode",
 }
 
-EXTENSION_TO_LANGUAGE = {
-    ".py": "Python",
-    ".js": "JavaScript",
-    ".jsx": "JavaScript",
-    ".mjs": "JavaScript",
-    ".cjs": "JavaScript",
-    ".ts": "TypeScript",
-    ".tsx": "TypeScript",
-    ".html": "HTML",
-    ".htm": "HTML",
-    ".css": "CSS",
-    ".java": "Java",
-    ".c": "C",
-    ".h": "C/C++ Header",
-    ".cpp": "C++",
-    ".cc": "C++",
-    ".cxx": "C++",
-    ".hpp": "C++ Header",
-    ".cs": "C#",
-    ".rb": "Ruby",
-    ".go": "Go",
-    ".php": "PHP",
-    ".swift": "Swift",
-    ".kt": "Kotlin",
-    ".kts": "Kotlin",
-    ".rs": "Rust",
-    ".lua": "Lua",
-    ".sh": "Shell",
-    ".bash": "Shell",
-    ".zsh": "Shell",
-    ".fish": "Shell",
-    ".json": "JSON",
-    ".jsonc": "JSON",
-    ".yaml": "YAML",
-    ".yml": "YAML",
-    ".xml": "XML",
-    ".toml": "TOML",
-    ".md": "Markdown",
-    ".sql": "SQL",
-    ".r": "R",
-    ".dart": "Dart",
-    ".scala": "Scala",
-    ".pl": "Perl",
-    ".pm": "Perl",
-    ".m": "Objective-C/MATLAB",
-    ".mm": "Objective-C++",
-    ".vb": "Visual Basic",
-    ".ps1": "PowerShell",
-    ".bat": "Batchfile",
-    ".cmd": "Batchfile",
-    ".dockerfile": "Dockerfile",
-    ".vue": "Vue",
-    ".svelte": "Svelte",
-    ".astro": "Astro",
-    ".scss": "SCSS",
-    ".sass": "Sass",
-    ".less": "Less",
-    ".tf": "HCL",
-    ".tfvars": "HCL",
-    ".hcl": "HCL",
-    ".ipynb": "Jupyter Notebook",
-    ".zig": "Zig",
-    ".ex": "Elixir",
-    ".exs": "Elixir",
-    ".erl": "Erlang",
-    ".hrl": "Erlang",
-    ".hs": "Haskell",
-    ".ml": "OCaml",
-    ".mli": "OCaml",
-    ".jl": "Julia",
-    ".nix": "Nix",
-    ".proto": "Protocol Buffer",
-    ".clj": "Clojure",
-    ".cljs": "Clojure",
-    ".cljc": "Clojure",
-    ".groovy": "Groovy",
-    ".mk": "Makefile",
-    ".cmake": "CMake",
-    ".mts": "TypeScript",
-    ".cts": "TypeScript",
-}
-
-LANGUAGE_COLORS = {
-    "Python": "#3572A5",
-    "JavaScript": "#f1e05a",
-    "HTML": "#e34c26",
-    "CSS": "#563d7c",
-    "Java": "#b07219",
-    "C": "#555555",
-    "C++": "#f34b7d",
-    "C#": "#178600",
-    "Ruby": "#701516",
-    "Go": "#00ADD8",
-    "PHP": "#4F5D95",
-    "TypeScript": "#3178c6",
-    "Swift": "#ffac45",
-    "Kotlin": "#A97BFF",
-    "Rust": "#dea584",
-    "Lua": "#000080",
-    "Shell": "#89e051",
-    "JSON": "#292929",
-    "YAML": "#cb171e",
-    "XML": "#0060ac",
-    "Markdown": "#083fa1",
-    "SQL": "#e38c00",
-    "R": "#198CE7",
-    "Dart": "#00B4AB",
-    "Scala": "#c22d40",
-    "Perl": "#0298c3",
-    "PowerShell": "#012456",
-    "Batchfile": "#C1F12E",
-    "Dockerfile": "#384d54",
-    "Vue": "#41b883",
-    "Svelte": "#ff3e00",
-    "Astro": "#ff5a03",
-    "SCSS": "#c6538c",
-    "Sass": "#a53b70",
-    "Less": "#1d365d",
-    "HCL": "#844FBA",
-    "Jupyter Notebook": "#DA5B0B",
-    "Zig": "#ec915c",
-    "Elixir": "#6e4a7e",
-    "Erlang": "#B83998",
-    "Haskell": "#5e5086",
-    "OCaml": "#ef7a08",
-    "Julia": "#a270ba",
-    "Nix": "#7e7eff",
-    "Clojure": "#db5855",
-    "Groovy": "#4298b8",
-    "Makefile": "#427819",
-    "CMake": "#DA3434",
-}
+def _git_command(args: list[str]) -> list[str]:
+    return [
+        "git",
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "core.quotePath=false",
+        "-c",
+        "log.showSignature=false",
+        *args,
+    ]
 
 
-def run_git(repo_dir: str, args: list[str], *, errors: str = "replace") -> str:
+def run_git(
+    repo_dir: str, args: list[str], *, errors: str = "replace", input: str | None = None
+) -> str:
     """Run git and return its output with non-ASCII paths left unescaped.
 
     Bytes that are not UTF-8 become U+FFFD unless `errors` is "strict".
     """
     try:
         output = subprocess.check_output(
-            [
-                "git",
-                "-c",
-                "core.fsmonitor=false",
-                "-c",
-                "core.quotePath=false",
-                "-c",
-                "log.showSignature=false",
-                *args,
-            ],
+            _git_command(args),
             cwd=repo_dir,
+            input=input,
             encoding="utf-8",
             errors=errors,
             stderr=subprocess.PIPE,
@@ -249,19 +122,192 @@ def _in_ignored_dir(path: str, ignore_dirs: set[str]) -> bool:
     return any(component in ignore_dirs for component in path.split("/"))
 
 
-def _scanned_files(
-    repo_dir: str, exclude_languages: set[str], ignore_dirs: set[str]
-) -> Iterator[tuple[str, str, str]]:
-    """The relative path, full path, and language of each work-tree file the scan counts."""
-    for rel_path in list_worktree_paths(repo_dir):
-        if _in_ignored_dir(rel_path, ignore_dirs):
+LINGUIST_ATTRIBUTES = (
+    "linguist-language",
+    "linguist-vendored",
+    "linguist-generated",
+    "linguist-documentation",
+    "linguist-detectable",
+)
+# Whether git supports `check-attr --source`, which needs git 2.40. Set by the first commit view.
+_check_attr_source: bool | None = None
+
+
+def _linguist_attributes(
+    repo_dir: str, paths: list[str], source: str | None = None
+) -> dict[str, dict[str, str]]:
+    """The linguist attributes .gitattributes sets on each path, from `source` when given."""
+    global _check_attr_source
+    if not paths:
+        return {}
+    options = ["check-attr", "-z", "--stdin"]
+    request = "\0".join(paths)
+    output = None
+    if source and _check_attr_source is not False:
+        try:
+            output = run_git(
+                repo_dir, [*options, f"--source={source}", *LINGUIST_ATTRIBUTES], input=request
+            )
+            _check_attr_source = True
+        except RuntimeError:
+            _check_attr_source = False
+    if output is None:
+        output = run_git(repo_dir, [*options, *LINGUIST_ATTRIBUTES], input=request)
+    fields = output.split("\0")
+    found: dict[str, dict[str, str]] = {}
+    for index in range(0, len(fields) - 2, 3):
+        path, name, value = fields[index : index + 3]
+        if value != "unspecified":
+            found.setdefault(path, {})[name] = value
+    return found
+
+
+def _flag(value: str | None) -> bool | None:
+    if value in ("set", "true"):
+        return True
+    if value in ("unset", "false"):
+        return False
+    return None
+
+
+# Languages detected from file contents, keyed by path and content version.
+_detected: dict[tuple, str | None] = {}
+DETECTED_LIMIT = 200_000
+_UNREAD = object()
+
+
+def _classify(
+    paths: list[str],
+    attributes: dict[str, dict[str, str]],
+    read: Callable[[list[str]], dict[str, str]],
+    sizes: dict[str, int],
+    versions: dict[str, tuple],
+) -> dict[str, str]:
+    """The name each counted path is listed under, following Linguist's rules.
+
+    `versions` identifies each file's contents, for reusing earlier detections.
+    """
+    pending: list[tuple[str, str | None, bool | None]] = []
+    wanted: list[str] = []
+    known: dict[str, str | None] = {}
+    for path in paths:
+        marks = attributes.get(path, {})
+        vendored = _flag(marks.get("linguist-vendored"))
+        documentation = _flag(marks.get("linguist-documentation"))
+        if vendored or (vendored is None and languages.is_vendored(path)):
             continue
-        full_path = os.path.join(repo_dir, rel_path)
-        if not os.path.isfile(full_path):
+        if documentation or (documentation is None and languages.is_documentation(path)):
             continue
-        language = detect_language(rel_path, EXTENSION_TO_LANGUAGE)
-        if language not in exclude_languages:
-            yield rel_path, full_path, language
+        if _flag(marks.get("linguist-generated")):
+            continue
+        forced = languages.find(marks.get("linguist-language"))
+        # Linguist leaves empty files without a language unless one is set.
+        if forced is None and sizes[path] == 0:
+            continue
+        detectable = _flag(marks.get("linguist-detectable"))
+        pending.append((path, forced, detectable))
+        if forced is None and languages.needs_content(path, detectable):
+            cached = _detected.get(versions[path], _UNREAD)
+            if cached is _UNREAD:
+                wanted.append(path)
+            else:
+                known[path] = cached
+    if wanted:
+        if len(_detected) > DETECTED_LIMIT:
+            _detected.clear()
+        contents = read(wanted)
+        items = []
+        for path in wanted:
+            content = contents.get(path)
+            if content is not None and "\0" in content:
+                known[path] = None
+            else:
+                items.append((path, content))
+        for (path, _), language in zip(items, languages.detect_contents(items)):
+            known[path] = language
+        for path in wanted:
+            _detected[versions[path]] = known[path]
+    names: dict[str, str] = {}
+    for path, forced, detectable in pending:
+        language = forced or (known[path] if path in known else languages.detect(path))
+        if language and languages.counted(language, detectable):
+            names[path] = languages.group(language)
+    return names
+
+
+def _read_worktree(repo_dir: str, paths: list[str]) -> dict[str, str]:
+    contents = {}
+    for path in paths:
+        try:
+            with open(os.path.join(repo_dir, path), "rb") as handle:
+                start = handle.read(languages.CONTENT_LIMIT)
+        except OSError:
+            continue
+        contents[path] = start.decode("utf-8", errors="replace")
+    return contents
+
+
+def _read_blobs(repo_dir: str, object_ids: dict[str, str]) -> dict[str, str]:
+    """The start of each blob's text, keyed like `object_ids`.
+
+    Blobs are asked for one at a time and only the start of each is kept in memory.
+    """
+    contents: dict[str, str] = {}
+    if not object_ids:
+        return contents
+    try:
+        process = subprocess.Popen(
+            _git_command(["cat-file", "--batch"]),
+            cwd=repo_dir,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        return contents
+    with process:
+        requests, replies = process.stdin, process.stdout
+        try:
+            for key, object_id in object_ids.items():
+                requests.write(f"{object_id}\n".encode())
+                requests.flush()
+                header = replies.readline().split()
+                if not header:
+                    break
+                # A missing object has a two-field header and no contents.
+                if len(header) < 3:
+                    continue
+                size = int(header[2])
+                start = replies.read(min(size, languages.CONTENT_LIMIT))
+                # The rest of the object and the newline after it.
+                left = size - len(start) + 1
+                while left > 0:
+                    skipped = replies.read(min(left, 1 << 16))
+                    if not skipped:
+                        break
+                    left -= len(skipped)
+                if header[1] == b"blob":
+                    contents[key] = start.decode("utf-8", errors="replace")
+        except (OSError, ValueError):
+            pass
+    return contents
+
+
+def _totals(
+    names: dict[str, str],
+    sizes: dict[str, int],
+    language_mode: str,
+    exclude_languages: set[str],
+) -> tuple[list[LanguageStat], dict[str, list[str]]]:
+    totals: dict[str, int] = {}
+    files_by_language: dict[str, list[str]] = {}
+    for path, name in names.items():
+        if name in exclude_languages:
+            continue
+        files_by_language.setdefault(name, []).append(path)
+        value = 1 if language_mode == "files" else sizes.get(path, 0)
+        totals[name] = totals.get(name, 0) + value
+    return _language_stats(totals, files_by_language)
 
 
 def scan_languages(
@@ -270,19 +316,30 @@ def scan_languages(
     exclude_languages: set[str],
     ignore_dirs: set[str],
 ) -> tuple[list[LanguageStat], dict[str, list[str]]]:
-    totals: dict[str, int] = {}
-    files_by_language: dict[str, list[str]] = {}
-    for rel_path, full_path, language in _scanned_files(repo_dir, exclude_languages, ignore_dirs):
-        files_by_language.setdefault(language, []).append(rel_path)
-        if language_mode == "files":
-            value = 1
-        else:
-            try:
-                value = os.path.getsize(full_path)
-            except OSError:
-                value = 0
-        totals[language] = totals.get(language, 0) + value
-    return _language_stats(totals, files_by_language)
+    """The work tree's languages, counted the way GitHub's Linguist counts them."""
+    sizes: dict[str, int] = {}
+    versions: dict[str, tuple] = {}
+    for path in list_worktree_paths(repo_dir):
+        if _in_ignored_dir(path, ignore_dirs):
+            continue
+        try:
+            info = os.lstat(os.path.join(repo_dir, path))
+        except OSError:
+            continue
+        # Sym links are skipped like Linguist skips them.
+        if not stat.S_ISREG(info.st_mode):
+            continue
+        sizes[path] = info.st_size
+        versions[path] = (repo_dir, path, info.st_size, info.st_mtime_ns)
+    paths = list(sizes)
+    names = _classify(
+        paths,
+        _linguist_attributes(repo_dir, paths),
+        lambda wanted: _read_worktree(repo_dir, wanted),
+        sizes,
+        versions,
+    )
+    return _totals(names, sizes, language_mode, exclude_languages)
 
 
 def _language_stats(
@@ -299,7 +356,7 @@ def _language_stats(
                 "value": value,
                 "percentage": percentage,
                 "count": len(files_by_language[language]),
-                "color": LANGUAGE_COLORS.get(language, random_color(language)),
+                "color": languages.color(language),
             }
         )
     stats.sort(key=lambda item: float(item["percentage"]), reverse=True)
@@ -446,32 +503,29 @@ class RepoService:
         self, commit_hash: str
     ) -> tuple[list[LanguageStat], dict[str, list[str]]]:
         """Language breakdown of the whole tree at a commit from `git ls-tree`,
-        with the same excludes as the working-tree scan."""
+        with the same rules and excludes as the working-tree scan."""
         output = run_git(self.repo_dir, ["ls-tree", "-r", "-l", "-z", commit_hash])
-        totals: dict[str, int] = {}
-        files_by_language: dict[str, list[str]] = {}
+        sizes: dict[str, int] = {}
+        object_ids: dict[str, str] = {}
         for record in output.split("\0"):
             meta, _, path = record.partition("\t")
-            if not path:
-                continue
             parts = meta.split()
-            if len(parts) < 4 or parts[1] != "blob":
+            # Linguist skips submodules and sym links which git stores with mode 120000.
+            if not path or len(parts) < 4 or parts[1] != "blob" or parts[0] == "120000":
                 continue
             if _in_ignored_dir(path, self.ignore_dirs):
                 continue
-            language = detect_language(path, EXTENSION_TO_LANGUAGE)
-            if language in self.exclude_languages:
-                continue
-            files_by_language.setdefault(language, []).append(path)
-            if self.language_mode == "files":
-                value = 1
-            else:
-                try:
-                    value = int(parts[3])
-                except ValueError:
-                    value = 0
-            totals[language] = totals.get(language, 0) + value
-        return _language_stats(totals, files_by_language)
+            sizes[path] = int(parts[3]) if parts[3].isdigit() else 0
+            object_ids[path] = parts[2]
+        paths = list(sizes)
+        names = _classify(
+            paths,
+            _linguist_attributes(self.repo_dir, paths, source=commit_hash),
+            lambda wanted: _read_blobs(self.repo_dir, {path: object_ids[path] for path in wanted}),
+            sizes,
+            {path: (path, object_id) for path, object_id in object_ids.items()},
+        )
+        return _totals(names, sizes, self.language_mode, self.exclude_languages)
 
     def _commit_files(self, commit_hash: str) -> list[str]:
         """Every file in the tree at a commit, sorted and without ignored directories."""
@@ -499,8 +553,10 @@ class RepoService:
         return None if "\x00" in content else content
 
     def _count_scanned_files(self) -> int:
-        files = _scanned_files(self.repo_dir, self.exclude_languages, self.ignore_dirs)
-        return sum(1 for _ in files)
+        _, files_by_language = scan_languages(
+            self.repo_dir, self.language_mode, self.exclude_languages, self.ignore_dirs
+        )
+        return sum(len(files) for files in files_by_language.values())
 
     def scan_repo_state(self) -> tuple[RepoScanSnapshot, float]:
         started = time.perf_counter()

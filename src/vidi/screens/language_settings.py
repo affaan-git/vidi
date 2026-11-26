@@ -85,7 +85,7 @@ class LanguageSettingsScreen(ModalScreen[Optional[dict]]):
             yield Label("Exclude languages (comma separated)")
             yield Input(
                 value=", ".join(self._exclude_languages),
-                placeholder="e.g. JSON, YAML, Markdown",
+                placeholder="e.g. HTML, CSS, Shell",
                 id="language-exclude",
             )
             yield Label("Also ignore directories (comma separated)")

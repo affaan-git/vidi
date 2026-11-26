@@ -19,7 +19,7 @@ from textual.app import App
 from textual.color import Color
 from textual.binding import Binding
 from textual.widgets import DataTable, Footer, Header, OptionList
-from textual.widgets import Input
+from textual.widgets import Input, Static
 
 from vidi.app import VidiApp
 from vidi.cli import build_parser, main as cli_main, package_version, resolve_repo_dir
@@ -53,8 +53,6 @@ from vidi.render import (
     resolve_heatmap_colors,
 )
 from vidi.repository import (
-    EXTENSION_TO_LANGUAGE,
-    LANGUAGE_COLORS,
     RepoService,
     build_initial_repo_context,
     get_branch_heads,
@@ -62,7 +60,7 @@ from vidi.repository import (
     scan_languages,
 )
 from vidi.theme import make_change_stat_style, resolve_theme_palette
-from vidi.utils import detect_language, rel_time
+from vidi.utils import rel_time
 
 from sample_repo import (
     build_sample_repo,
@@ -779,6 +777,49 @@ class NavigationTests(unittest.IsolatedAsyncioTestCase):
             # the file list follows the commit
             self.assertEqual(app.screen._files, service.get_commit_files(hashes[1]))
 
+    async def test_commit_files_title_keeps_the_changed_marker_in_place(self) -> None:
+        from vidi.screens.commit_files import CommitFilesScreen
+
+        context, service = load_repo(sample_repo())
+        hashes = [c.commit_hash for c in service.get_branch_data(context.current_branch).commits]
+        app = VidiApp(context, service)
+        async with app.run_test(size=(64, 30)) as pilot:
+            app.push_screen(CommitFilesScreen(service, hashes, 1))
+            await pilot.pause()
+            await pilot.pause()
+            title = app.screen.query_one("#commit-files-title", Static)
+            await pilot.press("slash")
+            for char in "s":
+                await pilot.press(char)
+            await pilot.pause()
+            lines = plain_text(title.content, width=title.content_region.width).splitlines()
+            self.assertEqual(len(lines), 1, lines)
+            self.assertTrue(lines[0].rstrip().endswith("\u25cf changed"), lines)
+            self.assertNotIn("changed here", lines[0])
+
+            # A filter showing only unchanged files keeps the marker.
+            screen = app.screen
+            query = next(
+                path.lower()
+                for path in screen._all_files
+                if not any(path.lower() in other.lower() for other in screen._changed)
+            )
+            screen.query_one("#commit-files-filter", Input).value = query
+            await pilot.pause()
+            self.assertTrue(screen._files)
+            self.assertFalse(any(path in screen._changed for path in screen._files))
+            lines = plain_text(title.content, width=title.content_region.width).splitlines()
+            self.assertTrue(lines[0].rstrip().endswith("\u25cf changed"), lines)
+
+            # Each listed file keeps its own dot under any filter.
+            for query in ("s", ""):
+                screen.query_one("#commit-files-filter", Input).value = query
+                await pilot.pause()
+                options = screen.query_one("#commit-files-list", OptionList)
+                for index in range(options.option_count):
+                    prompt = str(options.get_option_at_index(index).prompt)
+                    self.assertEqual(prompt.startswith("\u25cf"), prompt[2:] in screen._changed)
+
     async def test_commit_files_browser_marks_changed_and_filters(self) -> None:
         import re
 
@@ -1251,8 +1292,8 @@ class FilterTests(unittest.TestCase):
         context, _ = load_repo(sample_repo())
         title = build_language_title(context.language_stats, default_palette())
         title_text = plain_text(title, width=140)
-        self.assertIn("Languages", title_text)
-        self.assertIn("10", title_text)
+        self.assertEqual(len(context.language_stats), 6)
+        self.assertIn("Languages 6", title_text)
 
     def test_build_language_bar_respects_requested_width(self) -> None:
         context, _ = load_repo(sample_repo())
@@ -1506,30 +1547,6 @@ class FilterTests(unittest.TestCase):
         for days, expected in cases:
             with self.subTest(days=days):
                 self.assertEqual(rel_time(now - dt.timedelta(days=days), now), expected)
-
-    def test_detect_language_knows_common_extensions_and_filenames(self) -> None:
-        cases = {
-            "Makefile": "Makefile",
-            "src/GNUmakefile": "Makefile",
-            "CMakeLists.txt": "CMake",
-            "Gemfile": "Ruby",
-            "Rakefile": "Ruby",
-            "Jenkinsfile": "Groovy",
-            "Dockerfile": "Dockerfile",
-            "web/App.vue": "Vue",
-            "web/Page.svelte": "Svelte",
-            "styles/site.scss": "SCSS",
-            "infra/main.tf": "HCL",
-            "notes/analysis.ipynb": "Jupyter Notebook",
-            "lib/app.ex": "Elixir",
-            "Main.hs": "Haskell",
-            "api.proto": "Protocol Buffer",
-        }
-        for path, language in cases.items():
-            with self.subTest(path=path):
-                self.assertEqual(detect_language(path, EXTENSION_TO_LANGUAGE), language)
-        self.assertEqual(LANGUAGE_COLORS["Vue"], "#41b883")
-        self.assertEqual(LANGUAGE_COLORS["Makefile"], "#427819")
 
     def test_patch_section_paths_come_from_headers_only(self) -> None:
         patch = "\n".join(
@@ -1824,7 +1841,7 @@ class HostileRepoTests(unittest.IsolatedAsyncioTestCase):
 
 class GitDataTests(unittest.TestCase):
     def test_paths_with_non_ascii_and_special_characters_display_and_open(self) -> None:
-        names = ["caf\u00e9.py", "\u65e5\u672c/\u8aad\u3080.md", "emoji \U0001f642.txt", 'q"t.py', "tab\there.py", "new\nline.py", "back\\slash.py"]
+        names = ["caf\u00e9.py", "\u65e5\u672c/\u8aad\u3080.py", "emoji \U0001f642.py", 'q"t.py', "tab\there.py", "new\nline.py", "back\\slash.py"]
         with tempfile.TemporaryDirectory() as tmp:
             repo = new_repo(tmp)
             # Straight into git as several of these file names are not valid on Windows.
@@ -1937,16 +1954,16 @@ class GitDataTests(unittest.TestCase):
     def test_language_scan_follows_git_ignore_rules_and_matches_file_count(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = new_repo(tmp)
-            write_file(repo, ".gitignore", "*.log\n!keep.log\n/generated/\n")
-            for path in ("a.py", "x.log", "keep.log", "generated/g.py", "node_modules/m.js", "vendor/v.js"):
+            write_file(repo, ".gitignore", "*_tmp.py\n!keep_tmp.py\n/generated/\n")
+            for path in ("a.py", "x_tmp.py", "keep_tmp.py", "generated/g.py", "node_modules/m.js", "scratch/s.js"):
                 write_file(repo, path)
-            write_file(repo, "forced/tracked.log")
+            write_file(repo, "forced/tracked_tmp.py")
             git(repo, "add", "-A")
-            git(repo, "add", "-f", "forced/tracked.log")
+            git(repo, "add", "-f", "forced/tracked_tmp.py")
             git(repo, "commit", "-q", "-m", "first")
-            context, service = load_repo(repo, language_mode="files", extra_ignored_dirs={"vendor"})
+            context, service = load_repo(repo, language_mode="files", extra_ignored_dirs={"scratch"})
             scanned = sorted(path for paths in context.files_by_language.values() for path in paths)
-            self.assertEqual(scanned, [".gitignore", "a.py", "forced/tracked.log", "keep.log"])
+            self.assertEqual(scanned, ["a.py", "forced/tracked_tmp.py", "keep_tmp.py"])
             snapshot, _ = service.scan_repo_state()
             self.assertEqual(snapshot.scanned_file_count, len(scanned))
 

@@ -58,8 +58,8 @@ date.
 
 Press `Enter` on a commit to open its diff, then `[` and `]` to step to the
 previous or next commit. The languages panel shows the languages in the
-highlighted commit's tree. Press `Enter` on a language to list its files at
-that commit and `Enter` on a file to read it.
+highlighted commit's tree counted the way GitHub does. Press `Enter` on
+a language to list its files at that commit and `Enter` on a file to read it.
 
 Press `f` from any panel or from the commit detail to browse the whole tree.
 Use `[` and `]` in the file list to step between commits. Files changed in
@@ -184,8 +184,14 @@ python -m pytest -q
 > A test will fail when they are out of date. Editable installs don't include
 > the man pages, which `git view --help` opens on macOS and Linux.
 
+The language data in `src/vidi/linguist_data.py` is generated from GitHub
+Linguist v9.7.0. Regenerate it for a newer Linguist release with
+`python tools/update_linguist.py <tag>` (requires PyYAML).
+
 ## License
 
 vidi is free software under the GNU General Public License v3.0 or later. See
 [LICENSE](https://github.com/affaan-git/vidi/blob/main/LICENSE) for the full
-text.
+text. The language data comes from
+[GitHub Linguist](https://github.com/github-linguist/linguist) under the MIT
+license.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from rich.table import Table
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -163,7 +164,7 @@ class CommitFilesScreen(ModalScreen[None]):
         else:
             count = f"{total} {word}"
 
-        title = Text()
+        title = Text(no_wrap=True, overflow="ellipsis")
         label = self._language if self._language is not None else "Files"
         title.append(f"{label}  ", style=make_style(palette.foreground, bold=True))
         detail = f"{count} in commit {self._commit_hash[:7]}"
@@ -172,9 +173,14 @@ class CommitFilesScreen(ModalScreen[None]):
             total_commits = len(self._commit_hashes)
             detail += f"  ({total_commits - self._index}/{total_commits})"
         title.append(detail, style=make_style(palette.muted))
-        if any(path in self._changed for path in self._files):
-            title.append("    ● changed here", style=make_style(palette.primary))
-        self.query_one("#commit-files-title", Static).update(title)
+        marker = Text(no_wrap=True)
+        if any(path in self._changed for path in self._all_files):
+            marker.append("  ● changed", style=make_style(palette.primary))
+        row = Table.grid(expand=True)
+        row.add_column(ratio=1, no_wrap=True, overflow="ellipsis")
+        row.add_column(justify="right", no_wrap=True)
+        row.add_row(title, marker)
+        self.query_one("#commit-files-title", Static).update(row)
 
     # Filtering
 

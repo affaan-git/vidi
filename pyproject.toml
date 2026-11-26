@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "git-vidi"
-version = "0.1.0"
+version = "0.2.0"
 description = "A read-only terminal viewer for a local Git repository."
 readme = "README.md"
-license = "GPL-3.0-or-later"
-license-files = ["LICENSE"]
+license = "GPL-3.0-or-later AND MIT"
+license-files = ["LICENSE", "LICENSES/linguist-MIT.txt"]
 requires-python = ">=3.9"
 authors = [
     { name = "affaan-git", email = "216245812+affaan-git@users.noreply.github.com" },
